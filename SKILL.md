@@ -1,5 +1,5 @@
 ---
-name: code-project-flow
+name: agent-wave
 description: Agent Wave workflow for AI Agent orchestration. Use the `agvv` CLI to enforce parallel Git worktree development, reduce failures, and save token usage.
 ---
 
