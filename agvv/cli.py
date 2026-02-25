@@ -1,5 +1,8 @@
+"""Typer command-line interface for Agent Wave workflows."""
+
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Annotated
 
@@ -10,26 +13,42 @@ from agvv.core import AgvvError, adopt_project, cleanup_feature, init_project, p
 app = typer.Typer(help="Agent Wave: orchestrate parallel git worktree workflow for coding tasks.")
 project_app = typer.Typer(help="Project-level operations.")
 feature_app = typer.Typer(help="Feature branch/worktree operations.")
+_DEFAULT_BASE_DIR = "~/code"
+_LOGGER = logging.getLogger(__name__)
 
 app.add_typer(project_app, name="project")
 app.add_typer(feature_app, name="feature")
 
 
 def _base_dir(path: str | None) -> Path:
-    raw = path or "~/code"
+    """Resolve the base directory, defaulting to ``~/code``."""
+
+    raw = path
+    if raw is None:
+        raw = _DEFAULT_BASE_DIR
+        _LOGGER.warning("No --base-dir provided; using default base directory: %s", raw)
     return Path(raw).expanduser().resolve()
+
+
+def _exit_with_agvv_error(exc: AgvvError) -> None:
+    """Render operational errors to stderr and exit non-zero."""
+
+    typer.secho(str(exc), err=True, fg=typer.colors.RED)
+    raise typer.Exit(code=1) from exc
 
 
 @project_app.command("init")
 def project_init(
     project_name: str,
-    base_dir: Annotated[str | None, typer.Option("--base-dir", help="Base path containing projects.")] = None,
+    base_dir: Annotated[
+        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
+    ] = None,
 ) -> None:
     """Initialize a new project into bare repo + main worktree layout."""
     try:
         paths = init_project(project_name, _base_dir(base_dir))
     except AgvvError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        _exit_with_agvv_error(exc)
 
     typer.echo(f"Initialized: {paths.project_dir}")
     typer.echo(f"- bare repo: {paths.repo_dir}")
@@ -41,16 +60,19 @@ def project_init(
 def project_adopt(
     existing_repo: str,
     project_name: str,
-    base_dir: Annotated[str | None, typer.Option("--base-dir", help="Base path containing projects.")] = None,
+    base_dir: Annotated[
+        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
+    ] = None,
 ) -> None:
     """Adopt an existing git repository into this layout."""
+    repo_path = Path(existing_repo).expanduser().resolve()
     try:
-        paths, default_branch = adopt_project(Path(existing_repo).expanduser().resolve(), project_name, _base_dir(base_dir))
+        paths, default_branch = adopt_project(repo_path, project_name, _base_dir(base_dir))
     except AgvvError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        _exit_with_agvv_error(exc)
 
     typer.echo(f"Adopted existing repo into worktree layout: {paths.project_dir}")
-    typer.echo(f"- source repo: {Path(existing_repo).expanduser().resolve()}")
+    typer.echo(f"- source repo: {repo_path}")
     typer.echo(f"- bare repo: {paths.repo_dir}")
     typer.echo(f"- main worktree: {paths.main_dir} (branch: {default_branch})")
     typer.echo(f"- feature worktrees: {paths.project_dir}/<feature>")
@@ -60,15 +82,21 @@ def project_adopt(
 def feature_start(
     project_name: str,
     feature: str,
-    base_dir: Annotated[str | None, typer.Option("--base-dir", help="Base path containing projects.")] = None,
+    base_dir: Annotated[
+        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
+    ] = None,
     from_branch: Annotated[str, typer.Option("--from-branch", help="Base branch for a new feature branch.")] = "main",
     agent: Annotated[str | None, typer.Option("--agent", help="Agent name/id that requested this feature.")] = None,
     task_id: Annotated[str | None, typer.Option("--task-id", help="Agent task ID or execution ID.")] = None,
     ticket: Annotated[str | None, typer.Option("--ticket", help="Ticket/issue identifier (e.g. JIRA/GitHub).")] = None,
-    params: Annotated[list[str], typer.Option("--param", help="Extra context as KEY=VALUE, repeatable.")] = [],
-    create_dirs: Annotated[list[str], typer.Option("--mkdir", help="Directories to create in feature worktree.")] = [],
+    params: Annotated[list[str] | None, typer.Option("--param", help="Extra context as KEY=VALUE, repeatable.")] = None,
+    create_dirs: Annotated[
+        list[str] | None, typer.Option("--mkdir", help="Directories to create in feature worktree.")
+    ] = None,
 ) -> None:
     """Create or reopen a feature worktree and attach agent context metadata."""
+    params = params or []
+    create_dirs = create_dirs or []
     try:
         paths = start_feature(
             project_name=project_name,
@@ -82,7 +110,7 @@ def feature_start(
             create_dirs=create_dirs,
         )
     except AgvvError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        _exit_with_agvv_error(exc)
 
     typer.echo(f"Created feature worktree: {paths.feature_dir}")
     typer.echo(f"Branch: {feature}")
@@ -93,7 +121,9 @@ def feature_start(
 def feature_cleanup(
     project_name: str,
     feature: str,
-    base_dir: Annotated[str | None, typer.Option("--base-dir", help="Base path containing projects.")] = None,
+    base_dir: Annotated[
+        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
+    ] = None,
     keep_branch: Annotated[bool, typer.Option("--keep-branch", help="Keep branch and only remove worktree.")] = False,
 ) -> None:
     """Cleanup merged feature worktree and optionally delete branch."""
@@ -105,7 +135,7 @@ def feature_cleanup(
             delete_branch=not keep_branch,
         )
     except AgvvError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        _exit_with_agvv_error(exc)
 
     suffix = " (branch kept)" if keep_branch else ""
     typer.echo(f"Cleaned feature worktree/branch: {feature}{suffix}")

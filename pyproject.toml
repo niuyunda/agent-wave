@@ -5,7 +5,14 @@ description = "Agent Wave: orchestrate parallel git worktree workflow for AI age
 readme = "SKILL.md"
 requires-python = ">=3.10"
 dependencies = [
-    "typer>=0.24.1",
+    "typer>=0.23.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.15.2",
 ]
 
 [project.scripts]
@@ -22,4 +29,5 @@ packages = ["agvv"]
 dev = [
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
+    "ruff>=0.15.2",
 ]

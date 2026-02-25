@@ -1,6 +1,9 @@
+"""Core orchestration primitives for the Agent Wave CLI."""
+
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,13 +16,20 @@ class AgvvError(RuntimeError):
 
 @dataclass(frozen=True)
 class LayoutPaths:
+    """Resolved filesystem paths for a project/worktree layout."""
+
     project_dir: Path
     repo_dir: Path
     main_dir: Path
     feature_dir: Path | None = None
 
 
+_SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
 def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Run a shell command and normalize failures into ``AgvvError``."""
+
     try:
         return subprocess.run(
             cmd,
@@ -37,10 +47,14 @@ def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
 
 
 def _git(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Execute a git command with shared error handling."""
+
     return _run(["git", *args], cwd=cwd)
 
 
 def _git_success(args: list[str], cwd: Path | None = None) -> bool:
+    """Return whether a git command succeeds without raising."""
+
     try:
         _run(["git", *args], cwd=cwd)
         return True
@@ -49,6 +63,8 @@ def _git_success(args: list[str], cwd: Path | None = None) -> bool:
 
 
 def parse_kv_pairs(pairs: list[str]) -> dict[str, str]:
+    """Parse repeated ``KEY=VALUE`` CLI parameters into a dictionary."""
+
     result: dict[str, str] = {}
     for pair in pairs:
         if "=" not in pair:
@@ -62,6 +78,8 @@ def parse_kv_pairs(pairs: list[str]) -> dict[str, str]:
 
 
 def layout_paths(project_name: str, base_dir: Path, feature: str | None = None) -> LayoutPaths:
+    """Construct canonical path objects for a project and optional feature."""
+
     project_dir = base_dir / project_name
     return LayoutPaths(
         project_dir=project_dir,
@@ -72,16 +90,57 @@ def layout_paths(project_name: str, base_dir: Path, feature: str | None = None) 
 
 
 def _ensure_feature_name(feature: str) -> None:
+    """Reject reserved feature names that collide with layout directories."""
+
+    _ensure_layout_name(feature, "Feature branch name")
     if feature in {"main", "repo.git"}:
         raise AgvvError(f"Feature branch name '{feature}' is reserved in this layout.")
 
 
+def _ensure_layout_name(value: str, label: str) -> None:
+    """Ensure a project/feature/directory name is safe for this layout."""
+
+    if not value:
+        raise AgvvError(f"{label} cannot be empty.")
+    if "/" in value or "\\" in value:
+        raise AgvvError(f"{label} '{value}' must not contain path separators.")
+    if ".." in Path(value).parts:
+        raise AgvvError(f"{label} '{value}' must not contain path traversal segments.")
+    if _SAFE_NAME_RE.fullmatch(value) is None:
+        raise AgvvError(
+            f"{label} '{value}' contains invalid characters. Use only letters, numbers, hyphens, and underscores."
+        )
+
+
+def _ensure_create_dir_value(directory: str) -> None:
+    """Validate a create_dirs entry while allowing safe nested paths."""
+
+    if not directory:
+        raise AgvvError("Directory name cannot be empty.")
+    if directory.startswith(("/", "\\")):
+        raise AgvvError(f"Directory name '{directory}' must be a relative path.")
+    normalized = directory.replace("\\", "/")
+    parts = normalized.split("/")
+    for part in parts:
+        if not part or part in {".", ".."}:
+            raise AgvvError(f"Directory name '{directory}' contains unsafe path segments.")
+        if _SAFE_NAME_RE.fullmatch(part) is None:
+            raise AgvvError(
+                f"Directory name '{directory}' contains invalid characters. "
+                "Use only letters, numbers, hyphens, underscores, and separators between segments."
+            )
+
+
 def _write_json(path: Path, data: dict) -> None:
+    """Write JSON to disk with stable formatting and trailing newline."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _default_branch(repo_dir: Path) -> str:
+    """Pick a default branch from a bare repo, preferring main/master."""
+
     branches_raw = _git(["-C", str(repo_dir), "for-each-ref", "--format=%(refname:short)", "refs/heads"]).stdout
     branches = [line.strip() for line in branches_raw.splitlines() if line.strip()]
     if not branches:
@@ -93,6 +152,9 @@ def _default_branch(repo_dir: Path) -> str:
 
 
 def init_project(project_name: str, base_dir: Path) -> LayoutPaths:
+    """Initialize a project as bare repository plus ``main`` worktree."""
+
+    _ensure_layout_name(project_name, "Project name")
     paths = layout_paths(project_name, base_dir)
     paths.project_dir.mkdir(parents=True, exist_ok=True)
 
@@ -112,6 +174,9 @@ def init_project(project_name: str, base_dir: Path) -> LayoutPaths:
 
 
 def adopt_project(existing_repo: Path, project_name: str, base_dir: Path) -> tuple[LayoutPaths, str]:
+    """Mirror an existing repository into the Agent Wave layout."""
+
+    _ensure_layout_name(project_name, "Project name")
     if not (existing_repo / ".git").exists():
         raise AgvvError(f"{existing_repo} is not a git repository.")
 
@@ -141,9 +206,15 @@ def start_feature(
     params: dict[str, str],
     create_dirs: list[str],
 ) -> LayoutPaths:
+    """Create or attach a feature worktree and persist task metadata."""
+
+    _ensure_layout_name(project_name, "Project name")
     _ensure_feature_name(feature)
     paths = layout_paths(project_name, base_dir, feature=feature)
-    assert paths.feature_dir is not None
+    if paths.feature_dir is None:
+        raise RuntimeError(
+            f"Internal error: missing feature directory for project={project_name}, base_dir={base_dir}, feature={feature}."
+        )
 
     if not paths.repo_dir.exists() or not paths.main_dir.exists():
         raise AgvvError(
@@ -162,8 +233,15 @@ def start_feature(
     else:
         _git(["-C", str(paths.repo_dir), "worktree", "add", "-b", feature, str(paths.feature_dir), from_branch])
 
+    feature_root = paths.feature_dir.resolve()
     for directory in create_dirs:
-        (paths.feature_dir / directory).mkdir(parents=True, exist_ok=True)
+        _ensure_create_dir_value(directory)
+        target = (paths.feature_dir / directory).resolve()
+        if not target.is_relative_to(feature_root):
+            raise AgvvError(
+                f"Refusing to create directory outside feature worktree: '{directory}' resolved to '{target}'."
+            )
+        target.mkdir(parents=True, exist_ok=True)
 
     metadata = {
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
@@ -187,14 +265,27 @@ def cleanup_feature(
     base_dir: Path,
     delete_branch: bool,
 ) -> LayoutPaths:
+    """Remove a feature worktree and optionally delete its branch."""
+
+    _ensure_layout_name(project_name, "Project name")
     _ensure_feature_name(feature)
     paths = layout_paths(project_name, base_dir, feature=feature)
-    assert paths.feature_dir is not None
+    if paths.feature_dir is None:
+        raise RuntimeError(
+            f"Internal error: missing feature directory for project={project_name}, base_dir={base_dir}, feature={feature}."
+        )
 
     if not paths.repo_dir.exists():
         raise AgvvError(f"Repo not found: {paths.repo_dir}")
 
     if paths.feature_dir.exists():
+        has_tracked_changes = not _git_success(["-C", str(paths.feature_dir), "diff", "--quiet"])
+        has_staged_changes = not _git_success(["-C", str(paths.feature_dir), "diff", "--cached", "--quiet"])
+        if has_tracked_changes or has_staged_changes:
+            raise AgvvError(
+                f"Feature worktree has uncommitted changes at {paths.feature_dir}. "
+                "Commit, stash, or discard changes before cleanup."
+            )
         _git(["-C", str(paths.repo_dir), "worktree", "remove", str(paths.feature_dir), "--force"])
 
     if delete_branch and _git_success(

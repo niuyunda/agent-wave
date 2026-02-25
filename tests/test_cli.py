@@ -115,15 +115,11 @@ def test_cli_feature_cleanup_missing_repo_returns_error(tmp_path: Path) -> None:
     assert "Repo not found" in result.stderr
 
 
-def test_cli_module_entrypoint_help() -> None:
-    old_argv = sys.argv[:]
-    sys.argv = ["agvv", "--help"]
-    try:
-        with pytest.raises(SystemExit) as exc_info:
-            runpy.run_module("agvv.cli", run_name="__main__")
-        assert exc_info.value.code == 0
-    finally:
-        sys.argv = old_argv
+def test_cli_module_entrypoint_help(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["agvv", "--help"])
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_module("agvv.cli", run_name="__main__")
+    assert exc_info.value.code == 0
 
 
 def test_cli_project_init_error_path(tmp_path: Path) -> None:

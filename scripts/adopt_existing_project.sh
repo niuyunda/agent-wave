@@ -6,7 +6,7 @@ if [[ $# -lt 2 ]]; then
   exit 1
 fi
 
-EXISTING_REPO="$(realpath "$1")"
+EXISTING_REPO="$(cd "$1" && pwd)"
 PROJECT_NAME="$2"
 BASE_DIR="${3:-$HOME/code}"
 
