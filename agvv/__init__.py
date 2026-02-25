@@ -1,0 +1,2 @@
+"""Agent Wave CLI package."""
+
