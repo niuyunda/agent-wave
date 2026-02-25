@@ -1,0 +1,22 @@
+[project]
+name = "orch"
+version = "0.1.0"
+description = "Orchestrate parallel git worktree workflow for agents."
+readme = "SKILL.md"
+requires-python = ">=3.10"
+dependencies = [
+    "typer>=0.24.1",
+]
+
+[project.scripts]
+orch = "orch.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+]
