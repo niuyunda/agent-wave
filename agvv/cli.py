@@ -5,9 +5,9 @@ from typing import Annotated
 
 import typer
 
-from orch.core import OrchError, adopt_project, cleanup_feature, init_project, parse_kv_pairs, start_feature
+from agvv.core import AgvvError, adopt_project, cleanup_feature, init_project, parse_kv_pairs, start_feature
 
-app = typer.Typer(help="Orchestrate parallel git worktree workflow for coding tasks.")
+app = typer.Typer(help="Agent Wave: orchestrate parallel git worktree workflow for coding tasks.")
 project_app = typer.Typer(help="Project-level operations.")
 feature_app = typer.Typer(help="Feature branch/worktree operations.")
 
@@ -28,7 +28,7 @@ def project_init(
     """Initialize a new project into bare repo + main worktree layout."""
     try:
         paths = init_project(project_name, _base_dir(base_dir))
-    except OrchError as exc:
+    except AgvvError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
     typer.echo(f"Initialized: {paths.project_dir}")
@@ -46,7 +46,7 @@ def project_adopt(
     """Adopt an existing git repository into this layout."""
     try:
         paths, default_branch = adopt_project(Path(existing_repo).expanduser().resolve(), project_name, _base_dir(base_dir))
-    except OrchError as exc:
+    except AgvvError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
     typer.echo(f"Adopted existing repo into worktree layout: {paths.project_dir}")
@@ -81,12 +81,12 @@ def feature_start(
             params=parse_kv_pairs(params),
             create_dirs=create_dirs,
         )
-    except OrchError as exc:
+    except AgvvError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
     typer.echo(f"Created feature worktree: {paths.feature_dir}")
     typer.echo(f"Branch: {feature}")
-    typer.echo(f"Metadata: {paths.feature_dir}/.orch/context.json")
+    typer.echo(f"Metadata: {paths.feature_dir}/.agvv/context.json")
 
 
 @feature_app.command("cleanup")
@@ -104,7 +104,7 @@ def feature_cleanup(
             base_dir=_base_dir(base_dir),
             delete_branch=not keep_branch,
         )
-    except OrchError as exc:
+    except AgvvError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
     suffix = " (branch kept)" if keep_branch else ""

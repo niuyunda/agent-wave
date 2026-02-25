@@ -1,13 +1,14 @@
 ---
 name: code-project-flow
-description: Orch (Orchestrate) workflow for Agent-first parallel Git worktree development. Every coding task must run in a feature worktree, never directly on main.
+description: Agent Wave workflow for AI Agent orchestration. Use the `agvv` CLI to enforce parallel Git worktree development, reduce failures, and save token usage.
 ---
 
-# Orch Skill
+# Agent Wave Skill
 
-`orch` is the default workflow for AI Agent coding tasks.
+Project name: `Agent Wave`  
+CLI command: `agvv`
 
-This skill standardizes project setup, branch/worktree isolation, and task context capture so multiple agents can work safely in parallel.
+This skill standardizes project setup, branch/worktree isolation, and task context capture so multiple agents can work safely in parallel with consistent guardrails.
 
 ## Scope
 
@@ -29,15 +30,15 @@ Every project follows this layout:
 
 Agent context is stored per feature:
 
-- `<base>/<project>/<feature>/.orch/context.json`
+- `<base>/<project>/<feature>/.agvv/context.json`
 
 ## Non-Negotiable Rules
 
 1. Never implement directly in `<project>/main`.
-2. Every task uses `orch feature start` to create/reuse an isolated feature worktree.
+2. Every task uses `agvv feature start` to create/reuse an isolated feature worktree.
 3. Build, test, and commit only inside that feature worktree.
 4. Merge through PR workflow.
-5. After merge, run cleanup (`orch feature cleanup`).
+5. After merge, run cleanup (`agvv feature cleanup`).
 6. Always pass explicit `--base-dir` in automation contexts.
 
 ## Canonical Workflow
@@ -47,19 +48,19 @@ Agent context is stored per feature:
 For a new project:
 
 ```bash
-orch project init <project> --base-dir <base_dir>
+agvv project init <project> --base-dir <base_dir>
 ```
 
 For an existing repository:
 
 ```bash
-orch project adopt <existing_repo_path> <project> --base-dir <base_dir>
+agvv project adopt <existing_repo_path> <project> --base-dir <base_dir>
 ```
 
 ### 2) Start Feature Work
 
 ```bash
-orch feature start <project> <feature> --base-dir <base_dir>
+agvv feature start <project> <feature> --base-dir <base_dir>
 ```
 
 ### 3) Implement and Validate
@@ -73,18 +74,18 @@ orch feature start <project> <feature> --base-dir <base_dir>
 After PR merge:
 
 ```bash
-orch feature cleanup <project> <feature> --base-dir <base_dir>
+agvv feature cleanup <project> <feature> --base-dir <base_dir>
 ```
 
 Keep branch temporarily if needed:
 
 ```bash
-orch feature cleanup <project> <feature> --base-dir <base_dir> --keep-branch
+agvv feature cleanup <project> <feature> --base-dir <base_dir> --keep-branch
 ```
 
 ## Agent Parameter Contract
 
-Use these options with `orch feature start` to capture execution context:
+Use these options with `agvv feature start` to capture execution context:
 
 - `--agent <agent_name_or_id>`: source agent identity
 - `--task-id <task_execution_id>`: task/run identifier
@@ -96,7 +97,7 @@ Use these options with `orch feature start` to capture execution context:
 Example:
 
 ```bash
-orch feature start <project> <feature> \
+agvv feature start <project> <feature> \
   --base-dir <base_dir> \
   --from-branch main \
   --agent codex \
@@ -128,8 +129,8 @@ Do not:
 ## Minimal Command Reference
 
 ```bash
-orch project init <project> --base-dir <base_dir>
-orch project adopt <existing_repo_path> <project> --base-dir <base_dir>
-orch feature start <project> <feature> --base-dir <base_dir> [options...]
-orch feature cleanup <project> <feature> --base-dir <base_dir> [--keep-branch]
+agvv project init <project> --base-dir <base_dir>
+agvv project adopt <existing_repo_path> <project> --base-dir <base_dir>
+agvv feature start <project> <feature> --base-dir <base_dir> [options...]
+agvv feature cleanup <project> <feature> --base-dir <base_dir> [--keep-branch]
 ```

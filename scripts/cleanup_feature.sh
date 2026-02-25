@@ -12,4 +12,4 @@ BASE_DIR="${3:-$HOME/code}"
 
 shift 3 || true
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-exec uv run --directory "$ROOT_DIR" orch feature cleanup "$PROJECT_NAME" "$FEATURE" --base-dir "$BASE_DIR" "$@"
+exec uv run --directory "$ROOT_DIR" agvv feature cleanup "$PROJECT_NAME" "$FEATURE" --base-dir "$BASE_DIR" "$@"

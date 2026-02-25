@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-class OrchError(RuntimeError):
-    """Raised when an orchestration operation fails."""
+class AgvvError(RuntimeError):
+    """Raised when an Agent Wave orchestration operation fails."""
 
 
 @dataclass(frozen=True)
@@ -29,7 +29,7 @@ def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
             check=True,
         )
     except subprocess.CalledProcessError as exc:
-        raise OrchError(
+        raise AgvvError(
             f"Command failed: {' '.join(cmd)}\n"
             f"stdout:\n{exc.stdout}\n"
             f"stderr:\n{exc.stderr}"
@@ -44,7 +44,7 @@ def _git_success(args: list[str], cwd: Path | None = None) -> bool:
     try:
         _run(["git", *args], cwd=cwd)
         return True
-    except OrchError:
+    except AgvvError:
         return False
 
 
@@ -52,11 +52,11 @@ def parse_kv_pairs(pairs: list[str]) -> dict[str, str]:
     result: dict[str, str] = {}
     for pair in pairs:
         if "=" not in pair:
-            raise OrchError(f"Invalid --param value '{pair}'. Expected KEY=VALUE.")
+            raise AgvvError(f"Invalid --param value '{pair}'. Expected KEY=VALUE.")
         key, value = pair.split("=", 1)
         key = key.strip()
         if not key:
-            raise OrchError(f"Invalid --param value '{pair}'. Key cannot be empty.")
+            raise AgvvError(f"Invalid --param value '{pair}'. Key cannot be empty.")
         result[key] = value
     return result
 
@@ -73,7 +73,7 @@ def layout_paths(project_name: str, base_dir: Path, feature: str | None = None) 
 
 def _ensure_feature_name(feature: str) -> None:
     if feature in {"main", "repo.git"}:
-        raise OrchError(f"Feature branch name '{feature}' is reserved in this layout.")
+        raise AgvvError(f"Feature branch name '{feature}' is reserved in this layout.")
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -85,7 +85,7 @@ def _default_branch(repo_dir: Path) -> str:
     branches_raw = _git(["-C", str(repo_dir), "for-each-ref", "--format=%(refname:short)", "refs/heads"]).stdout
     branches = [line.strip() for line in branches_raw.splitlines() if line.strip()]
     if not branches:
-        raise OrchError("No branches found in bare repo.")
+        raise AgvvError("No branches found in bare repo.")
     for preferred in ("main", "master"):
         if preferred in branches:
             return preferred
@@ -113,13 +113,13 @@ def init_project(project_name: str, base_dir: Path) -> LayoutPaths:
 
 def adopt_project(existing_repo: Path, project_name: str, base_dir: Path) -> tuple[LayoutPaths, str]:
     if not (existing_repo / ".git").exists():
-        raise OrchError(f"{existing_repo} is not a git repository.")
+        raise AgvvError(f"{existing_repo} is not a git repository.")
 
     paths = layout_paths(project_name, base_dir)
     paths.project_dir.mkdir(parents=True, exist_ok=True)
 
     if paths.repo_dir.exists() or paths.main_dir.exists():
-        raise OrchError(
+        raise AgvvError(
             f"Target project already initialized at {paths.project_dir}. "
             "Use a different project name or clean target first."
         )
@@ -146,13 +146,13 @@ def start_feature(
     assert paths.feature_dir is not None
 
     if not paths.repo_dir.exists() or not paths.main_dir.exists():
-        raise OrchError(
+        raise AgvvError(
             f"Project not initialized at {paths.project_dir}. "
-            "Run `orch project init` or `orch project adopt` first."
+            "Run `agvv project init` or `agvv project adopt` first."
         )
 
     if paths.feature_dir.exists():
-        raise OrchError(f"Feature worktree path already exists: {paths.feature_dir}")
+        raise AgvvError(f"Feature worktree path already exists: {paths.feature_dir}")
 
     branch_exists = _git_success(
         ["-C", str(paths.repo_dir), "show-ref", "--verify", "--quiet", f"refs/heads/{feature}"]
@@ -177,7 +177,7 @@ def start_feature(
         "params": params,
         "created_dirs": create_dirs,
     }
-    _write_json(paths.feature_dir / ".orch" / "context.json", metadata)
+    _write_json(paths.feature_dir / ".agvv" / "context.json", metadata)
     return paths
 
 
@@ -192,7 +192,7 @@ def cleanup_feature(
     assert paths.feature_dir is not None
 
     if not paths.repo_dir.exists():
-        raise OrchError(f"Repo not found: {paths.repo_dir}")
+        raise AgvvError(f"Repo not found: {paths.repo_dir}")
 
     if paths.feature_dir.exists():
         _git(["-C", str(paths.repo_dir), "worktree", "remove", str(paths.feature_dir), "--force"])

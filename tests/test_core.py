@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from orch.core import OrchError, adopt_project, cleanup_feature, init_project, parse_kv_pairs, start_feature
+from agvv.core import AgvvError, adopt_project, cleanup_feature, init_project, parse_kv_pairs, start_feature
 
 
 def _git(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -28,7 +28,7 @@ def test_parse_kv_pairs_success() -> None:
 
 @pytest.mark.parametrize("value", ["invalid", "=missing_key"])
 def test_parse_kv_pairs_invalid(value: str) -> None:
-    with pytest.raises(OrchError):
+    with pytest.raises(AgvvError):
         parse_kv_pairs([value])
 
 
@@ -74,7 +74,7 @@ def test_adopt_project_prefers_main_when_present(tmp_path: Path) -> None:
 def test_adopt_project_fails_when_source_not_git_repo(tmp_path: Path) -> None:
     src = tmp_path / "not-a-repo"
     src.mkdir()
-    with pytest.raises(OrchError):
+    with pytest.raises(AgvvError):
         adopt_project(src, "adopted", tmp_path)
 
 
@@ -83,7 +83,7 @@ def test_adopt_project_fails_when_target_already_initialized(tmp_path: Path) -> 
     target = tmp_path / "adopted"
     target.mkdir()
     (target / "repo.git").mkdir()
-    with pytest.raises(OrchError):
+    with pytest.raises(AgvvError):
         adopt_project(existing_repo, "adopted", tmp_path)
 
 
@@ -92,7 +92,7 @@ def test_adopt_project_fails_when_bare_repo_has_no_branches(tmp_path: Path) -> N
     src.mkdir(parents=True, exist_ok=True)
     _git(["init"], cwd=src)
 
-    with pytest.raises(OrchError, match="No branches found in bare repo"):
+    with pytest.raises(AgvvError, match="No branches found in bare repo"):
         adopt_project(src, "adopted-empty", tmp_path)
 
 
@@ -115,7 +115,7 @@ def test_start_feature_creates_worktree_metadata_and_dirs(tmp_path: Path) -> Non
     assert (paths.feature_dir / "src").exists()
     assert (paths.feature_dir / "tests" / "unit").exists()
 
-    metadata_path = paths.feature_dir / ".orch" / "context.json"
+    metadata_path = paths.feature_dir / ".agvv" / "context.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     assert metadata["agent"] == "codex"
     assert metadata["task_id"] == "task-1"
@@ -125,7 +125,7 @@ def test_start_feature_creates_worktree_metadata_and_dirs(tmp_path: Path) -> Non
 
 def test_start_feature_fails_on_reserved_name(tmp_path: Path) -> None:
     init_project("demo", tmp_path)
-    with pytest.raises(OrchError):
+    with pytest.raises(AgvvError):
         start_feature(
             project_name="demo",
             feature="main",
@@ -140,7 +140,7 @@ def test_start_feature_fails_on_reserved_name(tmp_path: Path) -> None:
 
 
 def test_start_feature_fails_when_project_not_initialized(tmp_path: Path) -> None:
-    with pytest.raises(OrchError):
+    with pytest.raises(AgvvError):
         start_feature(
             project_name="missing",
             feature="feat-1",
@@ -190,7 +190,7 @@ def test_start_feature_fails_when_feature_worktree_path_exists(tmp_path: Path) -
     project_dir = tmp_path / "demo"
     (project_dir / "feat-exists").mkdir(parents=True, exist_ok=True)
 
-    with pytest.raises(OrchError):
+    with pytest.raises(AgvvError):
         start_feature(
             project_name="demo",
             feature="feat-exists",
@@ -263,10 +263,10 @@ def test_cleanup_feature_deletes_branch_when_worktree_already_missing(tmp_path: 
 
 
 def test_cleanup_feature_fails_when_repo_missing(tmp_path: Path) -> None:
-    with pytest.raises(OrchError):
+    with pytest.raises(AgvvError):
         cleanup_feature("demo", "feat-any", tmp_path, delete_branch=True)
 
 
 def test_cleanup_feature_fails_on_reserved_name(tmp_path: Path) -> None:
-    with pytest.raises(OrchError):
+    with pytest.raises(AgvvError):
         cleanup_feature("demo", "repo.git", tmp_path, delete_branch=True)

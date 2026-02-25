@@ -10,4 +10,4 @@ PROJECT_NAME="$1"
 BASE_DIR="${2:-$HOME/code}"
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-exec uv run --directory "$ROOT_DIR" orch project init "$PROJECT_NAME" --base-dir "$BASE_DIR"
+exec uv run --directory "$ROOT_DIR" agvv project init "$PROJECT_NAME" --base-dir "$BASE_DIR"

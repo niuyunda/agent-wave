@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from orch.cli import app
+from agvv.cli import app
 
 
 runner = CliRunner()
@@ -54,7 +54,7 @@ def test_cli_project_init_and_feature_flow(tmp_path: Path) -> None:
     assert start_result.exit_code == 0
     assert "Created feature worktree" in start_result.stdout
 
-    metadata = json.loads((base / "demo" / "feat-cli" / ".orch" / "context.json").read_text(encoding="utf-8"))
+    metadata = json.loads((base / "demo" / "feat-cli" / ".agvv" / "context.json").read_text(encoding="utf-8"))
     assert metadata["agent"] == "agent-a"
     assert metadata["params"] == {"model": "gpt"}
 
@@ -117,10 +117,10 @@ def test_cli_feature_cleanup_missing_repo_returns_error(tmp_path: Path) -> None:
 
 def test_cli_module_entrypoint_help() -> None:
     old_argv = sys.argv[:]
-    sys.argv = ["orch", "--help"]
+    sys.argv = ["agvv", "--help"]
     try:
         with pytest.raises(SystemExit) as exc_info:
-            runpy.run_module("orch.cli", run_name="__main__")
+            runpy.run_module("agvv.cli", run_name="__main__")
         assert exc_info.value.code == 0
     finally:
         sys.argv = old_argv
