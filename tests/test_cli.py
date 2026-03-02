@@ -375,6 +375,39 @@ def test_cli_pr_monitor_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "action=keep_waiting" in result.stdout
 
 
+def test_cli_pr_monitor_writes_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    @dataclass
+    class _FakePr:
+        status: str
+        reason: str
+        state: str
+        review_decision: str | None
+
+    @dataclass
+    class _FakeWait:
+        result: _FakePr
+        attempts: int
+        timed_out: bool
+
+    monkeypatch.setattr(
+        "agvv.cli.wait_pr_status",
+        lambda repo, pr_number, interval_seconds, max_attempts: _FakeWait(
+            result=_FakePr(status="waiting", reason="pending", state="OPEN", review_decision=None),
+            attempts=2,
+            timed_out=True,
+        ),
+    )
+
+    log_file = tmp_path / "monitor.log"
+    result = runner.invoke(
+        app,
+        ["pr", "monitor", "--repo", "owner/repo", "--pr", "12", "--log-file", str(log_file)],
+    )
+    assert result.exit_code == 0
+    assert log_file.exists()
+    assert "action=keep_waiting" in log_file.read_text(encoding="utf-8")
+
+
 def test_cli_pr_monitor_auto_retry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     @dataclass
     class _FakePr:
