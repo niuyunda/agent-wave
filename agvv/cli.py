@@ -48,6 +48,12 @@ def _exit_with_agvv_error(exc: AgvvError) -> None:
     raise typer.Exit(code=1) from exc
 
 
+def _resolve_optional_path(path: str | None) -> Path | None:
+    """Resolve an optional path string to an absolute ``Path``."""
+
+    return Path(path).expanduser().resolve() if path else None
+
+
 @project_app.command("init")
 def project_init(
     project_name: str,
@@ -184,7 +190,7 @@ def orch_spawn(
             agent=agent,
             agent_cmd=agent_cmd,
             from_branch=from_branch,
-            tasks_path=Path(tasks_path).expanduser().resolve() if tasks_path else None,
+            tasks_path=_resolve_optional_path(tasks_path),
         )
     except AgvvError as exc:
         _exit_with_agvv_error(exc)
@@ -211,7 +217,7 @@ def orch_list(
 
     try:
         task_items = list_tasks(
-            path=Path(tasks_path).expanduser().resolve() if tasks_path else None,
+            path=_resolve_optional_path(tasks_path),
             project_name=project_name,
             status=status,
         )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -119,6 +120,9 @@ def resolve_tasks_path(path: Path | None = None) -> Path:
 def _coerce_task_record(raw: dict[str, Any]) -> TaskRecord:
     """Convert raw JSON task object into a typed ``TaskRecord``."""
 
+    if not isinstance(raw, dict):
+        raise AgvvError("Invalid task registry entry; each task must be an object.")
+
     try:
         return TaskRecord(
             id=str(raw["id"]),
@@ -145,6 +149,8 @@ def load_task_registry(path: Path | None = None) -> TaskRegistry:
 
     try:
         payload = json.loads(registry_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise AgvvError(f"Failed to read task registry at {registry_path}: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise AgvvError(f"Task registry JSON is invalid at {registry_path}: {exc}") from exc
 
@@ -152,13 +158,29 @@ def load_task_registry(path: Path | None = None) -> TaskRegistry:
         raise AgvvError(f"Task registry root must be an object at {registry_path}.")
 
     version = payload.get("version", 1)
+    try:
+        parsed_version = int(version)
+    except (TypeError, ValueError) as exc:
+        raise AgvvError(f"Task registry field 'version' must be an integer at {registry_path}: {exc}") from exc
+
     tasks_raw = payload.get("tasks", [])
     if not isinstance(tasks_raw, list):
         raise AgvvError(f"Task registry field 'tasks' must be a list at {registry_path}.")
 
     tasks = [_coerce_task_record(item) for item in tasks_raw]
     updated_at = str(payload.get("updated_at", datetime.now(tz=timezone.utc).isoformat()))
-    return TaskRegistry(version=int(version), updated_at=updated_at, tasks=tasks)
+    return TaskRegistry(version=parsed_version, updated_at=updated_at, tasks=tasks)
+
+
+def _parse_task_updated_at(value: str | None) -> datetime:
+    """Parse task timestamp for stable chronological sorting."""
+
+    if not value:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
 
 
 def list_tasks(
@@ -173,10 +195,12 @@ def list_tasks(
         tasks = [task for task in tasks if task.project_name == project_name]
     if status is not None:
         tasks = [task for task in tasks if task.status == status]
-    return sorted(tasks, key=lambda item: item.updated_at, reverse=True)
+    return sorted(tasks, key=lambda item: _parse_task_updated_at(item.updated_at), reverse=True)
 
 
 def _task_record_to_dict(task: TaskRecord) -> dict[str, Any]:
+    """Convert a ``TaskRecord`` into JSON-serializable dictionary payload."""
+
     return {
         "id": task.id,
         "project_name": task.project_name,
@@ -215,7 +239,8 @@ def tmux_new_session(session: str, cwd: Path, command: str) -> None:
 
     if tmux_session_exists(session):
         raise AgvvError(f"tmux session already exists: {session}")
-    _run(["tmux", "new-session", "-d", "-s", session, f"cd '{cwd}' && {command}"])
+    quoted_cwd = shlex.quote(str(cwd))
+    _run(["tmux", "new-session", "-d", "-s", session, f"cd {quoted_cwd} && {command}"])
 
 
 def create_orch_task(

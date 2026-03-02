@@ -160,7 +160,10 @@ def test_cli_orch_list_reads_tasks_registry(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    result = runner.invoke(app, ["orch", "list", "--tasks-path", str(tasks_path), "--status", "failed"])
+    result = runner.invoke(
+        app,
+        ["orch", "list", "--tasks-path", str(tasks_path), "--status", "failed", "--project", "calcproj"],
+    )
     assert result.exit_code == 0
     assert "t2" in result.stdout
     assert "calcproj/feat-sub" in result.stdout

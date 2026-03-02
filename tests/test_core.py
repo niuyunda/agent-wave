@@ -329,6 +329,64 @@ def test_load_task_registry_and_list_filters(tmp_path: Path) -> None:
     assert only_failed[0].id == "t2"
 
 
+def test_load_task_registry_rejects_non_object_task_item(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    tasks_path.write_text(
+        json.dumps({"version": 1, "updated_at": "2026-03-02T10:00:00+00:00", "tasks": ["bad-item"]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AgvvError, match="each task must be an object"):
+        load_task_registry(tasks_path)
+
+
+def test_load_task_registry_rejects_non_integer_version(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    tasks_path.write_text(
+        json.dumps({"version": "abc", "updated_at": "2026-03-02T10:00:00+00:00", "tasks": []}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AgvvError, match="version' must be an integer"):
+        load_task_registry(tasks_path)
+
+
+def test_list_tasks_sorts_by_parsed_datetime(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    tasks_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-03-02T10:00:00+00:00",
+                "tasks": [
+                    {
+                        "id": "early",
+                        "project_name": "calcproj",
+                        "feature": "feat-early",
+                        "status": "running",
+                        "session": "s1",
+                        "agent": "codex",
+                        "updated_at": "2026-03-02T10:00:00+00:00",
+                    },
+                    {
+                        "id": "late",
+                        "project_name": "calcproj",
+                        "feature": "feat-late",
+                        "status": "running",
+                        "session": "s2",
+                        "agent": "codex",
+                        "updated_at": "2026-03-02T23:30:00+13:00",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    items = list_tasks(tasks_path)
+    assert items[0].id == "late"
+
+
 def test_resolve_tasks_path_prefers_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     expected = tmp_path / "env-tasks.json"
     monkeypatch.setenv("AGVV_TASKS_PATH", str(expected))
