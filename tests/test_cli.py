@@ -347,6 +347,23 @@ def test_cli_pr_next_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "action=retry" in result.stdout
 
 
+def test_cli_pr_feedback_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
+    @dataclass
+    class _FakeSummary:
+        actionable: list[str]
+        skipped: list[str]
+
+    monkeypatch.setattr(
+        "agvv.cli.summarize_pr_feedback",
+        lambda repo, pr_number: _FakeSummary(actionable=["Actionable comments posted: 2"], skipped=["Skipped informational bot comment"]),
+    )
+
+    result = runner.invoke(app, ["pr", "feedback", "--repo", "owner/repo", "--pr", "12"])
+    assert result.exit_code == 0
+    assert "actionable_count=1" in result.stdout
+    assert "ACTIONABLE" in result.stdout
+
+
 def test_cli_pr_monitor_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
     @dataclass
     class _FakePr:
