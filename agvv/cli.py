@@ -8,16 +8,26 @@ from typing import Annotated
 
 import typer
 
-from agvv.core import AgvvError, adopt_project, cleanup_feature, init_project, parse_kv_pairs, start_feature
+from agvv.core import (
+    AgvvError,
+    adopt_project,
+    cleanup_feature,
+    init_project,
+    list_tasks,
+    parse_kv_pairs,
+    start_feature,
+)
 
 app = typer.Typer(help="Agent Wave: orchestrate parallel git worktree workflow for coding tasks.")
 project_app = typer.Typer(help="Project-level operations.")
 feature_app = typer.Typer(help="Feature branch/worktree operations.")
+orch_app = typer.Typer(help="Task orchestration registry operations.")
 _DEFAULT_BASE_DIR = "~/code"
 _LOGGER = logging.getLogger(__name__)
 
 app.add_typer(project_app, name="project")
 app.add_typer(feature_app, name="feature")
+app.add_typer(orch_app, name="orch")
 
 
 def _base_dir(path: str | None) -> Path:
@@ -139,6 +149,42 @@ def feature_cleanup(
 
     suffix = " (branch kept)" if keep_branch else ""
     typer.echo(f"Cleaned feature worktree/branch: {feature}{suffix}")
+
+
+@orch_app.command("list")
+def orch_list(
+    tasks_path: Annotated[
+        str | None,
+        typer.Option(
+            "--tasks-path",
+            help="Path to tasks registry JSON (default: AGVV_TASKS_PATH or ~/.agvv/tasks.json).",
+        ),
+    ] = None,
+    project_name: Annotated[str | None, typer.Option("--project", help="Filter by project name.")] = None,
+    status: Annotated[str | None, typer.Option("--status", help="Filter by task status.")] = None,
+) -> None:
+    """List orchestration tasks from the registry."""
+
+    try:
+        task_items = list_tasks(
+            path=Path(tasks_path).expanduser().resolve() if tasks_path else None,
+            project_name=project_name,
+            status=status,
+        )
+    except AgvvError as exc:
+        _exit_with_agvv_error(exc)
+
+    if not task_items:
+        typer.echo("No tasks found.")
+        return
+
+    for task in task_items:
+        session = task.session or "-"
+        agent = task.agent or "-"
+        typer.echo(
+            f"{task.id}\t{task.status}\t{task.project_name}/{task.feature}\t"
+            f"session={session}\tagent={agent}\tupdated={task.updated_at}"
+        )
 
 
 if __name__ == "__main__":

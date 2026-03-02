@@ -6,7 +6,17 @@ from pathlib import Path
 
 import pytest
 
-from agvv.core import AgvvError, adopt_project, cleanup_feature, init_project, parse_kv_pairs, start_feature
+from agvv.core import (
+    AgvvError,
+    adopt_project,
+    cleanup_feature,
+    init_project,
+    list_tasks,
+    load_task_registry,
+    parse_kv_pairs,
+    resolve_tasks_path,
+    start_feature,
+)
 
 
 def _git(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -270,3 +280,55 @@ def test_cleanup_feature_fails_when_repo_missing(tmp_path: Path) -> None:
 def test_cleanup_feature_fails_on_reserved_name(tmp_path: Path) -> None:
     with pytest.raises(AgvvError):
         cleanup_feature("demo", "repo.git", tmp_path, delete_branch=True)
+
+
+def test_load_task_registry_returns_empty_when_missing(tmp_path: Path) -> None:
+    registry = load_task_registry(tmp_path / "tasks.json")
+    assert registry.version == 1
+    assert registry.tasks == []
+
+
+def test_load_task_registry_and_list_filters(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    tasks_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-03-02T10:00:00+00:00",
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "project_name": "calcproj",
+                        "feature": "feat-add",
+                        "status": "running",
+                        "session": "s1",
+                        "agent": "codex",
+                        "updated_at": "2026-03-02T10:01:00+00:00",
+                    },
+                    {
+                        "id": "t2",
+                        "project_name": "calcproj",
+                        "feature": "feat-sub",
+                        "status": "failed",
+                        "session": "s2",
+                        "agent": "codex",
+                        "updated_at": "2026-03-02T10:02:00+00:00",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    registry = load_task_registry(tasks_path)
+    assert len(registry.tasks) == 2
+
+    only_failed = list_tasks(tasks_path, project_name="calcproj", status="failed")
+    assert len(only_failed) == 1
+    assert only_failed[0].id == "t2"
+
+
+def test_resolve_tasks_path_prefers_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    expected = tmp_path / "env-tasks.json"
+    monkeypatch.setenv("AGVV_TASKS_PATH", str(expected))
+    assert resolve_tasks_path() == expected.resolve()

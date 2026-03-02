@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 class AgvvError(RuntimeError):
@@ -25,6 +27,30 @@ class LayoutPaths:
 
 
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_TASKS_ENV_VAR = "AGVV_TASKS_PATH"
+_DEFAULT_TASKS_PATH = Path("~/.agvv/tasks.json")
+
+
+@dataclass(frozen=True)
+class TaskRecord:
+    """Single orchestration task record from the registry."""
+
+    id: str
+    project_name: str
+    feature: str
+    status: str
+    session: str | None
+    agent: str | None
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class TaskRegistry:
+    """In-memory representation of the tasks registry."""
+
+    version: int
+    updated_at: str
+    tasks: list[TaskRecord]
 
 
 def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -75,6 +101,79 @@ def parse_kv_pairs(pairs: list[str]) -> dict[str, str]:
             raise AgvvError(f"Invalid --param value '{pair}'. Key cannot be empty.")
         result[key] = value
     return result
+
+
+def resolve_tasks_path(path: Path | None = None) -> Path:
+    """Resolve tasks registry path from argument/env/default."""
+
+    if path is not None:
+        return path.expanduser().resolve()
+
+    env_path = os.getenv(_TASKS_ENV_VAR)
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+
+    return _DEFAULT_TASKS_PATH.expanduser().resolve()
+
+
+def _coerce_task_record(raw: dict[str, Any]) -> TaskRecord:
+    """Convert raw JSON task object into a typed ``TaskRecord``."""
+
+    try:
+        return TaskRecord(
+            id=str(raw["id"]),
+            project_name=str(raw["project_name"]),
+            feature=str(raw["feature"]),
+            status=str(raw["status"]),
+            session=(str(raw["session"]) if raw.get("session") is not None else None),
+            agent=(str(raw["agent"]) if raw.get("agent") is not None else None),
+            updated_at=str(raw["updated_at"]),
+        )
+    except KeyError as exc:
+        raise AgvvError(f"Invalid task registry entry; missing required key: {exc.args[0]}") from exc
+
+
+def load_task_registry(path: Path | None = None) -> TaskRegistry:
+    """Load task registry JSON from disk.
+
+    Returns an empty registry if file does not exist.
+    """
+
+    registry_path = resolve_tasks_path(path)
+    if not registry_path.exists():
+        return TaskRegistry(version=1, updated_at=datetime.now(tz=timezone.utc).isoformat(), tasks=[])
+
+    try:
+        payload = json.loads(registry_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise AgvvError(f"Task registry JSON is invalid at {registry_path}: {exc}") from exc
+
+    if not isinstance(payload, dict):
+        raise AgvvError(f"Task registry root must be an object at {registry_path}.")
+
+    version = payload.get("version", 1)
+    tasks_raw = payload.get("tasks", [])
+    if not isinstance(tasks_raw, list):
+        raise AgvvError(f"Task registry field 'tasks' must be a list at {registry_path}.")
+
+    tasks = [_coerce_task_record(item) for item in tasks_raw]
+    updated_at = str(payload.get("updated_at", datetime.now(tz=timezone.utc).isoformat()))
+    return TaskRegistry(version=int(version), updated_at=updated_at, tasks=tasks)
+
+
+def list_tasks(
+    path: Path | None = None,
+    project_name: str | None = None,
+    status: str | None = None,
+) -> list[TaskRecord]:
+    """Return tasks from registry with optional project/status filters."""
+
+    tasks = load_task_registry(path).tasks
+    if project_name is not None:
+        tasks = [task for task in tasks if task.project_name == project_name]
+    if status is not None:
+        tasks = [task for task in tasks if task.status == status]
+    return sorted(tasks, key=lambda item: item.updated_at, reverse=True)
 
 
 def layout_paths(project_name: str, base_dir: Path, feature: str | None = None) -> LayoutPaths:

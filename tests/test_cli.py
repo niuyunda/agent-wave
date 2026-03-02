@@ -20,6 +20,7 @@ def test_cli_help_commands() -> None:
     assert result.exit_code == 0
     assert "project" in result.stdout
     assert "feature" in result.stdout
+    assert "orch" in result.stdout
 
 
 def test_cli_project_init_and_feature_flow(tmp_path: Path) -> None:
@@ -133,3 +134,38 @@ def test_cli_project_init_error_path(tmp_path: Path) -> None:
     result = runner.invoke(app, ["project", "init", "broken", "--base-dir", str(base)])
     assert result.exit_code != 0
     assert "Command failed: git -C" in result.stderr
+
+
+def test_cli_orch_list_reads_tasks_registry(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    tasks_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-03-02T10:00:00+00:00",
+                "tasks": [
+                    {
+                        "id": "t2",
+                        "project_name": "calcproj",
+                        "feature": "feat-sub",
+                        "status": "failed",
+                        "session": "tmux-2",
+                        "agent": "codex",
+                        "updated_at": "2026-03-02T10:02:00+00:00",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["orch", "list", "--tasks-path", str(tasks_path), "--status", "failed"])
+    assert result.exit_code == 0
+    assert "t2" in result.stdout
+    assert "calcproj/feat-sub" in result.stdout
+
+
+def test_cli_orch_list_no_tasks(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["orch", "list", "--tasks-path", str(tmp_path / "missing.json")])
+    assert result.exit_code == 0
+    assert "No tasks found." in result.stdout
