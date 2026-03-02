@@ -253,16 +253,26 @@ def test_cli_pr_check_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_cli_pr_wait_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
     @dataclass
-    class _FakeResult:
+    class _FakePr:
         status: str
         reason: str
         state: str
         review_decision: str | None
 
+    @dataclass
+    class _FakeWait:
+        result: _FakePr
+        attempts: int
+        timed_out: bool
+
     monkeypatch.setattr(
         "agvv.cli.wait_pr_status",
-        lambda repo, pr_number, interval_seconds, max_attempts: _FakeResult(
-            status="needs_work", reason="changes_requested", state="OPEN", review_decision="CHANGES_REQUESTED"
+        lambda repo, pr_number, interval_seconds, max_attempts: _FakeWait(
+            result=_FakePr(
+                status="needs_work", reason="changes_requested", state="OPEN", review_decision="CHANGES_REQUESTED"
+            ),
+            attempts=4,
+            timed_out=False,
         ),
     )
 
@@ -272,3 +282,4 @@ def test_cli_pr_wait_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert result.exit_code == 0
     assert "status=needs_work" in result.stdout
+    assert "attempts=4" in result.stdout

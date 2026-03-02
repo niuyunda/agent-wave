@@ -510,6 +510,21 @@ def test_wait_pr_status_polls_until_terminal(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr("agvv.core.check_pr_status", _fake_check)
     monkeypatch.setattr("agvv.core.time.sleep", lambda _s: None)
 
-    result = wait_pr_status("owner/repo", 7, interval_seconds=1, max_attempts=5)
-    assert result.status == "needs_work"
+    wait_result = wait_pr_status("owner/repo", 7, interval_seconds=1, max_attempts=5)
+    assert wait_result.result.status == "needs_work"
+    assert wait_result.attempts == 3
+    assert wait_result.timed_out is False
     assert calls["n"] == 3
+
+
+def test_wait_pr_status_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "agvv.core.check_pr_status",
+        lambda repo, pr_number: type("R", (), {"status": "waiting", "reason": "pending", "state": "OPEN", "review_decision": None})(),
+    )
+    monkeypatch.setattr("agvv.core.time.sleep", lambda _s: None)
+
+    wait_result = wait_pr_status("owner/repo", 9, interval_seconds=1, max_attempts=3)
+    assert wait_result.result.status == "waiting"
+    assert wait_result.attempts == 3
+    assert wait_result.timed_out is True

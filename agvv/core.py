@@ -65,6 +65,15 @@ class PrCheckResult:
     review_decision: str | None
 
 
+@dataclass(frozen=True)
+class PrWaitResult:
+    """Result of polling a PR for status updates."""
+
+    result: PrCheckResult
+    attempts: int
+    timed_out: bool
+
+
 def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     """Run a shell command and normalize failures into ``AgvvError``."""
 
@@ -385,7 +394,7 @@ def check_pr_status(repo: str, pr_number: int) -> PrCheckResult:
     return PrCheckResult(status="waiting", reason="pending_review_or_ci", state=state, review_decision=review_decision)
 
 
-def wait_pr_status(repo: str, pr_number: int, interval_seconds: int = 120, max_attempts: int = 30) -> PrCheckResult:
+def wait_pr_status(repo: str, pr_number: int, interval_seconds: int = 120, max_attempts: int = 30) -> PrWaitResult:
     """Poll PR status every interval until terminal or attempts exhausted."""
 
     if interval_seconds <= 0:
@@ -400,7 +409,8 @@ def wait_pr_status(repo: str, pr_number: int, interval_seconds: int = 120, max_a
         time.sleep(interval_seconds)
         last = check_pr_status(repo=repo, pr_number=pr_number)
         attempts += 1
-    return last
+
+    return PrWaitResult(result=last, attempts=attempts, timed_out=last.status == "waiting")
 
 
 def layout_paths(project_name: str, base_dir: Path, feature: str | None = None) -> LayoutPaths:

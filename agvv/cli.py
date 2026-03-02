@@ -269,7 +269,7 @@ def pr_wait(
     """Wait for PR result with default 2-min interval and max 30 attempts."""
 
     try:
-        result = wait_pr_status(
+        wait_result = wait_pr_status(
             repo=repo,
             pr_number=pr_number,
             interval_seconds=interval_seconds,
@@ -278,9 +278,11 @@ def pr_wait(
     except AgvvError as exc:
         _exit_with_agvv_error(exc)
 
+    result = wait_result.result
     typer.echo(
         f"status={result.status}\treason={result.reason}\tstate={result.state}\t"
-        f"review={result.review_decision or '-'}"
+        f"review={result.review_decision or '-'}\tattempts={wait_result.attempts}\t"
+        f"timed_out={'yes' if wait_result.timed_out else 'no'}"
     )
 
 
