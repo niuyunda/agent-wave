@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
@@ -58,6 +59,17 @@ def _resolve_optional_path(path: str | None) -> Path | None:
     """Resolve an optional path string to an absolute ``Path``."""
 
     return Path(path).expanduser().resolve() if path else None
+
+
+def _append_monitor_log(log_file: Path | None, line: str) -> None:
+    """Append a timestamped monitor line when log_file is provided."""
+
+    if log_file is None:
+        return
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(tz=timezone.utc).isoformat()
+    with log_file.open("a", encoding="utf-8") as handle:
+        handle.write(f"{stamp}\t{line}\n")
 
 
 @project_app.command("init")
@@ -352,9 +364,11 @@ def pr_monitor(
         str | None,
         typer.Option("--tasks-path", help="Path to tasks registry JSON."),
     ] = None,
+    log_file: Annotated[str | None, typer.Option("--log-file", help="Optional path to append monitor events.")] = None,
 ) -> None:
     """Monitor PR; if changes requested, optionally trigger retry; otherwise keep waiting until timeout."""
 
+    log_path = _resolve_optional_path(log_file)
     try:
         waited = wait_pr_status(
             repo=repo,
@@ -368,7 +382,9 @@ def pr_monitor(
     result = waited.result
     if result.status == "needs_work":
         if not auto_retry:
-            typer.echo("status=needs_work\taction=manual_retry\tnote=Review requested changes; run orch retry.")
+            msg = "status=needs_work\taction=manual_retry\tnote=Review requested changes; run orch retry."
+            _append_monitor_log(log_path, msg)
+            typer.echo(msg)
             return
         if not task_id or not agent_cmd:
             raise typer.BadParameter("--task-id and --agent-cmd are required when --auto-retry is set")
@@ -382,20 +398,26 @@ def pr_monitor(
             )
         except AgvvError as exc:
             _exit_with_agvv_error(exc)
-        typer.echo(f"status=needs_work\taction=retry_started\ttask={retried.id}\tsession={retried.session}")
+        msg = f"status=needs_work\taction=retry_started\ttask={retried.id}\tsession={retried.session}"
+        _append_monitor_log(log_path, msg)
+        typer.echo(msg)
         return
 
     if result.status == "waiting":
-        typer.echo(
+        msg = (
             f"status=waiting\taction=keep_waiting\treason=no-change-requested\tattempts={waited.attempts}\t"
             f"timed_out={'yes' if waited.timed_out else 'no'}"
         )
+        _append_monitor_log(log_path, msg)
+        typer.echo(msg)
         return
 
-    typer.echo(
+    msg = (
         f"status={result.status}\taction=no_retry\tnote=No code change requested.\tattempts={waited.attempts}\t"
         f"timed_out={'yes' if waited.timed_out else 'no'}"
     )
+    _append_monitor_log(log_path, msg)
+    typer.echo(msg)
 
 
 if __name__ == "__main__":
