@@ -1,3 +1,5 @@
+"""Tasking state-machine tests covering runtime and recovery behaviors."""
+
 from __future__ import annotations
 
 import json
@@ -21,11 +23,15 @@ from agvv.tasking import (
 
 
 def _write_spec(path: Path, payload: dict) -> Path:
+    """Write a JSON task spec fixture and return its path."""
+
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 
 
 def test_load_task_spec_json_success(tmp_path: Path) -> None:
+    """Load JSON spec and verify defaults and path normalization."""
+
     spec_path = _write_spec(
         tmp_path / "task.json",
         {
@@ -44,6 +50,8 @@ def test_load_task_spec_json_success(tmp_path: Path) -> None:
 
 
 def test_task_store_create_and_list(tmp_path: Path) -> None:
+    """Create a task in SQLite store and list it back."""
+
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="taskA",
@@ -62,6 +70,8 @@ def test_task_store_create_and_list(tmp_path: Path) -> None:
 
 
 def test_run_task_from_spec_starts_coding_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Start a task from spec and ensure coding session is launched."""
+
     spec_path = _write_spec(
         tmp_path / "task.json",
         {
@@ -93,6 +103,8 @@ def test_run_task_from_spec_starts_coding_session(monkeypatch: pytest.MonkeyPatc
 
 
 def test_retry_task_relaunches_when_session_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Retry a failed task and clear terminal error metadata."""
+
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_retry",
@@ -125,6 +137,8 @@ def test_retry_task_relaunches_when_session_missing(monkeypatch: pytest.MonkeyPa
 
 
 def test_retry_task_rejects_non_recoverable_state(tmp_path: Path) -> None:
+    """Reject retry attempts for terminal non-recoverable states."""
+
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_non_retryable",
@@ -145,6 +159,8 @@ def test_retry_task_rejects_non_recoverable_state(tmp_path: Path) -> None:
 
 
 def test_daemon_run_once_promotes_coding_to_pr_open(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Promote coding task to PR_OPEN when coding session has finished."""
+
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_daemon",
@@ -173,6 +189,8 @@ def test_daemon_run_once_promotes_coding_to_pr_open(monkeypatch: pytest.MonkeyPa
 
 
 def test_daemon_run_once_relaunches_on_needs_work(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Relaunch coding session when PR status requires additional work."""
+
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_review",
@@ -216,6 +234,8 @@ def test_daemon_run_once_relaunches_on_needs_work(monkeypatch: pytest.MonkeyPatc
 
 
 def test_cleanup_task_marks_cleaned(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Mark task as cleaned after successful cleanup operations."""
+
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_clean",
@@ -247,6 +267,8 @@ def test_cleanup_force_respects_keep_branch_policy(
     keep_branch: bool,
     expect_branch_delete: bool,
 ) -> None:
+    """Force cleanup must honor keep-branch policy before branch deletion."""
+
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id=f"task_force_{int(keep_branch)}",
@@ -287,6 +309,8 @@ def test_cleanup_force_respects_keep_branch_policy(
 
 
 def test_ensure_pr_number_falls_back_when_create_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Fallback to listing existing PR when PR creation command fails."""
+
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_pr_fallback",
@@ -315,6 +339,8 @@ def test_ensure_pr_number_falls_back_when_create_fails(monkeypatch: pytest.Monke
 
 
 def test_list_task_statuses_filters_state(tmp_path: Path) -> None:
+    """Filter listed task snapshots by requested state."""
+
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_list",

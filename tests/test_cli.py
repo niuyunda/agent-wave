@@ -1,3 +1,5 @@
+"""CLI behavior tests for task/daemon command surface."""
+
 from __future__ import annotations
 
 import runpy
@@ -16,6 +18,8 @@ runner = CliRunner()
 
 
 def test_cli_help_only_new_commands() -> None:
+    """Show top-level help and ensure only new command groups are exposed."""
+
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "task" in result.stdout
@@ -27,6 +31,8 @@ def test_cli_help_only_new_commands() -> None:
 
 
 def test_cli_task_help_commands() -> None:
+    """Show task help and verify expected subcommands are listed."""
+
     result = runner.invoke(app, ["task", "--help"])
     assert result.exit_code == 0
     assert "run" in result.stdout
@@ -36,12 +42,16 @@ def test_cli_task_help_commands() -> None:
 
 
 def test_cli_daemon_help_commands() -> None:
+    """Show daemon help and verify the run command is listed."""
+
     result = runner.invoke(app, ["daemon", "--help"])
     assert result.exit_code == 0
     assert "run" in result.stdout
 
 
 def test_cli_module_entrypoint_help(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Execute module entrypoint with --help and expect clean exit."""
+
     monkeypatch.setattr(sys, "argv", ["agvv", "--help"])
     with pytest.raises(SystemExit) as exc_info:
         runpy.run_module("agvv.cli", run_name="__main__")
@@ -49,6 +59,8 @@ def test_cli_module_entrypoint_help(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_cli_task_run_invokes_tasking(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Invoke task run command and ensure tasking adapter receives paths."""
+
     @dataclass
     class _FakeTask:
         id: str
@@ -84,6 +96,8 @@ def test_cli_task_run_invokes_tasking(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
 
 def test_cli_task_status_no_tasks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Print friendly message when status query returns no tasks."""
+
     monkeypatch.setattr("agvv.cli.list_task_statuses", lambda db_path, state=None: [])
     result = runner.invoke(app, ["task", "status", "--db-path", str(tmp_path / "tasks.db")])
     assert result.exit_code == 0
@@ -91,6 +105,8 @@ def test_cli_task_status_no_tasks(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 
 
 def test_cli_task_status_filters_by_task_id(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Filter status output by task id at CLI layer."""
+
     @dataclass
     class _FakeTask:
         id: str
@@ -140,6 +156,8 @@ def test_cli_task_status_filters_by_task_id(monkeypatch: pytest.MonkeyPatch, tmp
 
 
 def test_cli_task_retry_invokes_tasking(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Invoke task retry command and forward args to tasking layer."""
+
     @dataclass
     class _FakeTask:
         id: str
@@ -159,6 +177,8 @@ def test_cli_task_retry_invokes_tasking(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
 
 def test_cli_task_cleanup_invokes_tasking(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Invoke task cleanup command and print resulting state."""
+
     @dataclass
     class _FakeTask:
         id: str
@@ -177,6 +197,8 @@ def test_cli_task_cleanup_invokes_tasking(monkeypatch: pytest.MonkeyPatch, tmp_p
 
 
 def test_cli_daemon_run_once(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Run daemon once mode and render reconciled task lines."""
+
     @dataclass
     class _FakeTask:
         id: str
@@ -194,6 +216,8 @@ def test_cli_daemon_run_once(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
 
 def test_cli_daemon_run_loop(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Run daemon loop mode and print terminal loop count."""
+
     monkeypatch.setattr("agvv.cli.daemon_run_loop", lambda db_path, interval_seconds, max_loops: 3)
     result = runner.invoke(
         app,

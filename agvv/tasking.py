@@ -92,10 +92,14 @@ def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
 
 
 def _now_iso() -> str:
+    """Return current UTC timestamp in ISO 8601 format."""
+
     return datetime.now(tz=timezone.utc).isoformat()
 
 
 def _parse_iso(value: str | None) -> datetime:
+    """Parse ISO timestamp into a UTC-aware datetime."""
+
     if not value:
         return datetime.min.replace(tzinfo=timezone.utc)
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -105,6 +109,8 @@ def _parse_iso(value: str | None) -> datetime:
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
+    """Convert user-provided values into booleans with a default fallback."""
+
     if value is None:
         return default
     if isinstance(value, bool):
@@ -119,6 +125,8 @@ def _coerce_bool(value: Any, default: bool) -> bool:
 
 
 def _coerce_int(value: Any, label: str, default: int, min_value: int = 0) -> int:
+    """Convert user-provided values into bounded integers."""
+
     if value is None:
         return default
     try:
@@ -169,9 +177,13 @@ class TaskSpec:
     commit_message: str | None = None
 
     def normalized_session(self) -> str:
+        """Return a deterministic tmux session name for the task."""
+
         return self.session or f"agvv-{self.task_id}"
 
     def to_payload(self) -> dict[str, Any]:
+        """Serialize this spec into JSON-safe primitives."""
+
         return {
             "task_id": self.task_id,
             "project_name": self.project_name,
@@ -199,6 +211,8 @@ class TaskSpec:
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> TaskSpec:
+        """Build a validated ``TaskSpec`` from untyped JSON/YAML payload."""
+
         if not isinstance(payload, dict):
             raise AgvvError("Task spec root must be an object.")
 
@@ -277,16 +291,22 @@ class TaskStore:
     """SQLite-backed runtime store."""
 
     def __init__(self, path: Path | None = None) -> None:
+        """Create a store instance and initialize schema if needed."""
+
         self.path = resolve_task_db_path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
+        """Open a SQLite connection configured with row dictionaries."""
+
         conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
         return conn
 
     def _init_schema(self) -> None:
+        """Create required runtime tables and indexes."""
+
         with self._connect() as conn:
             conn.executescript(
                 """
@@ -325,6 +345,8 @@ class TaskStore:
             )
 
     def create_task(self, spec: TaskSpec) -> TaskSnapshot:
+        """Insert a new task row and return its snapshot."""
+
         now = _now_iso()
         session = spec.normalized_session()
         with self._connect() as conn:
@@ -362,6 +384,8 @@ class TaskStore:
         message: str,
         meta: dict[str, Any] | None = None,
     ) -> None:
+        """Append a structured event record for task auditing."""
+
         with self._connect() as conn:
             conn.execute(
                 """
@@ -382,6 +406,8 @@ class TaskStore:
         started_at: str | None | object = _UNSET,
         finished_at: str | None | object = _UNSET,
     ) -> TaskSnapshot:
+        """Update selected task fields and return the latest snapshot."""
+
         current = self.get_task(task_id)
         next_state = state or current.state
         values: dict[str, Any] = {
@@ -414,6 +440,8 @@ class TaskStore:
         return self.get_task(task_id)
 
     def get_task(self, task_id: str) -> TaskSnapshot:
+        """Fetch a task by id or raise when missing."""
+
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if row is None:
@@ -421,6 +449,8 @@ class TaskStore:
         return self._row_to_snapshot(row)
 
     def list_tasks(self, *, state: TaskState | None = None) -> list[TaskSnapshot]:
+        """List tasks ordered by latest update, optionally filtered by state."""
+
         query = "SELECT * FROM tasks"
         params: tuple[Any, ...] = ()
         if state is not None:
@@ -432,6 +462,8 @@ class TaskStore:
         return [self._row_to_snapshot(row) for row in rows]
 
     def list_active_tasks(self) -> list[TaskSnapshot]:
+        """Return tasks currently in active non-terminal states."""
+
         placeholders = ",".join("?" for _ in _ACTIVE_STATES)
         states = tuple(state.value for state in _ACTIVE_STATES)
         with self._connect() as conn:
@@ -442,6 +474,8 @@ class TaskStore:
 
     @staticmethod
     def _row_to_snapshot(row: sqlite3.Row) -> TaskSnapshot:
+        """Convert a raw SQLite row into ``TaskSnapshot``."""
+
         raw_spec = json.loads(str(row["spec_json"]))
         spec = TaskSpec.from_payload(raw_spec)
         pr_number = row["pr_number"]
@@ -490,6 +524,8 @@ def load_task_spec(path: Path) -> TaskSpec:
 
 
 def _task_doc_text(spec: TaskSpec) -> str:
+    """Resolve PR body text from explicit body or task document file."""
+
     if spec.pr_body:
         return spec.pr_body
     if spec.task_doc:
@@ -501,6 +537,8 @@ def _task_doc_text(spec: TaskSpec) -> str:
 
 
 def _feature_worktree_path(task: TaskSnapshot) -> Path:
+    """Return the expected feature worktree path for a task."""
+
     paths = layout_paths(task.project_name, task.spec.base_dir, feature=task.feature)
     if paths.feature_dir is None:
         raise RuntimeError("Internal error: feature_dir missing")
@@ -508,11 +546,15 @@ def _feature_worktree_path(task: TaskSnapshot) -> Path:
 
 
 def _mark_failed(store: TaskStore, task: TaskSnapshot, step: str, message: str) -> TaskSnapshot:
+    """Record a failure event and move task into ``FAILED`` state."""
+
     store.add_event(task.id, "error", step, message)
     return store.update_task(task.id, state=TaskState.FAILED, last_error=message, finished_at=_now_iso())
 
 
 def _ensure_pr_number(task: TaskSnapshot, worktree: Path) -> int:
+    """Create or discover an open PR number for the task branch."""
+
     if task.pr_number is not None:
         return task.pr_number
 
@@ -588,6 +630,8 @@ def _ensure_pr_number(task: TaskSnapshot, worktree: Path) -> int:
 
 
 def _commit_and_push(task: TaskSnapshot, worktree: Path) -> None:
+    """Commit local changes (if any), validate ahead commits, and push branch."""
+
     status = _git(["status", "--porcelain"], cwd=worktree).stdout.strip()
     if status:
         _git(["add", "-A"], cwd=worktree)
@@ -603,6 +647,8 @@ def _commit_and_push(task: TaskSnapshot, worktree: Path) -> None:
 
 
 def _launch_coding_session(store: TaskStore, task: TaskSnapshot, *, fresh_setup: bool) -> TaskSnapshot:
+    """Ensure workspace exists and start a tmux coding session for the task."""
+
     if tmux_session_exists(task.session):
         raise AgvvError(f"tmux session already exists: {task.session}")
 
@@ -670,6 +716,8 @@ def retry_task(task_id: str, db_path: Path | None = None, session: str | None = 
 
 
 def _cleanup_force(task: TaskSnapshot) -> None:
+    """Force-remove worktree and optionally delete local branch."""
+
     paths = layout_paths(task.project_name, task.spec.base_dir, feature=task.feature)
     if paths.feature_dir is None:
         raise RuntimeError("Internal error: feature_dir missing")
@@ -715,6 +763,8 @@ def cleanup_task(task_id: str, db_path: Path | None = None, force: bool = False)
 
 
 def _handle_coding_completion(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
+    """Finalize a finished coding session by pushing commits and opening PR."""
+
     if tmux_session_exists(task.session):
         return task
 
@@ -733,6 +783,8 @@ def _handle_coding_completion(store: TaskStore, task: TaskSnapshot) -> TaskSnaps
 
 
 def _handle_pr_cycle(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
+    """Advance PR state, including timeout, merge/close handling, and retry loops."""
+
     if task.pr_number is None:
         return _mark_failed(store, task, "pr.check", "PR number missing for PR cycle.")
 
