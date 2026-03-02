@@ -331,6 +331,22 @@ With coverage:
 uv run pytest --cov=agvv --cov-branch --cov-report=term-missing --cov-report=xml
 ```
 
+### Docstring Coverage Gate (100%)
+
+Enable the local pre-commit hook once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+On every `git commit`, the hook runs:
+
+```bash
+uv run interrogate agvv --fail-under=100 --quiet
+```
+
+`--fail-under=100` enforces docstring coverage to be 100%.
+
 ### Lint
 
 ```bash
@@ -350,4 +366,3 @@ GitHub Actions workflow runs:
 - package name: `agent-wave`
 - CLI entrypoint: `agvv` (mapped to `agvv.cli:app`)
 - build backend: `hatchling`
-
