@@ -231,6 +231,51 @@ def test_cli_orch_spawn_invokes_core(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert captured["feature"] == "feat-a"
 
 
+def test_cli_orch_retry_invokes_core(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    @dataclass
+    class _FakeTask:
+        id: str
+        project_name: str
+        feature: str
+        status: str
+        session: str | None
+        agent: str | None
+        updated_at: str
+
+    monkeypatch.setattr(
+        "agvv.cli.retry_orch_task",
+        lambda task_id, base_dir, agent_cmd, session, tasks_path: _FakeTask(
+            id=task_id,
+            project_name="demo",
+            feature="feat-a",
+            status="running",
+            session=session or "sess-default",
+            agent="codex",
+            updated_at="2026-03-02T10:00:00+00:00",
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "orch",
+            "retry",
+            "--task-id",
+            "task-1",
+            "--agent-cmd",
+            "echo retry",
+            "--session",
+            "sess-r",
+            "--base-dir",
+            str(tmp_path),
+            "--tasks-path",
+            str(tmp_path / "tasks.json"),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Retried task: task-1" in result.stdout
+
+
 def test_cli_pr_check_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
     @dataclass
     class _FakeResult:

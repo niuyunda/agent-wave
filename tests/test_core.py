@@ -12,6 +12,7 @@ from agvv.core import (
     check_pr_status,
     wait_pr_status,
     recommend_pr_next_action,
+    retry_orch_task,
     cleanup_feature,
     create_orch_task,
     init_project,
@@ -459,6 +460,60 @@ def test_create_orch_task_rejects_duplicate_task_id(monkeypatch: pytest.MonkeyPa
 
     assert not (tmp_path / "demo" / "feat-b").exists()
     assert tasks_path.read_text(encoding="utf-8") == before
+
+
+def test_retry_orch_task_updates_status_and_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    init_project("demo", tmp_path)
+    monkeypatch.setattr("agvv.core.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr("agvv.core.tmux_new_session", lambda session, cwd, command: None)
+
+    tasks_path = tmp_path / "tasks.json"
+    create_orch_task(
+        project_name="demo",
+        feature="feat-a",
+        base_dir=tmp_path,
+        task_id="task001",
+        session="sess001",
+        agent="codex",
+        agent_cmd="echo one",
+        tasks_path=tasks_path,
+    )
+
+    # Force a non-running status to allow retry.
+    payload = json.loads(tasks_path.read_text(encoding="utf-8"))
+    payload["tasks"][0]["status"] = "needs_work"
+    tasks_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    retried = retry_orch_task(
+        task_id="task001",
+        base_dir=tmp_path,
+        agent_cmd="echo retry",
+        session="sess-retry",
+        tasks_path=tasks_path,
+    )
+    assert retried.status == "running"
+    assert retried.session == "sess-retry"
+
+
+def test_retry_orch_task_rejects_running(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    init_project("demo", tmp_path)
+    monkeypatch.setattr("agvv.core.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr("agvv.core.tmux_new_session", lambda session, cwd, command: None)
+
+    tasks_path = tmp_path / "tasks.json"
+    create_orch_task(
+        project_name="demo",
+        feature="feat-a",
+        base_dir=tmp_path,
+        task_id="task001",
+        session="sess001",
+        agent="codex",
+        agent_cmd="echo one",
+        tasks_path=tasks_path,
+    )
+
+    with pytest.raises(AgvvError, match="already running"):
+        retry_orch_task(task_id="task001", base_dir=tmp_path, agent_cmd="echo retry", tasks_path=tasks_path)
 
 
 def test_check_pr_status_maps_changes_requested(monkeypatch: pytest.MonkeyPatch) -> None:

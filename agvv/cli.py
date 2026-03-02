@@ -14,6 +14,7 @@ from agvv.core import (
     check_pr_status,
     wait_pr_status,
     recommend_pr_next_action,
+    retry_orch_task,
     cleanup_feature,
     create_orch_task,
     init_project,
@@ -240,6 +241,38 @@ def orch_list(
             f"{task.id}\t{task.status}\t{task.project_name}/{task.feature}\t"
             f"session={session}\tagent={agent}\tupdated={task.updated_at}"
         )
+
+
+@orch_app.command("retry")
+def orch_retry(
+    task_id: Annotated[str, typer.Option("--task-id", help="Existing task id to retry.")],
+    agent_cmd: Annotated[str, typer.Option("--agent-cmd", help="Agent command to run for retry.")],
+    base_dir: Annotated[
+        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
+    ] = None,
+    session: Annotated[str | None, typer.Option("--session", help="Override tmux session name.")] = None,
+    tasks_path: Annotated[
+        str | None,
+        typer.Option(
+            "--tasks-path",
+            help="Path to tasks registry JSON (default: AGVV_TASKS_PATH or ~/.agvv/tasks.json).",
+        ),
+    ] = None,
+) -> None:
+    """Retry an existing orchestration task."""
+
+    try:
+        task = retry_orch_task(
+            task_id=task_id,
+            base_dir=_base_dir(base_dir),
+            agent_cmd=agent_cmd,
+            session=session,
+            tasks_path=_resolve_optional_path(tasks_path),
+        )
+    except AgvvError as exc:
+        _exit_with_agvv_error(exc)
+
+    typer.echo(f"Retried task: {task.id} status={task.status} session={task.session}")
 
 
 @pr_app.command("check")

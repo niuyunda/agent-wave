@@ -362,6 +362,57 @@ def create_orch_task(
     return created
 
 
+def retry_orch_task(
+    task_id: str,
+    base_dir: Path,
+    agent_cmd: str,
+    session: str | None = None,
+    tasks_path: Path | None = None,
+) -> TaskRecord:
+    """Retry an existing orchestration task by relaunching tmux session and updating status."""
+
+    registry = load_task_registry(tasks_path)
+    index = -1
+    current: TaskRecord | None = None
+    for i, item in enumerate(registry.tasks):
+        if item.id == task_id:
+            index = i
+            current = item
+            break
+
+    if current is None:
+        raise AgvvError(f"Task not found: {task_id}")
+    if current.status == "running":
+        raise AgvvError(f"Task is already running: {task_id}")
+
+    chosen_session = session or current.session
+    if not chosen_session:
+        raise AgvvError("Retry requires a tmux session name (provide --session).")
+    if tmux_session_exists(chosen_session):
+        raise AgvvError(f"tmux session already exists: {chosen_session}")
+
+    paths = layout_paths(current.project_name, base_dir, feature=current.feature)
+    if paths.feature_dir is None or not paths.feature_dir.exists():
+        raise AgvvError(f"Feature worktree not found for retry: {current.project_name}/{current.feature}")
+
+    tmux_new_session(session=chosen_session, cwd=paths.feature_dir, command=agent_cmd)
+
+    updated = TaskRecord(
+        id=current.id,
+        project_name=current.project_name,
+        feature=current.feature,
+        status="running",
+        session=chosen_session,
+        agent=current.agent,
+        updated_at=datetime.now(tz=timezone.utc).isoformat(),
+    )
+
+    tasks = list(registry.tasks)
+    tasks[index] = updated
+    save_task_registry(TaskRegistry(version=registry.version, updated_at=updated.updated_at, tasks=tasks), path=tasks_path)
+    return updated
+
+
 def check_pr_status(repo: str, pr_number: int) -> PrCheckResult:
     """Check PR state via gh and map to minimal status for fast review loops."""
 
