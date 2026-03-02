@@ -57,6 +57,13 @@ _TERMINAL_STATES = {
     TaskState.BLOCKED,
 }
 _ACTIVE_STATES = {TaskState.PENDING, TaskState.CODING, TaskState.PR_OPEN, TaskState.PR_NEEDS_WORK}
+_RECOVERABLE_RETRY_STATES = {
+    TaskState.FAILED,
+    TaskState.TIMED_OUT,
+    TaskState.BLOCKED,
+    TaskState.PR_NEEDS_WORK,
+    TaskState.CODING,
+}
 
 
 def _run_command(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -511,49 +518,72 @@ def _ensure_pr_number(task: TaskSnapshot, worktree: Path) -> int:
 
     title = task.spec.pr_title or f"[agvv] {task.feature}"
     body = _task_doc_text(task.spec)
-    create = _run_command(
-        [
-            "gh",
-            "pr",
-            "create",
-            "--repo",
-            task.repo,
-            "--head",
-            task.feature,
-            "--base",
-            task.spec.pr_base,
-            "--title",
-            title,
-            "--body",
-            body,
-        ],
-        cwd=worktree,
-    )
-    output = create.stdout.strip()
-    match = _PR_URL_RE.search(output)
-    if match:
-        return int(match.group(1))
+    create_error: AgvvError | None = None
+    list_error: AgvvError | None = None
 
-    listed = _run_command(
-        [
-            "gh",
-            "pr",
-            "list",
-            "--repo",
-            task.repo,
-            "--head",
-            task.feature,
-            "--state",
-            "open",
-            "--json",
-            "number",
-            "--jq",
-            ".[0].number",
-        ],
-        cwd=worktree,
-    ).stdout.strip()
+    try:
+        create = _run_command(
+            [
+                "gh",
+                "pr",
+                "create",
+                "--repo",
+                task.repo,
+                "--head",
+                task.feature,
+                "--base",
+                task.spec.pr_base,
+                "--title",
+                title,
+                "--body",
+                body,
+            ],
+            cwd=worktree,
+        )
+        output = create.stdout.strip()
+        match = _PR_URL_RE.search(output)
+        if match:
+            return int(match.group(1))
+    except AgvvError as exc:
+        create_error = exc
+
+    try:
+        listed = _run_command(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--repo",
+                task.repo,
+                "--head",
+                task.feature,
+                "--state",
+                "open",
+                "--json",
+                "number",
+                "--jq",
+                ".[0].number",
+            ],
+            cwd=worktree,
+        ).stdout.strip()
+    except AgvvError as exc:
+        list_error = exc
+        listed = ""
+
     if listed:
         return int(listed)
+    if create_error is not None:
+        if list_error is not None:
+            raise AgvvError(
+                "Failed to resolve PR number: create failed and fallback lookup failed.\n"
+                f"create_error={create_error}\n"
+                f"list_error={list_error}"
+            ) from list_error
+        raise AgvvError(
+            f"Failed to resolve PR number: create failed and no existing open PR found.\ncreate_error={create_error}"
+        ) from create_error
+    if list_error is not None:
+        raise AgvvError(f"Failed to resolve PR number from gh list: {list_error}") from list_error
     raise AgvvError("Failed to resolve PR number after creation.")
 
 
@@ -601,7 +631,13 @@ def _launch_coding_session(store: TaskStore, task: TaskSnapshot, *, fresh_setup:
         return _mark_failed(store, task, "task.launch", message)
 
     store.add_event(task.id, "info", "task.launch", "Coding session started", {"session": task.session})
-    return store.update_task(task.id, state=TaskState.CODING, started_at=(task.started_at or _now_iso()), last_error=None)
+    return store.update_task(
+        task.id,
+        state=TaskState.CODING,
+        started_at=(task.started_at or _now_iso()),
+        finished_at=None,
+        last_error=None,
+    )
 
 
 def run_task_from_spec(spec_path: Path, db_path: Path | None = None) -> TaskSnapshot:
@@ -618,8 +654,8 @@ def retry_task(task_id: str, db_path: Path | None = None, session: str | None = 
 
     store = TaskStore(db_path)
     task = store.get_task(task_id)
-    if task.state == TaskState.CLEANED:
-        raise AgvvError(f"Cannot retry cleaned task: {task_id}")
+    if task.state not in _RECOVERABLE_RETRY_STATES:
+        raise AgvvError(f"Cannot retry task in state: {task.state.value}")
     if task.state == TaskState.CODING and tmux_session_exists(task.session):
         raise AgvvError(f"Task is already running in session: {task.session}")
 
@@ -648,7 +684,7 @@ def _cleanup_force(task: TaskSnapshot) -> None:
         text=True,
         check=False,
     )
-    if exists.returncode == 0:
+    if exists.returncode == 0 and not task.spec.keep_branch_on_cleanup:
         _run_command(["git", "-C", str(repo_dir), "branch", "-D", task.feature])
 
 

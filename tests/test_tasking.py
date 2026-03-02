@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
+import agvv.tasking as tasking
 from agvv.tasking import (
+    AgvvError,
     TaskSpec,
     TaskState,
     TaskStore,
@@ -102,7 +104,12 @@ def test_retry_task_relaunches_when_session_missing(monkeypatch: pytest.MonkeyPa
         session="sess-retry",
     )
     created = store.create_task(spec)
-    store.update_task(created.id, state=TaskState.FAILED, last_error="boom")
+    store.update_task(
+        created.id,
+        state=TaskState.FAILED,
+        last_error="boom",
+        finished_at="2026-03-03T00:00:00+00:00",
+    )
 
     feature_dir = tmp_path / "demo" / "feat_retry"
     feature_dir.mkdir(parents=True, exist_ok=True)
@@ -114,6 +121,27 @@ def test_retry_task_relaunches_when_session_missing(monkeypatch: pytest.MonkeyPa
     retried = retry_task(task_id="task_retry", db_path=tmp_path / "tasks.db")
     assert retried.state == TaskState.CODING
     assert retried.last_error is None
+    assert retried.finished_at is None
+
+
+def test_retry_task_rejects_non_recoverable_state(tmp_path: Path) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    spec = TaskSpec(
+        task_id="task_non_retryable",
+        project_name="demo",
+        feature="feat_non_retryable",
+        agent_cmd="echo run",
+        repo="owner/repo",
+        base_dir=tmp_path,
+    )
+    created = store.create_task(spec)
+    store.update_task(created.id, state=TaskState.PR_MERGED, finished_at="2026-03-03T01:00:00+00:00")
+
+    with pytest.raises(AgvvError, match="Cannot retry task in state: pr_merged"):
+        retry_task(task_id="task_non_retryable", db_path=tmp_path / "tasks.db")
+
+    after = store.get_task("task_non_retryable")
+    assert after.state == TaskState.PR_MERGED
 
 
 def test_daemon_run_once_promotes_coding_to_pr_open(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -204,6 +232,86 @@ def test_cleanup_task_marks_cleaned(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 
     cleaned = cleanup_task("task_clean", db_path=tmp_path / "tasks.db")
     assert cleaned.state == TaskState.CLEANED
+
+
+@pytest.mark.parametrize(
+    ("keep_branch", "expect_branch_delete"),
+    [
+        (True, False),
+        (False, True),
+    ],
+)
+def test_cleanup_force_respects_keep_branch_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    keep_branch: bool,
+    expect_branch_delete: bool,
+) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    spec = TaskSpec(
+        task_id=f"task_force_{int(keep_branch)}",
+        project_name="demo",
+        feature=f"feat_force_{int(keep_branch)}",
+        agent_cmd="echo run",
+        repo="owner/repo",
+        base_dir=tmp_path,
+        keep_branch_on_cleanup=keep_branch,
+    )
+    created = store.create_task(spec)
+    task = store.get_task(created.id)
+
+    paths = tasking.layout_paths(task.project_name, task.spec.base_dir, feature=task.feature)
+    paths.repo_dir.mkdir(parents=True, exist_ok=True)
+    if paths.feature_dir is not None:
+        paths.feature_dir.mkdir(parents=True, exist_ok=True)
+
+    calls: list[list[str]] = []
+
+    def _fake_run_command(cmd: list[str], cwd: Path | None = None):
+        calls.append(cmd)
+        return type("R", (), {"stdout": ""})()
+
+    monkeypatch.setattr("agvv.tasking._run_command", _fake_run_command)
+    monkeypatch.setattr(
+        "agvv.tasking.subprocess.run",
+        lambda *args, **kwargs: type("R", (), {"returncode": 0})(),
+    )
+
+    tasking._cleanup_force(task)
+
+    branch_delete_calls = [cmd for cmd in calls if "branch" in cmd and "-D" in cmd]
+    if expect_branch_delete:
+        assert branch_delete_calls
+    else:
+        assert not branch_delete_calls
+
+
+def test_ensure_pr_number_falls_back_when_create_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    spec = TaskSpec(
+        task_id="task_pr_fallback",
+        project_name="demo",
+        feature="feat_pr_fallback",
+        agent_cmd="echo run",
+        repo="owner/repo",
+        base_dir=tmp_path,
+    )
+    created = store.create_task(spec)
+    task = store.get_task(created.id)
+    worktree = tmp_path / "demo" / "feat_pr_fallback"
+    worktree.mkdir(parents=True, exist_ok=True)
+
+    def _fake_run_command(cmd: list[str], cwd: Path | None = None):
+        if cmd[:4] == ["gh", "pr", "create", "--repo"]:
+            raise AgvvError("Command failed: gh pr create ... already exists")
+        if cmd[:4] == ["gh", "pr", "list", "--repo"]:
+            return type("R", (), {"stdout": "123\n"})()
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr("agvv.tasking._run_command", _fake_run_command)
+
+    pr_number = tasking._ensure_pr_number(task, worktree)
+    assert pr_number == 123
 
 
 def test_list_task_statuses_filters_state(tmp_path: Path) -> None:
