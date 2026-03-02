@@ -13,6 +13,7 @@ from agvv.core import (
     adopt_project,
     check_pr_status,
     wait_pr_status,
+    recommend_pr_next_action,
     cleanup_feature,
     create_orch_task,
     init_project,
@@ -284,6 +285,21 @@ def pr_wait(
         f"review={result.review_decision or '-'}\tattempts={wait_result.attempts}\t"
         f"timed_out={'yes' if wait_result.timed_out else 'no'}"
     )
+
+
+@pr_app.command("next")
+def pr_next(
+    repo: Annotated[str, typer.Option("--repo", help="GitHub repo in owner/name format.")],
+    pr_number: Annotated[int, typer.Option("--pr", help="PR number to inspect.")],
+) -> None:
+    """Suggest the next automation step for current PR status."""
+
+    try:
+        next_action = recommend_pr_next_action(repo=repo, pr_number=pr_number)
+    except AgvvError as exc:
+        _exit_with_agvv_error(exc)
+
+    typer.echo(f"status={next_action.status}\taction={next_action.action}\tnote={next_action.note}")
 
 
 if __name__ == "__main__":

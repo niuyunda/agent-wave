@@ -11,6 +11,7 @@ from agvv.core import (
     adopt_project,
     check_pr_status,
     wait_pr_status,
+    recommend_pr_next_action,
     cleanup_feature,
     create_orch_task,
     init_project,
@@ -528,3 +529,21 @@ def test_wait_pr_status_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
     assert wait_result.result.status == "waiting"
     assert wait_result.attempts == 3
     assert wait_result.timed_out is True
+
+
+def test_recommend_pr_next_action_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "agvv.core.check_pr_status",
+        lambda repo, pr_number: type("R", (), {"status": "waiting", "reason": "pending", "state": "OPEN", "review_decision": None})(),
+    )
+    rec = recommend_pr_next_action("owner/repo", 3)
+    assert rec.action == "wait"
+
+
+def test_recommend_pr_next_action_needs_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "agvv.core.check_pr_status",
+        lambda repo, pr_number: type("R", (), {"status": "needs_work", "reason": "changes_requested", "state": "OPEN", "review_decision": "CHANGES_REQUESTED"})(),
+    )
+    rec = recommend_pr_next_action("owner/repo", 3)
+    assert rec.action == "retry"

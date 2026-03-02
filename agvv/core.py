@@ -74,6 +74,15 @@ class PrWaitResult:
     timed_out: bool
 
 
+@dataclass(frozen=True)
+class PrNextAction:
+    """Suggested next action for a PR based on current status."""
+
+    status: str
+    action: str
+    note: str
+
+
 def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     """Run a shell command and normalize failures into ``AgvvError``."""
 
@@ -411,6 +420,27 @@ def wait_pr_status(repo: str, pr_number: int, interval_seconds: int = 120, max_a
         attempts += 1
 
     return PrWaitResult(result=last, attempts=attempts, timed_out=last.status == "waiting")
+
+
+def recommend_pr_next_action(repo: str, pr_number: int) -> PrNextAction:
+    """Return a minimal next-step recommendation for PR automation loop."""
+
+    result = check_pr_status(repo=repo, pr_number=pr_number)
+    if result.status == "needs_work":
+        return PrNextAction(
+            status=result.status,
+            action="retry",
+            note="Run fix workflow: update code, push, then run `agvv pr wait` again.",
+        )
+    if result.status == "done":
+        return PrNextAction(status=result.status, action="cleanup", note="PR merged; run feature cleanup.")
+    if result.status == "closed":
+        return PrNextAction(status=result.status, action="stop", note="PR closed without merge; manual follow-up needed.")
+    return PrNextAction(
+        status=result.status,
+        action="wait",
+        note="Keep polling with `agvv pr wait --interval-seconds 120 --max-attempts 30`.",
+    )
 
 
 def layout_paths(project_name: str, base_dir: Path, feature: str | None = None) -> LayoutPaths:

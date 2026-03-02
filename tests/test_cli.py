@@ -283,3 +283,20 @@ def test_cli_pr_wait_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0
     assert "status=needs_work" in result.stdout
     assert "attempts=4" in result.stdout
+
+
+def test_cli_pr_next_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
+    @dataclass
+    class _FakeNext:
+        status: str
+        action: str
+        note: str
+
+    monkeypatch.setattr(
+        "agvv.cli.recommend_pr_next_action",
+        lambda repo, pr_number: _FakeNext(status="needs_work", action="retry", note="fix and push"),
+    )
+
+    result = runner.invoke(app, ["pr", "next", "--repo", "owner/repo", "--pr", "12"])
+    assert result.exit_code == 0
+    assert "action=retry" in result.stdout
