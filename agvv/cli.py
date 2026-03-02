@@ -1,52 +1,29 @@
-"""Typer command-line interface for Agent Wave workflows."""
+"""Typer command-line interface for Agent Wave task orchestration."""
 
 from __future__ import annotations
 
-import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
-from agvv.core import (
-    AgvvError,
-    adopt_project,
-    check_pr_status,
-    wait_pr_status,
-    recommend_pr_next_action,
-    retry_orch_task,
-    summarize_pr_feedback,
-    cleanup_feature,
-    create_orch_task,
-    init_project,
-    list_tasks,
-    parse_kv_pairs,
-    start_feature,
+from agvv.core import AgvvError
+from agvv.tasking import (
+    TaskState,
+    cleanup_task,
+    daemon_run_loop,
+    daemon_run_once,
+    list_task_statuses,
+    retry_task,
+    run_task_from_spec,
 )
 
-app = typer.Typer(help="Agent Wave: orchestrate parallel git worktree workflow for coding tasks.")
-project_app = typer.Typer(help="Project-level operations.")
-feature_app = typer.Typer(help="Feature branch/worktree operations.")
-orch_app = typer.Typer(help="Task orchestration registry operations.")
-pr_app = typer.Typer(help="Pull request review-loop operations.")
-_DEFAULT_BASE_DIR = "~/code"
-_LOGGER = logging.getLogger(__name__)
+app = typer.Typer(help="Agent Wave task orchestration CLI.")
+task_app = typer.Typer(help="Task state-machine orchestration operations.")
+daemon_app = typer.Typer(help="Task monitor daemon operations.")
 
-app.add_typer(project_app, name="project")
-app.add_typer(feature_app, name="feature")
-app.add_typer(orch_app, name="orch")
-app.add_typer(pr_app, name="pr")
-
-
-def _base_dir(path: str | None) -> Path:
-    """Resolve the base directory, defaulting to ``~/code``."""
-
-    raw = path
-    if raw is None:
-        raw = _DEFAULT_BASE_DIR
-        _LOGGER.warning("No --base-dir provided; using default base directory: %s", raw)
-    return Path(raw).expanduser().resolve()
+app.add_typer(task_app, name="task")
+app.add_typer(daemon_app, name="daemon")
 
 
 def _exit_with_agvv_error(exc: AgvvError) -> None:
@@ -62,382 +39,131 @@ def _resolve_optional_path(path: str | None) -> Path | None:
     return Path(path).expanduser().resolve() if path else None
 
 
-def _append_monitor_log(log_file: Path | None, line: str) -> None:
-    """Append a timestamped monitor line when log_file is provided."""
+def _parse_task_state(value: str | None) -> TaskState | None:
+    """Parse optional task state value."""
 
-    if log_file is None:
-        return
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(tz=timezone.utc).isoformat()
-    with log_file.open("a", encoding="utf-8") as handle:
-        handle.write(f"{stamp}\t{line}\n")
-
-
-@project_app.command("init")
-def project_init(
-    project_name: str,
-    base_dir: Annotated[
-        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
-    ] = None,
-) -> None:
-    """Initialize a new project into bare repo + main worktree layout."""
+    if value is None:
+        return None
     try:
-        paths = init_project(project_name, _base_dir(base_dir))
-    except AgvvError as exc:
-        _exit_with_agvv_error(exc)
-
-    typer.echo(f"Initialized: {paths.project_dir}")
-    typer.echo(f"- bare repo: {paths.repo_dir}")
-    typer.echo(f"- main worktree: {paths.main_dir}")
-    typer.echo(f"- feature worktrees: {paths.project_dir}/<feature>")
+        return TaskState(value)
+    except ValueError as exc:
+        supported = ", ".join(item.value for item in TaskState)
+        raise typer.BadParameter(f"Unsupported --state value '{value}'. Use one of: {supported}") from exc
 
 
-@project_app.command("adopt")
-def project_adopt(
-    existing_repo: str,
-    project_name: str,
-    base_dir: Annotated[
-        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
-    ] = None,
+@task_app.command("run")
+def task_run(
+    spec: Annotated[str, typer.Option("--spec", help="Path to task spec JSON/YAML.")],
+    db_path: Annotated[str | None, typer.Option("--db-path", help="Path to SQLite task DB.")] = None,
 ) -> None:
-    """Adopt an existing git repository into this layout."""
-    repo_path = Path(existing_repo).expanduser().resolve()
-    try:
-        paths, default_branch = adopt_project(repo_path, project_name, _base_dir(base_dir))
-    except AgvvError as exc:
-        _exit_with_agvv_error(exc)
-
-    typer.echo(f"Adopted existing repo into worktree layout: {paths.project_dir}")
-    typer.echo(f"- source repo: {repo_path}")
-    typer.echo(f"- bare repo: {paths.repo_dir}")
-    typer.echo(f"- main worktree: {paths.main_dir} (branch: {default_branch})")
-    typer.echo(f"- feature worktrees: {paths.project_dir}/<feature>")
-
-
-@feature_app.command("start")
-def feature_start(
-    project_name: str,
-    feature: str,
-    base_dir: Annotated[
-        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
-    ] = None,
-    from_branch: Annotated[str, typer.Option("--from-branch", help="Base branch for a new feature branch.")] = "main",
-    agent: Annotated[str | None, typer.Option("--agent", help="Agent name/id that requested this feature.")] = None,
-    task_id: Annotated[str | None, typer.Option("--task-id", help="Agent task ID or execution ID.")] = None,
-    ticket: Annotated[str | None, typer.Option("--ticket", help="Ticket/issue identifier (e.g. JIRA/GitHub).")] = None,
-    params: Annotated[list[str] | None, typer.Option("--param", help="Extra context as KEY=VALUE, repeatable.")] = None,
-    create_dirs: Annotated[
-        list[str] | None, typer.Option("--mkdir", help="Directories to create in feature worktree.")
-    ] = None,
-) -> None:
-    """Create or reopen a feature worktree and attach agent context metadata."""
-    params = params or []
-    create_dirs = create_dirs or []
-    try:
-        paths = start_feature(
-            project_name=project_name,
-            feature=feature,
-            base_dir=_base_dir(base_dir),
-            from_branch=from_branch,
-            agent=agent,
-            task_id=task_id,
-            ticket=ticket,
-            params=parse_kv_pairs(params),
-            create_dirs=create_dirs,
-        )
-    except AgvvError as exc:
-        _exit_with_agvv_error(exc)
-
-    typer.echo(f"Created feature worktree: {paths.feature_dir}")
-    typer.echo(f"Branch: {feature}")
-    typer.echo(f"Metadata: {paths.feature_dir}/.agvv/context.json")
-
-
-@feature_app.command("cleanup")
-def feature_cleanup(
-    project_name: str,
-    feature: str,
-    base_dir: Annotated[
-        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
-    ] = None,
-    keep_branch: Annotated[bool, typer.Option("--keep-branch", help="Keep branch and only remove worktree.")] = False,
-) -> None:
-    """Cleanup merged feature worktree and optionally delete branch."""
-    try:
-        cleanup_feature(
-            project_name=project_name,
-            feature=feature,
-            base_dir=_base_dir(base_dir),
-            delete_branch=not keep_branch,
-        )
-    except AgvvError as exc:
-        _exit_with_agvv_error(exc)
-
-    suffix = " (branch kept)" if keep_branch else ""
-    typer.echo(f"Cleaned feature worktree/branch: {feature}{suffix}")
-
-
-@orch_app.command("spawn")
-def orch_spawn(
-    project_name: str,
-    feature: str,
-    task_id: Annotated[str, typer.Option("--task-id", help="Unique task id.")],
-    session: Annotated[str, typer.Option("--session", help="tmux session name.")],
-    agent_cmd: Annotated[str, typer.Option("--agent-cmd", help="Agent command to run inside tmux session.")],
-    agent: Annotated[str, typer.Option("--agent", help="Agent name (e.g. codex).")],
-    base_dir: Annotated[
-        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
-    ] = None,
-    from_branch: Annotated[str, typer.Option("--from-branch", help="Base branch for new feature worktree.")] = "main",
-    tasks_path: Annotated[
-        str | None,
-        typer.Option(
-            "--tasks-path",
-            help="Path to tasks registry JSON (default: AGVV_TASKS_PATH or ~/.agvv/tasks.json).",
-        ),
-    ] = None,
-) -> None:
-    """Create a running orchestration task (worktree + tmux + registry)."""
+    """Create and launch a task from spec."""
 
     try:
-        task = create_orch_task(
-            project_name=project_name,
-            feature=feature,
-            base_dir=_base_dir(base_dir),
-            task_id=task_id,
-            session=session,
-            agent=agent,
-            agent_cmd=agent_cmd,
-            from_branch=from_branch,
-            tasks_path=_resolve_optional_path(tasks_path),
+        task = run_task_from_spec(
+            spec_path=Path(spec).expanduser().resolve(),
+            db_path=_resolve_optional_path(db_path),
         )
     except AgvvError as exc:
         _exit_with_agvv_error(exc)
 
     typer.echo(
-        f"Spawned task: {task.id} status={task.status} "
-        f"target={task.project_name}/{task.feature} session={task.session}"
+        f"Task started: {task.id}\tstate={task.state.value}\t"
+        f"target={task.project_name}/{task.feature}\tsession={task.session}"
     )
 
 
-@orch_app.command("list")
-def orch_list(
-    tasks_path: Annotated[
-        str | None,
-        typer.Option(
-            "--tasks-path",
-            help="Path to tasks registry JSON (default: AGVV_TASKS_PATH or ~/.agvv/tasks.json).",
-        ),
-    ] = None,
-    project_name: Annotated[str | None, typer.Option("--project", help="Filter by project name.")] = None,
-    status: Annotated[str | None, typer.Option("--status", help="Filter by task status.")] = None,
+@task_app.command("status")
+def task_status(
+    db_path: Annotated[str | None, typer.Option("--db-path", help="Path to SQLite task DB.")] = None,
+    task_id: Annotated[str | None, typer.Option("--task-id", help="Filter by task id.")] = None,
+    state: Annotated[str | None, typer.Option("--state", help="Filter by state value.")] = None,
 ) -> None:
-    """List orchestration tasks from the registry."""
+    """List task state-machine runtime status."""
 
+    parsed_state = _parse_task_state(state)
     try:
-        task_items = list_tasks(
-            path=_resolve_optional_path(tasks_path),
-            project_name=project_name,
-            status=status,
-        )
+        tasks = list_task_statuses(db_path=_resolve_optional_path(db_path), state=parsed_state)
     except AgvvError as exc:
         _exit_with_agvv_error(exc)
 
-    if not task_items:
+    if task_id is not None:
+        tasks = [item for item in tasks if item.id == task_id]
+
+    if not tasks:
         typer.echo("No tasks found.")
         return
 
-    for task in task_items:
-        session = task.session or "-"
-        agent = task.agent or "-"
+    for task in tasks:
+        pr_value = str(task.pr_number) if task.pr_number is not None else "-"
+        error_value = task.last_error or "-"
         typer.echo(
-            f"{task.id}\t{task.status}\t{task.project_name}/{task.feature}\t"
-            f"session={session}\tagent={agent}\tupdated={task.updated_at}"
+            f"{task.id}\t{task.state.value}\t{task.project_name}/{task.feature}\t"
+            f"session={task.session}\tpr={pr_value}\tcycles={task.repair_cycles}\t"
+            f"error={error_value}\tupdated={task.updated_at}"
         )
 
 
-@orch_app.command("retry")
-def orch_retry(
-    task_id: Annotated[str, typer.Option("--task-id", help="Existing task id to retry.")],
-    agent_cmd: Annotated[str, typer.Option("--agent-cmd", help="Agent command to run for retry.")],
-    base_dir: Annotated[
-        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
-    ] = None,
-    session: Annotated[str | None, typer.Option("--session", help="Override tmux session name.")] = None,
-    tasks_path: Annotated[
-        str | None,
-        typer.Option(
-            "--tasks-path",
-            help="Path to tasks registry JSON (default: AGVV_TASKS_PATH or ~/.agvv/tasks.json).",
-        ),
-    ] = None,
+@task_app.command("retry")
+def task_retry(
+    task_id: Annotated[str, typer.Option("--task-id", help="Task id to retry.")],
+    db_path: Annotated[str | None, typer.Option("--db-path", help="Path to SQLite task DB.")] = None,
+    session: Annotated[str | None, typer.Option("--session", help="Override tmux session.")] = None,
 ) -> None:
-    """Retry an existing orchestration task."""
+    """Retry a task by launching a new coding session."""
 
     try:
-        task = retry_orch_task(
-            task_id=task_id,
-            base_dir=_base_dir(base_dir),
-            agent_cmd=agent_cmd,
-            session=session,
-            tasks_path=_resolve_optional_path(tasks_path),
-        )
+        task = retry_task(task_id=task_id, db_path=_resolve_optional_path(db_path), session=session)
     except AgvvError as exc:
         _exit_with_agvv_error(exc)
 
-    typer.echo(f"Retried task: {task.id} status={task.status} session={task.session}")
+    typer.echo(f"Task retried: {task.id}\tstate={task.state.value}\tsession={task.session}")
 
 
-@pr_app.command("check")
-def pr_check(
-    repo: Annotated[str, typer.Option("--repo", help="GitHub repo in owner/name format.")],
-    pr_number: Annotated[int, typer.Option("--pr", help="PR number to check.")],
+@task_app.command("cleanup")
+def task_cleanup(
+    task_id: Annotated[str, typer.Option("--task-id", help="Task id to cleanup.")],
+    db_path: Annotated[str | None, typer.Option("--db-path", help="Path to SQLite task DB.")] = None,
+    force: Annotated[bool, typer.Option("--force", help="Force cleanup (discard local changes).")] = False,
 ) -> None:
-    """Check PR result for short review loop (<=1 hour)."""
+    """Cleanup task resources and mark task as cleaned."""
 
     try:
-        result = check_pr_status(repo=repo, pr_number=pr_number)
+        task = cleanup_task(task_id=task_id, db_path=_resolve_optional_path(db_path), force=force)
     except AgvvError as exc:
         _exit_with_agvv_error(exc)
 
-    typer.echo(
-        f"status={result.status}\treason={result.reason}\tstate={result.state}\t"
-        f"review={result.review_decision or '-'}"
-    )
+    typer.echo(f"Task cleaned: {task.id}\tstate={task.state.value}")
 
 
-@pr_app.command("wait")
-def pr_wait(
-    repo: Annotated[str, typer.Option("--repo", help="GitHub repo in owner/name format.")],
-    pr_number: Annotated[int, typer.Option("--pr", help="PR number to check.")],
-    interval_seconds: Annotated[int, typer.Option("--interval-seconds", help="Polling interval in seconds.")] = 120,
-    max_attempts: Annotated[int, typer.Option("--max-attempts", help="Maximum number of polls.")] = 30,
+@daemon_app.command("run")
+def daemon_run(
+    db_path: Annotated[str | None, typer.Option("--db-path", help="Path to SQLite task DB.")] = None,
+    interval_seconds: Annotated[int, typer.Option("--interval-seconds", help="Loop interval in seconds.")] = 30,
+    once: Annotated[bool, typer.Option("--once", help="Run one reconcile pass and exit.")] = False,
+    max_loops: Annotated[int | None, typer.Option("--max-loops", help="Optional max loops before exit.")] = None,
 ) -> None:
-    """Wait for PR result with default 2-min interval and max 30 attempts."""
+    """Run task monitor daemon loop."""
 
+    resolved_db = _resolve_optional_path(db_path)
     try:
-        wait_result = wait_pr_status(
-            repo=repo,
-            pr_number=pr_number,
-            interval_seconds=interval_seconds,
-            max_attempts=max_attempts,
-        )
-    except AgvvError as exc:
-        _exit_with_agvv_error(exc)
-
-    result = wait_result.result
-    typer.echo(
-        f"status={result.status}\treason={result.reason}\tstate={result.state}\t"
-        f"review={result.review_decision or '-'}\tattempts={wait_result.attempts}\t"
-        f"timed_out={'yes' if wait_result.timed_out else 'no'}"
-    )
-
-
-@pr_app.command("next")
-def pr_next(
-    repo: Annotated[str, typer.Option("--repo", help="GitHub repo in owner/name format.")],
-    pr_number: Annotated[int, typer.Option("--pr", help="PR number to inspect.")],
-) -> None:
-    """Suggest the next automation step for current PR status."""
-
-    try:
-        next_action = recommend_pr_next_action(repo=repo, pr_number=pr_number)
-    except AgvvError as exc:
-        _exit_with_agvv_error(exc)
-
-    typer.echo(f"status={next_action.status}\taction={next_action.action}\tnote={next_action.note}")
-
-
-@pr_app.command("feedback")
-def pr_feedback(
-    repo: Annotated[str, typer.Option("--repo", help="GitHub repo in owner/name format.")],
-    pr_number: Annotated[int, typer.Option("--pr", help="PR number to inspect.")],
-) -> None:
-    """Show actionable review items and why other comments are skipped."""
-
-    try:
-        summary = summarize_pr_feedback(repo=repo, pr_number=pr_number)
-    except AgvvError as exc:
-        _exit_with_agvv_error(exc)
-
-    typer.echo(f"actionable_count={len(summary.actionable)}\tskipped_count={len(summary.skipped)}")
-    for item in summary.actionable:
-        typer.echo(f"ACTIONABLE\t{item}")
-    for reason in summary.skipped[:5]:
-        typer.echo(f"SKIPPED\t{reason}")
-
-
-@pr_app.command("monitor")
-def pr_monitor(
-    repo: Annotated[str, typer.Option("--repo", help="GitHub repo in owner/name format.")],
-    pr_number: Annotated[int, typer.Option("--pr", help="PR number to monitor.")],
-    interval_seconds: Annotated[int, typer.Option("--interval-seconds", help="Polling interval in seconds.")] = 120,
-    max_attempts: Annotated[int, typer.Option("--max-attempts", help="Maximum number of polls.")] = 30,
-    auto_retry: Annotated[bool, typer.Option("--auto-retry", help="Auto trigger orch retry when needs_work.")] = False,
-    task_id: Annotated[str | None, typer.Option("--task-id", help="Task id for orch retry.")] = None,
-    agent_cmd: Annotated[str | None, typer.Option("--agent-cmd", help="Agent command for orch retry.")] = None,
-    base_dir: Annotated[
-        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
-    ] = None,
-    session: Annotated[str | None, typer.Option("--session", help="Override tmux session for retry.")] = None,
-    tasks_path: Annotated[
-        str | None,
-        typer.Option("--tasks-path", help="Path to tasks registry JSON."),
-    ] = None,
-    log_file: Annotated[str | None, typer.Option("--log-file", help="Optional path to append monitor events.")] = None,
-) -> None:
-    """Monitor PR; if changes requested, optionally trigger retry; otherwise keep waiting until timeout."""
-
-    log_path = _resolve_optional_path(log_file)
-    try:
-        waited = wait_pr_status(
-            repo=repo,
-            pr_number=pr_number,
-            interval_seconds=interval_seconds,
-            max_attempts=max_attempts,
-        )
-    except AgvvError as exc:
-        _exit_with_agvv_error(exc)
-
-    result = waited.result
-    if result.status == "needs_work":
-        if not auto_retry:
-            msg = "status=needs_work\taction=manual_retry\tnote=Review requested changes; run orch retry."
-            _append_monitor_log(log_path, msg)
-            typer.echo(msg)
+        if once:
+            results = daemon_run_once(db_path=resolved_db)
+            typer.echo(f"daemon pass complete: reconciled={len(results)}")
+            for task in results:
+                typer.echo(f"{task.id}\t{task.state.value}\tupdated={task.updated_at}")
             return
-        if not task_id or not agent_cmd:
-            raise typer.BadParameter("--task-id and --agent-cmd are required when --auto-retry is set")
-        try:
-            retried = retry_orch_task(
-                task_id=task_id,
-                base_dir=_base_dir(base_dir),
-                agent_cmd=agent_cmd,
-                session=session,
-                tasks_path=_resolve_optional_path(tasks_path),
-            )
-        except AgvvError as exc:
-            _exit_with_agvv_error(exc)
-        msg = f"status=needs_work\taction=retry_started\ttask={retried.id}\tsession={retried.session}"
-        _append_monitor_log(log_path, msg)
-        typer.echo(msg)
-        return
-
-    if result.status == "waiting":
-        msg = (
-            f"status=waiting\taction=keep_waiting\treason=no-change-requested\tattempts={waited.attempts}\t"
-            f"timed_out={'yes' if waited.timed_out else 'no'}"
+        loops = daemon_run_loop(
+            db_path=resolved_db,
+            interval_seconds=interval_seconds,
+            max_loops=max_loops,
         )
-        _append_monitor_log(log_path, msg)
-        typer.echo(msg)
-        return
+    except AgvvError as exc:
+        _exit_with_agvv_error(exc)
+    except KeyboardInterrupt:
+        typer.echo("daemon interrupted")
+        raise typer.Exit(code=130) from None
 
-    msg = (
-        f"status={result.status}\taction=no_retry\tnote=No code change requested.\tattempts={waited.attempts}\t"
-        f"timed_out={'yes' if waited.timed_out else 'no'}"
-    )
-    _append_monitor_log(log_path, msg)
-    typer.echo(msg)
+    typer.echo(f"daemon exited after loops={loops}")
 
 
 if __name__ == "__main__":
