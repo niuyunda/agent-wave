@@ -9,6 +9,10 @@ import pytest
 from agvv.core import (
     AgvvError,
     adopt_project,
+    check_pr_status,
+    wait_pr_status,
+    recommend_pr_next_action,
+    retry_orch_task,
     cleanup_feature,
     create_orch_task,
     init_project,
@@ -429,6 +433,7 @@ def test_create_orch_task_rejects_duplicate_task_id(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr("agvv.core.tmux_session_exists", lambda _session: False)
     monkeypatch.setattr("agvv.core.tmux_new_session", lambda session, cwd, command: None)
 
+    tasks_path = tmp_path / "tasks.json"
     create_orch_task(
         project_name="demo",
         feature="feat-a",
@@ -437,8 +442,9 @@ def test_create_orch_task_rejects_duplicate_task_id(monkeypatch: pytest.MonkeyPa
         session="sess001",
         agent="codex",
         agent_cmd="echo one",
-        tasks_path=tmp_path / "tasks.json",
+        tasks_path=tasks_path,
     )
+    before = tasks_path.read_text(encoding="utf-8")
 
     with pytest.raises(AgvvError, match="Task id already exists"):
         create_orch_task(
@@ -449,5 +455,169 @@ def test_create_orch_task_rejects_duplicate_task_id(monkeypatch: pytest.MonkeyPa
             session="sess002",
             agent="codex",
             agent_cmd="echo two",
-            tasks_path=tmp_path / "tasks.json",
+            tasks_path=tasks_path,
         )
+
+    assert not (tmp_path / "demo" / "feat-b").exists()
+    assert tasks_path.read_text(encoding="utf-8") == before
+
+
+def test_retry_orch_task_updates_status_and_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    init_project("demo", tmp_path)
+    monkeypatch.setattr("agvv.core.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr("agvv.core.tmux_new_session", lambda session, cwd, command: None)
+
+    tasks_path = tmp_path / "tasks.json"
+    create_orch_task(
+        project_name="demo",
+        feature="feat-a",
+        base_dir=tmp_path,
+        task_id="task001",
+        session="sess001",
+        agent="codex",
+        agent_cmd="echo one",
+        tasks_path=tasks_path,
+    )
+
+    # Force a non-running status to allow retry.
+    payload = json.loads(tasks_path.read_text(encoding="utf-8"))
+    payload["tasks"][0]["status"] = "needs_work"
+    tasks_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    retried = retry_orch_task(
+        task_id="task001",
+        base_dir=tmp_path,
+        agent_cmd="echo retry",
+        session="sess-retry",
+        tasks_path=tasks_path,
+    )
+    assert retried.status == "running"
+    assert retried.session == "sess-retry"
+
+
+def test_retry_orch_task_rejects_running(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    init_project("demo", tmp_path)
+    monkeypatch.setattr("agvv.core.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr("agvv.core.tmux_new_session", lambda session, cwd, command: None)
+
+    tasks_path = tmp_path / "tasks.json"
+    create_orch_task(
+        project_name="demo",
+        feature="feat-a",
+        base_dir=tmp_path,
+        task_id="task001",
+        session="sess001",
+        agent="codex",
+        agent_cmd="echo one",
+        tasks_path=tasks_path,
+    )
+
+    with pytest.raises(AgvvError, match="already running"):
+        retry_orch_task(task_id="task001", base_dir=tmp_path, agent_cmd="echo retry", tasks_path=tasks_path)
+
+
+def test_check_pr_status_maps_changes_requested(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fake_run(_cmd, cwd=None):
+        class _R:
+            stdout = json.dumps(
+                {
+                    "state": "OPEN",
+                    "mergedAt": None,
+                    "reviewDecision": "CHANGES_REQUESTED",
+                    "statusCheckRollup": [],
+                }
+            )
+
+        return _R()
+
+    monkeypatch.setattr("agvv.core._run", _fake_run)
+    result = check_pr_status("owner/repo", 1)
+    assert result.status == "needs_work"
+
+
+def test_check_pr_status_maps_merged(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fake_run(_cmd, cwd=None):
+        class _R:
+            stdout = json.dumps(
+                {
+                    "state": "MERGED",
+                    "mergedAt": "2026-01-01T00:00:00Z",
+                    "reviewDecision": "APPROVED",
+                    "statusCheckRollup": [],
+                }
+            )
+
+        return _R()
+
+    monkeypatch.setattr("agvv.core._run", _fake_run)
+    result = check_pr_status("owner/repo", 1)
+    assert result.status == "done"
+
+
+def test_check_pr_status_maps_failed_state_without_conclusion(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fake_run(_cmd, cwd=None):
+        class _R:
+            stdout = json.dumps(
+                {
+                    "state": "OPEN",
+                    "mergedAt": None,
+                    "reviewDecision": None,
+                    "statusCheckRollup": [{"state": "ERROR", "conclusion": None}],
+                }
+            )
+
+        return _R()
+
+    monkeypatch.setattr("agvv.core._run", _fake_run)
+    result = check_pr_status("owner/repo", 1)
+    assert result.status == "needs_work"
+
+
+def test_wait_pr_status_polls_until_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"n": 0}
+
+    def _fake_check(repo: str, pr_number: int):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return type("R", (), {"status": "waiting", "reason": "pending", "state": "OPEN", "review_decision": None})()
+        return type("R", (), {"status": "needs_work", "reason": "changes_requested", "state": "OPEN", "review_decision": "CHANGES_REQUESTED"})()
+
+    monkeypatch.setattr("agvv.core.check_pr_status", _fake_check)
+    monkeypatch.setattr("agvv.core.time.sleep", lambda _s: None)
+
+    wait_result = wait_pr_status("owner/repo", 7, interval_seconds=1, max_attempts=5)
+    assert wait_result.result.status == "needs_work"
+    assert wait_result.attempts == 3
+    assert wait_result.timed_out is False
+    assert calls["n"] == 3
+
+
+def test_wait_pr_status_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "agvv.core.check_pr_status",
+        lambda repo, pr_number: type("R", (), {"status": "waiting", "reason": "pending", "state": "OPEN", "review_decision": None})(),
+    )
+    monkeypatch.setattr("agvv.core.time.sleep", lambda _s: None)
+
+    wait_result = wait_pr_status("owner/repo", 9, interval_seconds=1, max_attempts=3)
+    assert wait_result.result.status == "waiting"
+    assert wait_result.attempts == 3
+    assert wait_result.timed_out is True
+
+
+def test_recommend_pr_next_action_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "agvv.core.check_pr_status",
+        lambda repo, pr_number: type("R", (), {"status": "waiting", "reason": "pending", "state": "OPEN", "review_decision": None})(),
+    )
+    rec = recommend_pr_next_action("owner/repo", 3)
+    assert rec.action == "wait"
+
+
+def test_recommend_pr_next_action_needs_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "agvv.core.check_pr_status",
+        lambda repo, pr_number: type("R", (), {"status": "needs_work", "reason": "changes_requested", "state": "OPEN", "review_decision": "CHANGES_REQUESTED"})(),
+    )
+    rec = recommend_pr_next_action("owner/repo", 3)
+    assert rec.action == "retry"

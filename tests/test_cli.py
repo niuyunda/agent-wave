@@ -22,6 +22,7 @@ def test_cli_help_commands() -> None:
     assert "project" in result.stdout
     assert "feature" in result.stdout
     assert "orch" in result.stdout
+    assert "pr" in result.stdout
 
 
 def test_cli_project_init_and_feature_flow(tmp_path: Path) -> None:
@@ -228,3 +229,214 @@ def test_cli_orch_spawn_invokes_core(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert "Spawned task: task-1" in result.stdout
     assert captured["project_name"] == "demo"
     assert captured["feature"] == "feat-a"
+
+
+def test_cli_orch_retry_invokes_core(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    @dataclass
+    class _FakeTask:
+        id: str
+        project_name: str
+        feature: str
+        status: str
+        session: str | None
+        agent: str | None
+        updated_at: str
+
+    monkeypatch.setattr(
+        "agvv.cli.retry_orch_task",
+        lambda task_id, base_dir, agent_cmd, session, tasks_path: _FakeTask(
+            id=task_id,
+            project_name="demo",
+            feature="feat-a",
+            status="running",
+            session=session or "sess-default",
+            agent="codex",
+            updated_at="2026-03-02T10:00:00+00:00",
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "orch",
+            "retry",
+            "--task-id",
+            "task-1",
+            "--agent-cmd",
+            "echo retry",
+            "--session",
+            "sess-r",
+            "--base-dir",
+            str(tmp_path),
+            "--tasks-path",
+            str(tmp_path / "tasks.json"),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Retried task: task-1" in result.stdout
+
+
+def test_cli_pr_check_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
+    @dataclass
+    class _FakeResult:
+        status: str
+        reason: str
+        state: str
+        review_decision: str | None
+
+    monkeypatch.setattr(
+        "agvv.cli.check_pr_status",
+        lambda repo, pr_number: _FakeResult(
+            status="waiting", reason="pending_review_or_ci", state="OPEN", review_decision=None
+        ),
+    )
+
+    result = runner.invoke(app, ["pr", "check", "--repo", "owner/repo", "--pr", "12"])
+    assert result.exit_code == 0
+    assert "status=waiting" in result.stdout
+
+
+def test_cli_pr_wait_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
+    @dataclass
+    class _FakePr:
+        status: str
+        reason: str
+        state: str
+        review_decision: str | None
+
+    @dataclass
+    class _FakeWait:
+        result: _FakePr
+        attempts: int
+        timed_out: bool
+
+    monkeypatch.setattr(
+        "agvv.cli.wait_pr_status",
+        lambda repo, pr_number, interval_seconds, max_attempts: _FakeWait(
+            result=_FakePr(
+                status="needs_work", reason="changes_requested", state="OPEN", review_decision="CHANGES_REQUESTED"
+            ),
+            attempts=4,
+            timed_out=False,
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        ["pr", "wait", "--repo", "owner/repo", "--pr", "12", "--interval-seconds", "120", "--max-attempts", "30"],
+    )
+    assert result.exit_code == 0
+    assert "status=needs_work" in result.stdout
+    assert "attempts=4" in result.stdout
+
+
+def test_cli_pr_next_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
+    @dataclass
+    class _FakeNext:
+        status: str
+        action: str
+        note: str
+
+    monkeypatch.setattr(
+        "agvv.cli.recommend_pr_next_action",
+        lambda repo, pr_number: _FakeNext(status="needs_work", action="retry", note="fix and push"),
+    )
+
+    result = runner.invoke(app, ["pr", "next", "--repo", "owner/repo", "--pr", "12"])
+    assert result.exit_code == 0
+    assert "action=retry" in result.stdout
+
+
+def test_cli_pr_monitor_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
+    @dataclass
+    class _FakePr:
+        status: str
+        reason: str
+        state: str
+        review_decision: str | None
+
+    @dataclass
+    class _FakeWait:
+        result: _FakePr
+        attempts: int
+        timed_out: bool
+
+    monkeypatch.setattr(
+        "agvv.cli.wait_pr_status",
+        lambda repo, pr_number, interval_seconds, max_attempts: _FakeWait(
+            result=_FakePr(status="waiting", reason="pending", state="OPEN", review_decision=None),
+            attempts=30,
+            timed_out=True,
+        ),
+    )
+
+    result = runner.invoke(app, ["pr", "monitor", "--repo", "owner/repo", "--pr", "12"])
+    assert result.exit_code == 0
+    assert "action=keep_waiting" in result.stdout
+
+
+def test_cli_pr_monitor_auto_retry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    @dataclass
+    class _FakePr:
+        status: str
+        reason: str
+        state: str
+        review_decision: str | None
+
+    @dataclass
+    class _FakeWait:
+        result: _FakePr
+        attempts: int
+        timed_out: bool
+
+    @dataclass
+    class _FakeTask:
+        id: str
+        project_name: str
+        feature: str
+        status: str
+        session: str | None
+        agent: str | None
+        updated_at: str
+
+    monkeypatch.setattr(
+        "agvv.cli.wait_pr_status",
+        lambda repo, pr_number, interval_seconds, max_attempts: _FakeWait(
+            result=_FakePr(status="needs_work", reason="changes_requested", state="OPEN", review_decision="CHANGES_REQUESTED"),
+            attempts=2,
+            timed_out=False,
+        ),
+    )
+    monkeypatch.setattr(
+        "agvv.cli.retry_orch_task",
+        lambda task_id, base_dir, agent_cmd, session, tasks_path: _FakeTask(
+            id=task_id,
+            project_name="demo",
+            feature="feat-a",
+            status="running",
+            session=session or "sess-x",
+            agent="codex",
+            updated_at="2026-03-02T10:00:00+00:00",
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "pr",
+            "monitor",
+            "--repo",
+            "owner/repo",
+            "--pr",
+            "12",
+            "--auto-retry",
+            "--task-id",
+            "task-1",
+            "--agent-cmd",
+            "echo retry",
+            "--base-dir",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "action=retry_started" in result.stdout

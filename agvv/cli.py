@@ -11,6 +11,10 @@ import typer
 from agvv.core import (
     AgvvError,
     adopt_project,
+    check_pr_status,
+    wait_pr_status,
+    recommend_pr_next_action,
+    retry_orch_task,
     cleanup_feature,
     create_orch_task,
     init_project,
@@ -23,12 +27,14 @@ app = typer.Typer(help="Agent Wave: orchestrate parallel git worktree workflow f
 project_app = typer.Typer(help="Project-level operations.")
 feature_app = typer.Typer(help="Feature branch/worktree operations.")
 orch_app = typer.Typer(help="Task orchestration registry operations.")
+pr_app = typer.Typer(help="Pull request review-loop operations.")
 _DEFAULT_BASE_DIR = "~/code"
 _LOGGER = logging.getLogger(__name__)
 
 app.add_typer(project_app, name="project")
 app.add_typer(feature_app, name="feature")
 app.add_typer(orch_app, name="orch")
+app.add_typer(pr_app, name="pr")
 
 
 def _base_dir(path: str | None) -> Path:
@@ -235,6 +241,161 @@ def orch_list(
             f"{task.id}\t{task.status}\t{task.project_name}/{task.feature}\t"
             f"session={session}\tagent={agent}\tupdated={task.updated_at}"
         )
+
+
+@orch_app.command("retry")
+def orch_retry(
+    task_id: Annotated[str, typer.Option("--task-id", help="Existing task id to retry.")],
+    agent_cmd: Annotated[str, typer.Option("--agent-cmd", help="Agent command to run for retry.")],
+    base_dir: Annotated[
+        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
+    ] = None,
+    session: Annotated[str | None, typer.Option("--session", help="Override tmux session name.")] = None,
+    tasks_path: Annotated[
+        str | None,
+        typer.Option(
+            "--tasks-path",
+            help="Path to tasks registry JSON (default: AGVV_TASKS_PATH or ~/.agvv/tasks.json).",
+        ),
+    ] = None,
+) -> None:
+    """Retry an existing orchestration task."""
+
+    try:
+        task = retry_orch_task(
+            task_id=task_id,
+            base_dir=_base_dir(base_dir),
+            agent_cmd=agent_cmd,
+            session=session,
+            tasks_path=_resolve_optional_path(tasks_path),
+        )
+    except AgvvError as exc:
+        _exit_with_agvv_error(exc)
+
+    typer.echo(f"Retried task: {task.id} status={task.status} session={task.session}")
+
+
+@pr_app.command("check")
+def pr_check(
+    repo: Annotated[str, typer.Option("--repo", help="GitHub repo in owner/name format.")],
+    pr_number: Annotated[int, typer.Option("--pr", help="PR number to check.")],
+) -> None:
+    """Check PR result for short review loop (<=1 hour)."""
+
+    try:
+        result = check_pr_status(repo=repo, pr_number=pr_number)
+    except AgvvError as exc:
+        _exit_with_agvv_error(exc)
+
+    typer.echo(
+        f"status={result.status}\treason={result.reason}\tstate={result.state}\t"
+        f"review={result.review_decision or '-'}"
+    )
+
+
+@pr_app.command("wait")
+def pr_wait(
+    repo: Annotated[str, typer.Option("--repo", help="GitHub repo in owner/name format.")],
+    pr_number: Annotated[int, typer.Option("--pr", help="PR number to check.")],
+    interval_seconds: Annotated[int, typer.Option("--interval-seconds", help="Polling interval in seconds.")] = 120,
+    max_attempts: Annotated[int, typer.Option("--max-attempts", help="Maximum number of polls.")] = 30,
+) -> None:
+    """Wait for PR result with default 2-min interval and max 30 attempts."""
+
+    try:
+        wait_result = wait_pr_status(
+            repo=repo,
+            pr_number=pr_number,
+            interval_seconds=interval_seconds,
+            max_attempts=max_attempts,
+        )
+    except AgvvError as exc:
+        _exit_with_agvv_error(exc)
+
+    result = wait_result.result
+    typer.echo(
+        f"status={result.status}\treason={result.reason}\tstate={result.state}\t"
+        f"review={result.review_decision or '-'}\tattempts={wait_result.attempts}\t"
+        f"timed_out={'yes' if wait_result.timed_out else 'no'}"
+    )
+
+
+@pr_app.command("next")
+def pr_next(
+    repo: Annotated[str, typer.Option("--repo", help="GitHub repo in owner/name format.")],
+    pr_number: Annotated[int, typer.Option("--pr", help="PR number to inspect.")],
+) -> None:
+    """Suggest the next automation step for current PR status."""
+
+    try:
+        next_action = recommend_pr_next_action(repo=repo, pr_number=pr_number)
+    except AgvvError as exc:
+        _exit_with_agvv_error(exc)
+
+    typer.echo(f"status={next_action.status}\taction={next_action.action}\tnote={next_action.note}")
+
+
+@pr_app.command("monitor")
+def pr_monitor(
+    repo: Annotated[str, typer.Option("--repo", help="GitHub repo in owner/name format.")],
+    pr_number: Annotated[int, typer.Option("--pr", help="PR number to monitor.")],
+    interval_seconds: Annotated[int, typer.Option("--interval-seconds", help="Polling interval in seconds.")] = 120,
+    max_attempts: Annotated[int, typer.Option("--max-attempts", help="Maximum number of polls.")] = 30,
+    auto_retry: Annotated[bool, typer.Option("--auto-retry", help="Auto trigger orch retry when needs_work.")] = False,
+    task_id: Annotated[str | None, typer.Option("--task-id", help="Task id for orch retry.")] = None,
+    agent_cmd: Annotated[str | None, typer.Option("--agent-cmd", help="Agent command for orch retry.")] = None,
+    base_dir: Annotated[
+        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
+    ] = None,
+    session: Annotated[str | None, typer.Option("--session", help="Override tmux session for retry.")] = None,
+    tasks_path: Annotated[
+        str | None,
+        typer.Option("--tasks-path", help="Path to tasks registry JSON."),
+    ] = None,
+) -> None:
+    """Monitor PR; if changes requested, optionally trigger retry; otherwise keep waiting until timeout."""
+
+    try:
+        waited = wait_pr_status(
+            repo=repo,
+            pr_number=pr_number,
+            interval_seconds=interval_seconds,
+            max_attempts=max_attempts,
+        )
+    except AgvvError as exc:
+        _exit_with_agvv_error(exc)
+
+    result = waited.result
+    if result.status == "needs_work":
+        if not auto_retry:
+            typer.echo("status=needs_work\taction=manual_retry\tnote=Review requested changes; run orch retry.")
+            return
+        if not task_id or not agent_cmd:
+            raise typer.BadParameter("--task-id and --agent-cmd are required when --auto-retry is set")
+        try:
+            retried = retry_orch_task(
+                task_id=task_id,
+                base_dir=_base_dir(base_dir),
+                agent_cmd=agent_cmd,
+                session=session,
+                tasks_path=_resolve_optional_path(tasks_path),
+            )
+        except AgvvError as exc:
+            _exit_with_agvv_error(exc)
+        typer.echo(f"status=needs_work\taction=retry_started\ttask={retried.id}\tsession={retried.session}")
+        return
+
+    if result.status == "waiting":
+        typer.echo(
+            f"status=waiting\taction=keep_waiting\treason=no-change-requested\tattempts={waited.attempts}\t"
+            f"timed_out={'yes' if waited.timed_out else 'no'}"
+        )
+        return
+
+    typer.echo(
+        f"status={result.status}\taction=no_retry\tnote=No code change requested.\tattempts={waited.attempts}\t"
+        f"timed_out={'yes' if waited.timed_out else 'no'}"
+    )
 
 
 if __name__ == "__main__":

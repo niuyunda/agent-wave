@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,6 +55,34 @@ class TaskRegistry:
     tasks: list[TaskRecord]
 
 
+@dataclass(frozen=True)
+class PrCheckResult:
+    """Simplified PR check result for short review cycles."""
+
+    status: str
+    reason: str
+    state: str
+    review_decision: str | None
+
+
+@dataclass(frozen=True)
+class PrWaitResult:
+    """Result of polling a PR for status updates."""
+
+    result: PrCheckResult
+    attempts: int
+    timed_out: bool
+
+
+@dataclass(frozen=True)
+class PrNextAction:
+    """Suggested next action for a PR based on current status."""
+
+    status: str
+    action: str
+    note: str
+
+
 def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     """Run a shell command and normalize failures into ``AgvvError``."""
 
@@ -65,6 +94,8 @@ def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
             capture_output=True,
             check=True,
         )
+    except FileNotFoundError as exc:
+        raise AgvvError(f"Command not found: {cmd[0]}") from exc
     except subprocess.CalledProcessError as exc:
         raise AgvvError(
             f"Command failed: {' '.join(cmd)}\n"
@@ -178,7 +209,10 @@ def _parse_task_updated_at(value: str | None) -> datetime:
     if not value:
         return datetime.min.replace(tzinfo=timezone.utc)
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
     except ValueError:
         return datetime.min.replace(tzinfo=timezone.utc)
 
@@ -231,7 +265,19 @@ def save_task_registry(registry: TaskRegistry, path: Path | None = None) -> Path
 def tmux_session_exists(session: str) -> bool:
     """Return whether a tmux session exists."""
 
-    return subprocess.run(["tmux", "has-session", "-t", session], check=False, capture_output=True, text=True).returncode == 0
+    try:
+        result = subprocess.run(["tmux", "has-session", "-t", session], check=False, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise AgvvError("tmux not found") from exc
+    return result.returncode == 0
+
+
+def tmux_kill_session(session: str) -> None:
+    """Kill tmux session if it exists."""
+
+    if not tmux_session_exists(session):
+        return
+    _run(["tmux", "kill-session", "-t", session])
 
 
 def tmux_new_session(session: str, cwd: Path, command: str) -> None:
@@ -240,7 +286,8 @@ def tmux_new_session(session: str, cwd: Path, command: str) -> None:
     if tmux_session_exists(session):
         raise AgvvError(f"tmux session already exists: {session}")
     quoted_cwd = shlex.quote(str(cwd))
-    _run(["tmux", "new-session", "-d", "-s", session, f"cd {quoted_cwd} && {command}"])
+    quoted_command = shlex.quote(command)
+    _run(["tmux", "new-session", "-d", "-s", session, f"cd {quoted_cwd} && {quoted_command}"])
 
 
 def create_orch_task(
@@ -271,6 +318,14 @@ def create_orch_task(
     if paths.feature_dir is None:
         raise RuntimeError("Internal error: feature_dir resolved to None.")
 
+    registry = load_task_registry(tasks_path)
+    existing_ids = {task.id for task in registry.tasks}
+    if task_id in existing_ids:
+        raise AgvvError(f"Task id already exists: {task_id}")
+
+    if tmux_session_exists(session):
+        raise AgvvError(f"tmux session already exists: {session}")
+
     if not paths.feature_dir.exists():
         start_feature(
             project_name=project_name,
@@ -284,16 +339,6 @@ def create_orch_task(
             create_dirs=[],
         )
 
-    registry = load_task_registry(tasks_path)
-    existing_ids = {task.id for task in registry.tasks}
-    if task_id in existing_ids:
-        raise AgvvError(f"Task id already exists: {task_id}")
-
-    if tmux_session_exists(session):
-        raise AgvvError(f"tmux session already exists: {session}")
-
-    tmux_new_session(session=session, cwd=paths.feature_dir, command=agent_cmd)
-
     created = TaskRecord(
         id=task_id,
         project_name=project_name,
@@ -303,12 +348,161 @@ def create_orch_task(
         agent=agent,
         updated_at=datetime.now(tz=timezone.utc).isoformat(),
     )
-    updated_tasks = [created, *registry.tasks]
-    save_task_registry(
-        TaskRegistry(version=registry.version, updated_at=created.updated_at, tasks=updated_tasks),
-        path=tasks_path,
-    )
+
+    tmux_new_session(session=session, cwd=paths.feature_dir, command=agent_cmd)
+    try:
+        updated_tasks = [created, *registry.tasks]
+        save_task_registry(
+            TaskRegistry(version=registry.version, updated_at=created.updated_at, tasks=updated_tasks),
+            path=tasks_path,
+        )
+    except Exception as exc:
+        try:
+            tmux_kill_session(session)
+        except AgvvError:
+            pass
+        raise AgvvError(
+            f"Failed to persist task registry after starting tmux session '{session}': {exc}"
+        ) from exc
+
     return created
+
+
+def retry_orch_task(
+    task_id: str,
+    base_dir: Path,
+    agent_cmd: str,
+    session: str | None = None,
+    tasks_path: Path | None = None,
+) -> TaskRecord:
+    """Retry an existing orchestration task by relaunching tmux session and updating status."""
+
+    registry = load_task_registry(tasks_path)
+    index = -1
+    current: TaskRecord | None = None
+    for i, item in enumerate(registry.tasks):
+        if item.id == task_id:
+            index = i
+            current = item
+            break
+
+    if current is None:
+        raise AgvvError(f"Task not found: {task_id}")
+    if current.status == "running":
+        raise AgvvError(f"Task is already running: {task_id}")
+
+    chosen_session = session or current.session
+    if not chosen_session:
+        raise AgvvError("Retry requires a tmux session name (provide --session).")
+    if tmux_session_exists(chosen_session):
+        raise AgvvError(f"tmux session already exists: {chosen_session}")
+
+    paths = layout_paths(current.project_name, base_dir, feature=current.feature)
+    if paths.feature_dir is None or not paths.feature_dir.exists():
+        raise AgvvError(f"Feature worktree not found for retry: {current.project_name}/{current.feature}")
+
+    tmux_new_session(session=chosen_session, cwd=paths.feature_dir, command=agent_cmd)
+
+    updated = TaskRecord(
+        id=current.id,
+        project_name=current.project_name,
+        feature=current.feature,
+        status="running",
+        session=chosen_session,
+        agent=current.agent,
+        updated_at=datetime.now(tz=timezone.utc).isoformat(),
+    )
+
+    tasks = list(registry.tasks)
+    tasks[index] = updated
+    save_task_registry(TaskRegistry(version=registry.version, updated_at=updated.updated_at, tasks=tasks), path=tasks_path)
+    return updated
+
+
+def check_pr_status(repo: str, pr_number: int) -> PrCheckResult:
+    """Check PR state via gh and map to minimal status for fast review loops."""
+
+    cmd = [
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--repo",
+        repo,
+        "--json",
+        "state,mergedAt,reviewDecision,statusCheckRollup",
+    ]
+    try:
+        payload = json.loads(_run(cmd).stdout)
+    except json.JSONDecodeError as exc:
+        raise AgvvError(f"Invalid JSON from gh pr view for {repo}#{pr_number}: {exc}") from exc
+
+    state = str(payload.get("state", ""))
+    merged_at = payload.get("mergedAt")
+    review_decision = payload.get("reviewDecision")
+
+    if merged_at:
+        return PrCheckResult(status="done", reason="merged", state=state, review_decision=review_decision)
+
+    if state != "OPEN":
+        return PrCheckResult(status="closed", reason="not_open", state=state, review_decision=review_decision)
+
+    if review_decision == "CHANGES_REQUESTED":
+        return PrCheckResult(status="needs_work", reason="changes_requested", state=state, review_decision=review_decision)
+
+    checks = payload.get("statusCheckRollup") or []
+    failing = {"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}
+    failing_state = {"FAILURE", "FAILED", "ERROR"}
+    for check in checks:
+        entry = check or {}
+        conclusion = str(entry.get("conclusion") or "").upper()
+        state_value = str(entry.get("state") or entry.get("status") or "").upper()
+        if conclusion in failing:
+            return PrCheckResult(status="needs_work", reason=f"ci_{conclusion.lower()}", state=state, review_decision=review_decision)
+        if state_value in failing_state:
+            return PrCheckResult(status="needs_work", reason=f"ci_{state_value.lower()}", state=state, review_decision=review_decision)
+
+    return PrCheckResult(status="waiting", reason="pending_review_or_ci", state=state, review_decision=review_decision)
+
+
+def wait_pr_status(repo: str, pr_number: int, interval_seconds: int = 120, max_attempts: int = 30) -> PrWaitResult:
+    """Poll PR status every interval until terminal or attempts exhausted."""
+
+    if interval_seconds <= 0:
+        raise AgvvError("interval_seconds must be > 0")
+    if max_attempts <= 0:
+        raise AgvvError("max_attempts must be > 0")
+
+    last = check_pr_status(repo=repo, pr_number=pr_number)
+    terminal = {"done", "closed", "needs_work"}
+    attempts = 1
+    while last.status not in terminal and attempts < max_attempts:
+        time.sleep(interval_seconds)
+        last = check_pr_status(repo=repo, pr_number=pr_number)
+        attempts += 1
+
+    return PrWaitResult(result=last, attempts=attempts, timed_out=last.status == "waiting")
+
+
+def recommend_pr_next_action(repo: str, pr_number: int) -> PrNextAction:
+    """Return a minimal next-step recommendation for PR automation loop."""
+
+    result = check_pr_status(repo=repo, pr_number=pr_number)
+    if result.status == "needs_work":
+        return PrNextAction(
+            status=result.status,
+            action="retry",
+            note="Run fix workflow: update code, push, then run `agvv pr wait` again.",
+        )
+    if result.status == "done":
+        return PrNextAction(status=result.status, action="cleanup", note="PR merged; run feature cleanup.")
+    if result.status == "closed":
+        return PrNextAction(status=result.status, action="stop", note="PR closed without merge; manual follow-up needed.")
+    return PrNextAction(
+        status=result.status,
+        action="wait",
+        note="Keep polling with `agvv pr wait --interval-seconds 120 --max-attempts 30`.",
+    )
 
 
 def layout_paths(project_name: str, base_dir: Path, feature: str | None = None) -> LayoutPaths:
