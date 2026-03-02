@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 class AgvvError(RuntimeError):
@@ -25,6 +28,30 @@ class LayoutPaths:
 
 
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_TASKS_ENV_VAR = "AGVV_TASKS_PATH"
+_DEFAULT_TASKS_PATH = Path("~/.agvv/tasks.json")
+
+
+@dataclass(frozen=True)
+class TaskRecord:
+    """Single orchestration task record from the registry."""
+
+    id: str
+    project_name: str
+    feature: str
+    status: str
+    session: str | None
+    agent: str | None
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class TaskRegistry:
+    """In-memory representation of the tasks registry."""
+
+    version: int
+    updated_at: str
+    tasks: list[TaskRecord]
 
 
 def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -75,6 +102,213 @@ def parse_kv_pairs(pairs: list[str]) -> dict[str, str]:
             raise AgvvError(f"Invalid --param value '{pair}'. Key cannot be empty.")
         result[key] = value
     return result
+
+
+def resolve_tasks_path(path: Path | None = None) -> Path:
+    """Resolve tasks registry path from argument/env/default."""
+
+    if path is not None:
+        return path.expanduser().resolve()
+
+    env_path = os.getenv(_TASKS_ENV_VAR)
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+
+    return _DEFAULT_TASKS_PATH.expanduser().resolve()
+
+
+def _coerce_task_record(raw: dict[str, Any]) -> TaskRecord:
+    """Convert raw JSON task object into a typed ``TaskRecord``."""
+
+    if not isinstance(raw, dict):
+        raise AgvvError("Invalid task registry entry; each task must be an object.")
+
+    try:
+        return TaskRecord(
+            id=str(raw["id"]),
+            project_name=str(raw["project_name"]),
+            feature=str(raw["feature"]),
+            status=str(raw["status"]),
+            session=(str(raw["session"]) if raw.get("session") is not None else None),
+            agent=(str(raw["agent"]) if raw.get("agent") is not None else None),
+            updated_at=str(raw["updated_at"]),
+        )
+    except KeyError as exc:
+        raise AgvvError(f"Invalid task registry entry; missing required key: {exc.args[0]}") from exc
+
+
+def load_task_registry(path: Path | None = None) -> TaskRegistry:
+    """Load task registry JSON from disk.
+
+    Returns an empty registry if file does not exist.
+    """
+
+    registry_path = resolve_tasks_path(path)
+    if not registry_path.exists():
+        return TaskRegistry(version=1, updated_at=datetime.now(tz=timezone.utc).isoformat(), tasks=[])
+
+    try:
+        payload = json.loads(registry_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise AgvvError(f"Failed to read task registry at {registry_path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise AgvvError(f"Task registry JSON is invalid at {registry_path}: {exc}") from exc
+
+    if not isinstance(payload, dict):
+        raise AgvvError(f"Task registry root must be an object at {registry_path}.")
+
+    version = payload.get("version", 1)
+    try:
+        parsed_version = int(version)
+    except (TypeError, ValueError) as exc:
+        raise AgvvError(f"Task registry field 'version' must be an integer at {registry_path}: {exc}") from exc
+
+    tasks_raw = payload.get("tasks", [])
+    if not isinstance(tasks_raw, list):
+        raise AgvvError(f"Task registry field 'tasks' must be a list at {registry_path}.")
+
+    tasks = [_coerce_task_record(item) for item in tasks_raw]
+    updated_at = str(payload.get("updated_at", datetime.now(tz=timezone.utc).isoformat()))
+    return TaskRegistry(version=parsed_version, updated_at=updated_at, tasks=tasks)
+
+
+def _parse_task_updated_at(value: str | None) -> datetime:
+    """Parse task timestamp for stable chronological sorting."""
+
+    if not value:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def list_tasks(
+    path: Path | None = None,
+    project_name: str | None = None,
+    status: str | None = None,
+) -> list[TaskRecord]:
+    """Return tasks from registry with optional project/status filters."""
+
+    tasks = load_task_registry(path).tasks
+    if project_name is not None:
+        tasks = [task for task in tasks if task.project_name == project_name]
+    if status is not None:
+        tasks = [task for task in tasks if task.status == status]
+    return sorted(tasks, key=lambda item: _parse_task_updated_at(item.updated_at), reverse=True)
+
+
+def _task_record_to_dict(task: TaskRecord) -> dict[str, Any]:
+    """Convert a ``TaskRecord`` into JSON-serializable dictionary payload."""
+
+    return {
+        "id": task.id,
+        "project_name": task.project_name,
+        "feature": task.feature,
+        "status": task.status,
+        "session": task.session,
+        "agent": task.agent,
+        "updated_at": task.updated_at,
+    }
+
+
+def save_task_registry(registry: TaskRegistry, path: Path | None = None) -> Path:
+    """Persist task registry atomically and return the target path."""
+
+    target = resolve_tasks_path(path)
+    payload = {
+        "version": registry.version,
+        "updated_at": registry.updated_at,
+        "tasks": [_task_record_to_dict(task) for task in registry.tasks],
+    }
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = target.with_suffix(target.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp_path.replace(target)
+    return target
+
+
+def tmux_session_exists(session: str) -> bool:
+    """Return whether a tmux session exists."""
+
+    return subprocess.run(["tmux", "has-session", "-t", session], check=False, capture_output=True, text=True).returncode == 0
+
+
+def tmux_new_session(session: str, cwd: Path, command: str) -> None:
+    """Start a detached tmux session executing command in cwd."""
+
+    if tmux_session_exists(session):
+        raise AgvvError(f"tmux session already exists: {session}")
+    quoted_cwd = shlex.quote(str(cwd))
+    _run(["tmux", "new-session", "-d", "-s", session, f"cd {quoted_cwd} && {command}"])
+
+
+def create_orch_task(
+    project_name: str,
+    feature: str,
+    base_dir: Path,
+    task_id: str,
+    session: str,
+    agent: str,
+    agent_cmd: str,
+    from_branch: str = "main",
+    tasks_path: Path | None = None,
+) -> TaskRecord:
+    """Create/start an orchestration task by preparing worktree + tmux + registry entry."""
+
+    _ensure_layout_name(project_name, "Project name")
+    _ensure_feature_name(feature)
+    _ensure_layout_name(task_id, "Task id")
+    _ensure_layout_name(session, "Session name")
+
+    paths = layout_paths(project_name, base_dir, feature=feature)
+    if not paths.repo_dir.exists() or not paths.main_dir.exists():
+        raise AgvvError(
+            f"Project not initialized at {paths.project_dir}. "
+            "Run `agvv project init` or `agvv project adopt` first."
+        )
+
+    if paths.feature_dir is None:
+        raise RuntimeError("Internal error: feature_dir resolved to None.")
+
+    if not paths.feature_dir.exists():
+        start_feature(
+            project_name=project_name,
+            feature=feature,
+            base_dir=base_dir,
+            from_branch=from_branch,
+            agent=agent,
+            task_id=task_id,
+            ticket=None,
+            params={"agent_cmd": agent_cmd},
+            create_dirs=[],
+        )
+
+    registry = load_task_registry(tasks_path)
+    existing_ids = {task.id for task in registry.tasks}
+    if task_id in existing_ids:
+        raise AgvvError(f"Task id already exists: {task_id}")
+
+    if tmux_session_exists(session):
+        raise AgvvError(f"tmux session already exists: {session}")
+
+    tmux_new_session(session=session, cwd=paths.feature_dir, command=agent_cmd)
+
+    created = TaskRecord(
+        id=task_id,
+        project_name=project_name,
+        feature=feature,
+        status="running",
+        session=session,
+        agent=agent,
+        updated_at=datetime.now(tz=timezone.utc).isoformat(),
+    )
+    updated_tasks = [created, *registry.tasks]
+    save_task_registry(
+        TaskRegistry(version=registry.version, updated_at=created.updated_at, tasks=updated_tasks),
+        path=tasks_path,
+    )
+    return created
 
 
 def layout_paths(project_name: str, base_dir: Path, feature: str | None = None) -> LayoutPaths:

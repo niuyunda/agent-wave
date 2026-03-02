@@ -8,16 +8,27 @@ from typing import Annotated
 
 import typer
 
-from agvv.core import AgvvError, adopt_project, cleanup_feature, init_project, parse_kv_pairs, start_feature
+from agvv.core import (
+    AgvvError,
+    adopt_project,
+    cleanup_feature,
+    create_orch_task,
+    init_project,
+    list_tasks,
+    parse_kv_pairs,
+    start_feature,
+)
 
 app = typer.Typer(help="Agent Wave: orchestrate parallel git worktree workflow for coding tasks.")
 project_app = typer.Typer(help="Project-level operations.")
 feature_app = typer.Typer(help="Feature branch/worktree operations.")
+orch_app = typer.Typer(help="Task orchestration registry operations.")
 _DEFAULT_BASE_DIR = "~/code"
 _LOGGER = logging.getLogger(__name__)
 
 app.add_typer(project_app, name="project")
 app.add_typer(feature_app, name="feature")
+app.add_typer(orch_app, name="orch")
 
 
 def _base_dir(path: str | None) -> Path:
@@ -35,6 +46,12 @@ def _exit_with_agvv_error(exc: AgvvError) -> None:
 
     typer.secho(str(exc), err=True, fg=typer.colors.RED)
     raise typer.Exit(code=1) from exc
+
+
+def _resolve_optional_path(path: str | None) -> Path | None:
+    """Resolve an optional path string to an absolute ``Path``."""
+
+    return Path(path).expanduser().resolve() if path else None
 
 
 @project_app.command("init")
@@ -139,6 +156,85 @@ def feature_cleanup(
 
     suffix = " (branch kept)" if keep_branch else ""
     typer.echo(f"Cleaned feature worktree/branch: {feature}{suffix}")
+
+
+@orch_app.command("spawn")
+def orch_spawn(
+    project_name: str,
+    feature: str,
+    task_id: Annotated[str, typer.Option("--task-id", help="Unique task id.")],
+    session: Annotated[str, typer.Option("--session", help="tmux session name.")],
+    agent_cmd: Annotated[str, typer.Option("--agent-cmd", help="Agent command to run inside tmux session.")],
+    agent: Annotated[str, typer.Option("--agent", help="Agent name (e.g. codex).")],
+    base_dir: Annotated[
+        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
+    ] = None,
+    from_branch: Annotated[str, typer.Option("--from-branch", help="Base branch for new feature worktree.")] = "main",
+    tasks_path: Annotated[
+        str | None,
+        typer.Option(
+            "--tasks-path",
+            help="Path to tasks registry JSON (default: AGVV_TASKS_PATH or ~/.agvv/tasks.json).",
+        ),
+    ] = None,
+) -> None:
+    """Create a running orchestration task (worktree + tmux + registry)."""
+
+    try:
+        task = create_orch_task(
+            project_name=project_name,
+            feature=feature,
+            base_dir=_base_dir(base_dir),
+            task_id=task_id,
+            session=session,
+            agent=agent,
+            agent_cmd=agent_cmd,
+            from_branch=from_branch,
+            tasks_path=_resolve_optional_path(tasks_path),
+        )
+    except AgvvError as exc:
+        _exit_with_agvv_error(exc)
+
+    typer.echo(
+        f"Spawned task: {task.id} status={task.status} "
+        f"target={task.project_name}/{task.feature} session={task.session}"
+    )
+
+
+@orch_app.command("list")
+def orch_list(
+    tasks_path: Annotated[
+        str | None,
+        typer.Option(
+            "--tasks-path",
+            help="Path to tasks registry JSON (default: AGVV_TASKS_PATH or ~/.agvv/tasks.json).",
+        ),
+    ] = None,
+    project_name: Annotated[str | None, typer.Option("--project", help="Filter by project name.")] = None,
+    status: Annotated[str | None, typer.Option("--status", help="Filter by task status.")] = None,
+) -> None:
+    """List orchestration tasks from the registry."""
+
+    try:
+        task_items = list_tasks(
+            path=_resolve_optional_path(tasks_path),
+            project_name=project_name,
+            status=status,
+        )
+    except AgvvError as exc:
+        _exit_with_agvv_error(exc)
+
+    if not task_items:
+        typer.echo("No tasks found.")
+        return
+
+    for task in task_items:
+        session = task.session or "-"
+        agent = task.agent or "-"
+        typer.echo(
+            f"{task.id}\t{task.status}\t{task.project_name}/{task.feature}\t"
+            f"session={session}\tagent={agent}\tupdated={task.updated_at}"
+        )
 
 
 if __name__ == "__main__":

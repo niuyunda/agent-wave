@@ -6,7 +6,18 @@ from pathlib import Path
 
 import pytest
 
-from agvv.core import AgvvError, adopt_project, cleanup_feature, init_project, parse_kv_pairs, start_feature
+from agvv.core import (
+    AgvvError,
+    adopt_project,
+    cleanup_feature,
+    create_orch_task,
+    init_project,
+    list_tasks,
+    load_task_registry,
+    parse_kv_pairs,
+    resolve_tasks_path,
+    start_feature,
+)
 
 
 def _git(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -270,3 +281,173 @@ def test_cleanup_feature_fails_when_repo_missing(tmp_path: Path) -> None:
 def test_cleanup_feature_fails_on_reserved_name(tmp_path: Path) -> None:
     with pytest.raises(AgvvError):
         cleanup_feature("demo", "repo.git", tmp_path, delete_branch=True)
+
+
+def test_load_task_registry_returns_empty_when_missing(tmp_path: Path) -> None:
+    registry = load_task_registry(tmp_path / "tasks.json")
+    assert registry.version == 1
+    assert registry.tasks == []
+
+
+def test_load_task_registry_and_list_filters(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    tasks_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-03-02T10:00:00+00:00",
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "project_name": "calcproj",
+                        "feature": "feat-add",
+                        "status": "running",
+                        "session": "s1",
+                        "agent": "codex",
+                        "updated_at": "2026-03-02T10:01:00+00:00",
+                    },
+                    {
+                        "id": "t2",
+                        "project_name": "calcproj",
+                        "feature": "feat-sub",
+                        "status": "failed",
+                        "session": "s2",
+                        "agent": "codex",
+                        "updated_at": "2026-03-02T10:02:00+00:00",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    registry = load_task_registry(tasks_path)
+    assert len(registry.tasks) == 2
+
+    only_failed = list_tasks(tasks_path, project_name="calcproj", status="failed")
+    assert len(only_failed) == 1
+    assert only_failed[0].id == "t2"
+
+
+def test_load_task_registry_rejects_non_object_task_item(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    tasks_path.write_text(
+        json.dumps({"version": 1, "updated_at": "2026-03-02T10:00:00+00:00", "tasks": ["bad-item"]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AgvvError, match="each task must be an object"):
+        load_task_registry(tasks_path)
+
+
+def test_load_task_registry_rejects_non_integer_version(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    tasks_path.write_text(
+        json.dumps({"version": "abc", "updated_at": "2026-03-02T10:00:00+00:00", "tasks": []}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AgvvError, match="version' must be an integer"):
+        load_task_registry(tasks_path)
+
+
+def test_list_tasks_sorts_by_parsed_datetime(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    tasks_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-03-02T10:00:00+00:00",
+                "tasks": [
+                    {
+                        "id": "early",
+                        "project_name": "calcproj",
+                        "feature": "feat-early",
+                        "status": "running",
+                        "session": "s1",
+                        "agent": "codex",
+                        "updated_at": "2026-03-02T10:00:00+00:00",
+                    },
+                    {
+                        "id": "late",
+                        "project_name": "calcproj",
+                        "feature": "feat-late",
+                        "status": "running",
+                        "session": "s2",
+                        "agent": "codex",
+                        "updated_at": "2026-03-02T23:30:00+13:00",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    items = list_tasks(tasks_path)
+    assert items[0].id == "late"
+
+
+def test_resolve_tasks_path_prefers_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    expected = tmp_path / "env-tasks.json"
+    monkeypatch.setenv("AGVV_TASKS_PATH", str(expected))
+    assert resolve_tasks_path() == expected.resolve()
+
+
+def test_create_orch_task_creates_running_entry_and_feature(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    init_project("demo", tmp_path)
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr("agvv.core.tmux_session_exists", lambda _session: False)
+
+    def _fake_new_session(session: str, cwd: Path, command: str) -> None:
+        calls.append((session, f"{cwd}:{command}"))
+
+    monkeypatch.setattr("agvv.core.tmux_new_session", _fake_new_session)
+
+    task = create_orch_task(
+        project_name="demo",
+        feature="feat-spawn",
+        base_dir=tmp_path,
+        task_id="task001",
+        session="sess001",
+        agent="codex",
+        agent_cmd="echo hello",
+        tasks_path=tmp_path / "tasks.json",
+    )
+
+    assert task.status == "running"
+    assert task.id == "task001"
+    assert (tmp_path / "demo" / "feat-spawn").exists()
+    assert calls and calls[0][0] == "sess001"
+
+    listed = list_tasks(tmp_path / "tasks.json")
+    assert listed[0].id == "task001"
+
+
+def test_create_orch_task_rejects_duplicate_task_id(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    init_project("demo", tmp_path)
+    monkeypatch.setattr("agvv.core.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr("agvv.core.tmux_new_session", lambda session, cwd, command: None)
+
+    create_orch_task(
+        project_name="demo",
+        feature="feat-a",
+        base_dir=tmp_path,
+        task_id="task001",
+        session="sess001",
+        agent="codex",
+        agent_cmd="echo one",
+        tasks_path=tmp_path / "tasks.json",
+    )
+
+    with pytest.raises(AgvvError, match="Task id already exists"):
+        create_orch_task(
+            project_name="demo",
+            feature="feat-b",
+            base_dir=tmp_path,
+            task_id="task001",
+            session="sess002",
+            agent="codex",
+            agent_cmd="echo two",
+            tasks_path=tmp_path / "tasks.json",
+        )
