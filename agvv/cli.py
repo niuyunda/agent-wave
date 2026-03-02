@@ -12,6 +12,7 @@ from agvv.core import (
     AgvvError,
     adopt_project,
     cleanup_feature,
+    create_orch_task,
     init_project,
     list_tasks,
     parse_kv_pairs,
@@ -149,6 +150,49 @@ def feature_cleanup(
 
     suffix = " (branch kept)" if keep_branch else ""
     typer.echo(f"Cleaned feature worktree/branch: {feature}{suffix}")
+
+
+@orch_app.command("spawn")
+def orch_spawn(
+    project_name: str,
+    feature: str,
+    task_id: Annotated[str, typer.Option("--task-id", help="Unique task id.")],
+    session: Annotated[str, typer.Option("--session", help="tmux session name.")],
+    agent_cmd: Annotated[str, typer.Option("--agent-cmd", help="Agent command to run inside tmux session.")],
+    agent: Annotated[str, typer.Option("--agent", help="Agent name (e.g. codex).")],
+    base_dir: Annotated[
+        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
+    ] = None,
+    from_branch: Annotated[str, typer.Option("--from-branch", help="Base branch for new feature worktree.")] = "main",
+    tasks_path: Annotated[
+        str | None,
+        typer.Option(
+            "--tasks-path",
+            help="Path to tasks registry JSON (default: AGVV_TASKS_PATH or ~/.agvv/tasks.json).",
+        ),
+    ] = None,
+) -> None:
+    """Create a running orchestration task (worktree + tmux + registry)."""
+
+    try:
+        task = create_orch_task(
+            project_name=project_name,
+            feature=feature,
+            base_dir=_base_dir(base_dir),
+            task_id=task_id,
+            session=session,
+            agent=agent,
+            agent_cmd=agent_cmd,
+            from_branch=from_branch,
+            tasks_path=Path(tasks_path).expanduser().resolve() if tasks_path else None,
+        )
+    except AgvvError as exc:
+        _exit_with_agvv_error(exc)
+
+    typer.echo(
+        f"Spawned task: {task.id} status={task.status} "
+        f"target={task.project_name}/{task.feature} session={task.session}"
+    )
 
 
 @orch_app.command("list")

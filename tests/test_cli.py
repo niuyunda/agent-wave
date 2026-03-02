@@ -4,6 +4,7 @@ import json
 import runpy
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -169,3 +170,58 @@ def test_cli_orch_list_no_tasks(tmp_path: Path) -> None:
     result = runner.invoke(app, ["orch", "list", "--tasks-path", str(tmp_path / "missing.json")])
     assert result.exit_code == 0
     assert "No tasks found." in result.stdout
+
+
+def test_cli_orch_spawn_invokes_core(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    @dataclass
+    class _FakeTask:
+        id: str
+        project_name: str
+        feature: str
+        status: str
+        session: str | None
+        agent: str | None
+        updated_at: str
+
+    captured: dict[str, str] = {}
+
+    def _fake_create_orch_task(**kwargs):
+        captured.update({k: str(v) for k, v in kwargs.items()})
+        return _FakeTask(
+            id=kwargs["task_id"],
+            project_name=kwargs["project_name"],
+            feature=kwargs["feature"],
+            status="running",
+            session=kwargs["session"],
+            agent=kwargs["agent"],
+            updated_at="2026-03-02T10:00:00+00:00",
+        )
+
+    monkeypatch.setattr("agvv.cli.create_orch_task", _fake_create_orch_task)
+
+    result = runner.invoke(
+        app,
+        [
+            "orch",
+            "spawn",
+            "demo",
+            "feat-a",
+            "--task-id",
+            "task-1",
+            "--session",
+            "sess-1",
+            "--agent",
+            "codex",
+            "--agent-cmd",
+            "echo hi",
+            "--base-dir",
+            str(tmp_path),
+            "--tasks-path",
+            str(tmp_path / "tasks.json"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Spawned task: task-1" in result.stdout
+    assert captured["project_name"] == "demo"
+    assert captured["feature"] == "feat-a"

@@ -10,6 +10,7 @@ from agvv.core import (
     AgvvError,
     adopt_project,
     cleanup_feature,
+    create_orch_task,
     init_project,
     list_tasks,
     load_task_registry,
@@ -332,3 +333,63 @@ def test_resolve_tasks_path_prefers_env(monkeypatch: pytest.MonkeyPatch, tmp_pat
     expected = tmp_path / "env-tasks.json"
     monkeypatch.setenv("AGVV_TASKS_PATH", str(expected))
     assert resolve_tasks_path() == expected.resolve()
+
+
+def test_create_orch_task_creates_running_entry_and_feature(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    init_project("demo", tmp_path)
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr("agvv.core.tmux_session_exists", lambda _session: False)
+
+    def _fake_new_session(session: str, cwd: Path, command: str) -> None:
+        calls.append((session, f"{cwd}:{command}"))
+
+    monkeypatch.setattr("agvv.core.tmux_new_session", _fake_new_session)
+
+    task = create_orch_task(
+        project_name="demo",
+        feature="feat-spawn",
+        base_dir=tmp_path,
+        task_id="task001",
+        session="sess001",
+        agent="codex",
+        agent_cmd="echo hello",
+        tasks_path=tmp_path / "tasks.json",
+    )
+
+    assert task.status == "running"
+    assert task.id == "task001"
+    assert (tmp_path / "demo" / "feat-spawn").exists()
+    assert calls and calls[0][0] == "sess001"
+
+    listed = list_tasks(tmp_path / "tasks.json")
+    assert listed[0].id == "task001"
+
+
+def test_create_orch_task_rejects_duplicate_task_id(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    init_project("demo", tmp_path)
+    monkeypatch.setattr("agvv.core.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr("agvv.core.tmux_new_session", lambda session, cwd, command: None)
+
+    create_orch_task(
+        project_name="demo",
+        feature="feat-a",
+        base_dir=tmp_path,
+        task_id="task001",
+        session="sess001",
+        agent="codex",
+        agent_cmd="echo one",
+        tasks_path=tmp_path / "tasks.json",
+    )
+
+    with pytest.raises(AgvvError, match="Task id already exists"):
+        create_orch_task(
+            project_name="demo",
+            feature="feat-b",
+            base_dir=tmp_path,
+            task_id="task001",
+            session="sess002",
+            agent="codex",
+            agent_cmd="echo two",
+            tasks_path=tmp_path / "tasks.json",
+        )
