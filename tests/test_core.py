@@ -13,6 +13,7 @@ from agvv.core import (
     wait_pr_status,
     recommend_pr_next_action,
     retry_orch_task,
+    summarize_pr_feedback,
     cleanup_feature,
     create_orch_task,
     init_project,
@@ -621,3 +622,26 @@ def test_recommend_pr_next_action_needs_work(monkeypatch: pytest.MonkeyPatch) ->
     )
     rec = recommend_pr_next_action("owner/repo", 3)
     assert rec.action == "retry"
+
+
+def test_summarize_pr_feedback_splits_actionable_and_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fake_run(_cmd, cwd=None):
+        class _R:
+            stdout = json.dumps(
+                {
+                    "comments": [
+                        {"body": "review in progress by coderabbit.ai"},
+                        {"body": "Looks good to me"},
+                    ],
+                    "reviews": [
+                        {"body": "Actionable comments posted: 2"},
+                    ],
+                }
+            )
+
+        return _R()
+
+    monkeypatch.setattr("agvv.core._run", _fake_run)
+    summary = summarize_pr_feedback("owner/repo", 1)
+    assert len(summary.actionable) == 1
+    assert len(summary.skipped) >= 1

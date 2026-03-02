@@ -83,6 +83,14 @@ class PrNextAction:
     note: str
 
 
+@dataclass(frozen=True)
+class PrFeedbackSummary:
+    """Condensed actionable/non-actionable feedback summary for a PR."""
+
+    actionable: list[str]
+    skipped: list[str]
+
+
 def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     """Run a shell command and normalize failures into ``AgvvError``."""
 
@@ -503,6 +511,42 @@ def recommend_pr_next_action(repo: str, pr_number: int) -> PrNextAction:
         action="wait",
         note="Keep polling with `agvv pr wait --interval-seconds 120 --max-attempts 30`.",
     )
+
+
+def summarize_pr_feedback(repo: str, pr_number: int) -> PrFeedbackSummary:
+    """Summarize PR comments/reviews into actionable items and skipped reasons."""
+
+    cmd = ["gh", "pr", "view", str(pr_number), "--repo", repo, "--json", "comments,reviews"]
+    try:
+        payload = json.loads(_run(cmd).stdout)
+    except json.JSONDecodeError as exc:
+        raise AgvvError(f"Invalid JSON from gh pr comments for {repo}#{pr_number}: {exc}") from exc
+
+    actionable: list[str] = []
+    skipped: list[str] = []
+
+    for comment in payload.get("comments", []) or []:
+        body = str(comment.get("body") or "").strip()
+        if not body:
+            continue
+        lower = body.lower()
+        if "review in progress" in lower or "walkthrough" in lower:
+            skipped.append("Skipped informational bot comment")
+            continue
+        if "actionable comments posted" in lower or "potential issue" in lower:
+            actionable.append(body.splitlines()[0][:180])
+        else:
+            skipped.append("Skipped non-actionable comment")
+
+    for review in payload.get("reviews", []) or []:
+        body = str(review.get("body") or "").strip()
+        if not body:
+            continue
+        lower = body.lower()
+        if "actionable comments posted" in lower or "potential issue" in lower:
+            actionable.append(body.splitlines()[0][:180])
+
+    return PrFeedbackSummary(actionable=actionable, skipped=skipped)
 
 
 def layout_paths(project_name: str, base_dir: Path, feature: str | None = None) -> LayoutPaths:

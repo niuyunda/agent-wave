@@ -16,6 +16,7 @@ from agvv.core import (
     wait_pr_status,
     recommend_pr_next_action,
     retry_orch_task,
+    summarize_pr_feedback,
     cleanup_feature,
     create_orch_task,
     init_project,
@@ -345,6 +346,25 @@ def pr_next(
         _exit_with_agvv_error(exc)
 
     typer.echo(f"status={next_action.status}\taction={next_action.action}\tnote={next_action.note}")
+
+
+@pr_app.command("feedback")
+def pr_feedback(
+    repo: Annotated[str, typer.Option("--repo", help="GitHub repo in owner/name format.")],
+    pr_number: Annotated[int, typer.Option("--pr", help="PR number to inspect.")],
+) -> None:
+    """Show actionable review items and why other comments are skipped."""
+
+    try:
+        summary = summarize_pr_feedback(repo=repo, pr_number=pr_number)
+    except AgvvError as exc:
+        _exit_with_agvv_error(exc)
+
+    typer.echo(f"actionable_count={len(summary.actionable)}\tskipped_count={len(summary.skipped)}")
+    for item in summary.actionable:
+        typer.echo(f"ACTIONABLE\t{item}")
+    for reason in summary.skipped[:5]:
+        typer.echo(f"SKIPPED\t{reason}")
 
 
 @pr_app.command("monitor")
