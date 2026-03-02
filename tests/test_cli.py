@@ -22,6 +22,7 @@ def test_cli_help_commands() -> None:
     assert "project" in result.stdout
     assert "feature" in result.stdout
     assert "orch" in result.stdout
+    assert "pr" in result.stdout
 
 
 def test_cli_project_init_and_feature_flow(tmp_path: Path) -> None:
@@ -228,3 +229,23 @@ def test_cli_orch_spawn_invokes_core(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert "Spawned task: task-1" in result.stdout
     assert captured["project_name"] == "demo"
     assert captured["feature"] == "feat-a"
+
+
+def test_cli_pr_check_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
+    @dataclass
+    class _FakeResult:
+        status: str
+        reason: str
+        state: str
+        review_decision: str | None
+
+    monkeypatch.setattr(
+        "agvv.cli.check_pr_status",
+        lambda repo, pr_number: _FakeResult(
+            status="waiting", reason="pending_review_or_ci", state="OPEN", review_decision=None
+        ),
+    )
+
+    result = runner.invoke(app, ["pr", "check", "--repo", "owner/repo", "--pr", "12"])
+    assert result.exit_code == 0
+    assert "status=waiting" in result.stdout

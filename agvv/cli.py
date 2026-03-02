@@ -11,6 +11,7 @@ import typer
 from agvv.core import (
     AgvvError,
     adopt_project,
+    check_pr_status,
     cleanup_feature,
     create_orch_task,
     init_project,
@@ -23,12 +24,14 @@ app = typer.Typer(help="Agent Wave: orchestrate parallel git worktree workflow f
 project_app = typer.Typer(help="Project-level operations.")
 feature_app = typer.Typer(help="Feature branch/worktree operations.")
 orch_app = typer.Typer(help="Task orchestration registry operations.")
+pr_app = typer.Typer(help="Pull request review-loop operations.")
 _DEFAULT_BASE_DIR = "~/code"
 _LOGGER = logging.getLogger(__name__)
 
 app.add_typer(project_app, name="project")
 app.add_typer(feature_app, name="feature")
 app.add_typer(orch_app, name="orch")
+app.add_typer(pr_app, name="pr")
 
 
 def _base_dir(path: str | None) -> Path:
@@ -235,6 +238,24 @@ def orch_list(
             f"{task.id}\t{task.status}\t{task.project_name}/{task.feature}\t"
             f"session={session}\tagent={agent}\tupdated={task.updated_at}"
         )
+
+
+@pr_app.command("check")
+def pr_check(
+    repo: Annotated[str, typer.Option("--repo", help="GitHub repo in owner/name format.")],
+    pr_number: Annotated[int, typer.Option("--pr", help="PR number to check.")],
+) -> None:
+    """Check PR result for short review loop (<=1 hour)."""
+
+    try:
+        result = check_pr_status(repo=repo, pr_number=pr_number)
+    except AgvvError as exc:
+        _exit_with_agvv_error(exc)
+
+    typer.echo(
+        f"status={result.status}\treason={result.reason}\tstate={result.state}\t"
+        f"review={result.review_decision or '-'}"
+    )
 
 
 if __name__ == "__main__":

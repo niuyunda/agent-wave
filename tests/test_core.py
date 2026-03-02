@@ -9,6 +9,7 @@ import pytest
 from agvv.core import (
     AgvvError,
     adopt_project,
+    check_pr_status,
     cleanup_feature,
     create_orch_task,
     init_project,
@@ -451,3 +452,41 @@ def test_create_orch_task_rejects_duplicate_task_id(monkeypatch: pytest.MonkeyPa
             agent_cmd="echo two",
             tasks_path=tmp_path / "tasks.json",
         )
+
+
+def test_check_pr_status_maps_changes_requested(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fake_run(_cmd, cwd=None):
+        class _R:
+            stdout = json.dumps(
+                {
+                    "state": "OPEN",
+                    "mergedAt": None,
+                    "reviewDecision": "CHANGES_REQUESTED",
+                    "statusCheckRollup": [],
+                }
+            )
+
+        return _R()
+
+    monkeypatch.setattr("agvv.core._run", _fake_run)
+    result = check_pr_status("owner/repo", 1)
+    assert result.status == "needs_work"
+
+
+def test_check_pr_status_maps_merged(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fake_run(_cmd, cwd=None):
+        class _R:
+            stdout = json.dumps(
+                {
+                    "state": "MERGED",
+                    "mergedAt": "2026-01-01T00:00:00Z",
+                    "reviewDecision": "APPROVED",
+                    "statusCheckRollup": [],
+                }
+            )
+
+        return _R()
+
+    monkeypatch.setattr("agvv.core._run", _fake_run)
+    result = check_pr_status("owner/repo", 1)
+    assert result.status == "done"

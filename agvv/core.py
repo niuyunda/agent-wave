@@ -54,6 +54,16 @@ class TaskRegistry:
     tasks: list[TaskRecord]
 
 
+@dataclass(frozen=True)
+class PrCheckResult:
+    """Simplified PR check result for short review cycles."""
+
+    status: str
+    reason: str
+    state: str
+    review_decision: str | None
+
+
 def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     """Run a shell command and normalize failures into ``AgvvError``."""
 
@@ -309,6 +319,47 @@ def create_orch_task(
         path=tasks_path,
     )
     return created
+
+
+def check_pr_status(repo: str, pr_number: int) -> PrCheckResult:
+    """Check PR state via gh and map to minimal status for fast review loops."""
+
+    cmd = [
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--repo",
+        repo,
+        "--json",
+        "state,mergedAt,reviewDecision,statusCheckRollup",
+    ]
+    try:
+        payload = json.loads(_run(cmd).stdout)
+    except json.JSONDecodeError as exc:
+        raise AgvvError(f"Invalid JSON from gh pr view for {repo}#{pr_number}: {exc}") from exc
+
+    state = str(payload.get("state", ""))
+    merged_at = payload.get("mergedAt")
+    review_decision = payload.get("reviewDecision")
+
+    if merged_at:
+        return PrCheckResult(status="done", reason="merged", state=state, review_decision=review_decision)
+
+    if state != "OPEN":
+        return PrCheckResult(status="closed", reason="not_open", state=state, review_decision=review_decision)
+
+    if review_decision == "CHANGES_REQUESTED":
+        return PrCheckResult(status="needs_work", reason="changes_requested", state=state, review_decision=review_decision)
+
+    checks = payload.get("statusCheckRollup") or []
+    failing = {"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}
+    for check in checks:
+        conclusion = str((check or {}).get("conclusion") or "")
+        if conclusion in failing:
+            return PrCheckResult(status="needs_work", reason=f"ci_{conclusion.lower()}", state=state, review_decision=review_decision)
+
+    return PrCheckResult(status="waiting", reason="pending_review_or_ci", state=state, review_decision=review_decision)
 
 
 def layout_paths(project_name: str, base_dir: Path, feature: str | None = None) -> LayoutPaths:
