@@ -286,7 +286,8 @@ def tmux_new_session(session: str, cwd: Path, command: str) -> None:
     if tmux_session_exists(session):
         raise AgvvError(f"tmux session already exists: {session}")
     quoted_cwd = shlex.quote(str(cwd))
-    _run(["tmux", "new-session", "-d", "-s", session, f"cd {quoted_cwd} && {command}"])
+    quoted_command = shlex.quote(command)
+    _run(["tmux", "new-session", "-d", "-s", session, f"cd {quoted_cwd} && {quoted_command}"])
 
 
 def create_orch_task(
@@ -355,9 +356,14 @@ def create_orch_task(
             TaskRegistry(version=registry.version, updated_at=created.updated_at, tasks=updated_tasks),
             path=tasks_path,
         )
-    except Exception:
-        tmux_kill_session(session)
-        raise
+    except Exception as exc:
+        try:
+            tmux_kill_session(session)
+        except AgvvError:
+            pass
+        raise AgvvError(
+            f"Failed to persist task registry after starting tmux session '{session}': {exc}"
+        ) from exc
 
     return created
 
@@ -446,10 +452,15 @@ def check_pr_status(repo: str, pr_number: int) -> PrCheckResult:
 
     checks = payload.get("statusCheckRollup") or []
     failing = {"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}
+    failing_state = {"FAILURE", "FAILED", "ERROR"}
     for check in checks:
-        conclusion = str((check or {}).get("conclusion") or "")
+        entry = check or {}
+        conclusion = str(entry.get("conclusion") or "").upper()
+        state_value = str(entry.get("state") or entry.get("status") or "").upper()
         if conclusion in failing:
             return PrCheckResult(status="needs_work", reason=f"ci_{conclusion.lower()}", state=state, review_decision=review_decision)
+        if state_value in failing_state:
+            return PrCheckResult(status="needs_work", reason=f"ci_{state_value.lower()}", state=state, review_decision=review_decision)
 
     return PrCheckResult(status="waiting", reason="pending_review_or_ci", state=state, review_decision=review_decision)
 

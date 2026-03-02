@@ -554,6 +554,25 @@ def test_check_pr_status_maps_merged(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.status == "done"
 
 
+def test_check_pr_status_maps_failed_state_without_conclusion(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fake_run(_cmd, cwd=None):
+        class _R:
+            stdout = json.dumps(
+                {
+                    "state": "OPEN",
+                    "mergedAt": None,
+                    "reviewDecision": None,
+                    "statusCheckRollup": [{"state": "ERROR", "conclusion": None}],
+                }
+            )
+
+        return _R()
+
+    monkeypatch.setattr("agvv.core._run", _fake_run)
+    result = check_pr_status("owner/repo", 1)
+    assert result.status == "needs_work"
+
+
 def test_wait_pr_status_polls_until_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = {"n": 0}
 
