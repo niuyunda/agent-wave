@@ -7,6 +7,7 @@ on:
       - feat-*
       - fix-*
       - refactor-*
+      - codex/*
   pull_request:
   workflow_dispatch:
 
