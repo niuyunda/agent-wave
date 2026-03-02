@@ -249,3 +249,26 @@ def test_cli_pr_check_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
     result = runner.invoke(app, ["pr", "check", "--repo", "owner/repo", "--pr", "12"])
     assert result.exit_code == 0
     assert "status=waiting" in result.stdout
+
+
+def test_cli_pr_wait_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
+    @dataclass
+    class _FakeResult:
+        status: str
+        reason: str
+        state: str
+        review_decision: str | None
+
+    monkeypatch.setattr(
+        "agvv.cli.wait_pr_status",
+        lambda repo, pr_number, interval_seconds, max_attempts: _FakeResult(
+            status="needs_work", reason="changes_requested", state="OPEN", review_decision="CHANGES_REQUESTED"
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        ["pr", "wait", "--repo", "owner/repo", "--pr", "12", "--interval-seconds", "120", "--max-attempts", "30"],
+    )
+    assert result.exit_code == 0
+    assert "status=needs_work" in result.stdout

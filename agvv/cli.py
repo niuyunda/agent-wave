@@ -12,6 +12,7 @@ from agvv.core import (
     AgvvError,
     adopt_project,
     check_pr_status,
+    wait_pr_status,
     cleanup_feature,
     create_orch_task,
     init_project,
@@ -249,6 +250,31 @@ def pr_check(
 
     try:
         result = check_pr_status(repo=repo, pr_number=pr_number)
+    except AgvvError as exc:
+        _exit_with_agvv_error(exc)
+
+    typer.echo(
+        f"status={result.status}\treason={result.reason}\tstate={result.state}\t"
+        f"review={result.review_decision or '-'}"
+    )
+
+
+@pr_app.command("wait")
+def pr_wait(
+    repo: Annotated[str, typer.Option("--repo", help="GitHub repo in owner/name format.")],
+    pr_number: Annotated[int, typer.Option("--pr", help="PR number to check.")],
+    interval_seconds: Annotated[int, typer.Option("--interval-seconds", help="Polling interval in seconds.")] = 120,
+    max_attempts: Annotated[int, typer.Option("--max-attempts", help="Maximum number of polls.")] = 30,
+) -> None:
+    """Wait for PR result with default 2-min interval and max 30 attempts."""
+
+    try:
+        result = wait_pr_status(
+            repo=repo,
+            pr_number=pr_number,
+            interval_seconds=interval_seconds,
+            max_attempts=max_attempts,
+        )
     except AgvvError as exc:
         _exit_with_agvv_error(exc)
 

@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -75,6 +76,8 @@ def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
             capture_output=True,
             check=True,
         )
+    except FileNotFoundError as exc:
+        raise AgvvError(f"Command not found: {cmd[0]}") from exc
     except subprocess.CalledProcessError as exc:
         raise AgvvError(
             f"Command failed: {' '.join(cmd)}\n"
@@ -188,7 +191,10 @@ def _parse_task_updated_at(value: str | None) -> datetime:
     if not value:
         return datetime.min.replace(tzinfo=timezone.utc)
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
     except ValueError:
         return datetime.min.replace(tzinfo=timezone.utc)
 
@@ -241,7 +247,19 @@ def save_task_registry(registry: TaskRegistry, path: Path | None = None) -> Path
 def tmux_session_exists(session: str) -> bool:
     """Return whether a tmux session exists."""
 
-    return subprocess.run(["tmux", "has-session", "-t", session], check=False, capture_output=True, text=True).returncode == 0
+    try:
+        result = subprocess.run(["tmux", "has-session", "-t", session], check=False, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise AgvvError("tmux not found") from exc
+    return result.returncode == 0
+
+
+def tmux_kill_session(session: str) -> None:
+    """Kill tmux session if it exists."""
+
+    if not tmux_session_exists(session):
+        return
+    _run(["tmux", "kill-session", "-t", session])
 
 
 def tmux_new_session(session: str, cwd: Path, command: str) -> None:
@@ -281,6 +299,14 @@ def create_orch_task(
     if paths.feature_dir is None:
         raise RuntimeError("Internal error: feature_dir resolved to None.")
 
+    registry = load_task_registry(tasks_path)
+    existing_ids = {task.id for task in registry.tasks}
+    if task_id in existing_ids:
+        raise AgvvError(f"Task id already exists: {task_id}")
+
+    if tmux_session_exists(session):
+        raise AgvvError(f"tmux session already exists: {session}")
+
     if not paths.feature_dir.exists():
         start_feature(
             project_name=project_name,
@@ -294,16 +320,6 @@ def create_orch_task(
             create_dirs=[],
         )
 
-    registry = load_task_registry(tasks_path)
-    existing_ids = {task.id for task in registry.tasks}
-    if task_id in existing_ids:
-        raise AgvvError(f"Task id already exists: {task_id}")
-
-    if tmux_session_exists(session):
-        raise AgvvError(f"tmux session already exists: {session}")
-
-    tmux_new_session(session=session, cwd=paths.feature_dir, command=agent_cmd)
-
     created = TaskRecord(
         id=task_id,
         project_name=project_name,
@@ -313,11 +329,18 @@ def create_orch_task(
         agent=agent,
         updated_at=datetime.now(tz=timezone.utc).isoformat(),
     )
-    updated_tasks = [created, *registry.tasks]
-    save_task_registry(
-        TaskRegistry(version=registry.version, updated_at=created.updated_at, tasks=updated_tasks),
-        path=tasks_path,
-    )
+
+    tmux_new_session(session=session, cwd=paths.feature_dir, command=agent_cmd)
+    try:
+        updated_tasks = [created, *registry.tasks]
+        save_task_registry(
+            TaskRegistry(version=registry.version, updated_at=created.updated_at, tasks=updated_tasks),
+            path=tasks_path,
+        )
+    except Exception:
+        tmux_kill_session(session)
+        raise
+
     return created
 
 
@@ -360,6 +383,24 @@ def check_pr_status(repo: str, pr_number: int) -> PrCheckResult:
             return PrCheckResult(status="needs_work", reason=f"ci_{conclusion.lower()}", state=state, review_decision=review_decision)
 
     return PrCheckResult(status="waiting", reason="pending_review_or_ci", state=state, review_decision=review_decision)
+
+
+def wait_pr_status(repo: str, pr_number: int, interval_seconds: int = 120, max_attempts: int = 30) -> PrCheckResult:
+    """Poll PR status every interval until terminal or attempts exhausted."""
+
+    if interval_seconds <= 0:
+        raise AgvvError("interval_seconds must be > 0")
+    if max_attempts <= 0:
+        raise AgvvError("max_attempts must be > 0")
+
+    last = check_pr_status(repo=repo, pr_number=pr_number)
+    terminal = {"done", "closed", "needs_work"}
+    attempts = 1
+    while last.status not in terminal and attempts < max_attempts:
+        time.sleep(interval_seconds)
+        last = check_pr_status(repo=repo, pr_number=pr_number)
+        attempts += 1
+    return last
 
 
 def layout_paths(project_name: str, base_dir: Path, feature: str | None = None) -> LayoutPaths:
