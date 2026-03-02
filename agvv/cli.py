@@ -335,5 +335,68 @@ def pr_next(
     typer.echo(f"status={next_action.status}\taction={next_action.action}\tnote={next_action.note}")
 
 
+@pr_app.command("monitor")
+def pr_monitor(
+    repo: Annotated[str, typer.Option("--repo", help="GitHub repo in owner/name format.")],
+    pr_number: Annotated[int, typer.Option("--pr", help="PR number to monitor.")],
+    interval_seconds: Annotated[int, typer.Option("--interval-seconds", help="Polling interval in seconds.")] = 120,
+    max_attempts: Annotated[int, typer.Option("--max-attempts", help="Maximum number of polls.")] = 30,
+    auto_retry: Annotated[bool, typer.Option("--auto-retry", help="Auto trigger orch retry when needs_work.")] = False,
+    task_id: Annotated[str | None, typer.Option("--task-id", help="Task id for orch retry.")] = None,
+    agent_cmd: Annotated[str | None, typer.Option("--agent-cmd", help="Agent command for orch retry.")] = None,
+    base_dir: Annotated[
+        str | None, typer.Option("--base-dir", help=f"Base path containing projects. Default: {_DEFAULT_BASE_DIR}")
+    ] = None,
+    session: Annotated[str | None, typer.Option("--session", help="Override tmux session for retry.")] = None,
+    tasks_path: Annotated[
+        str | None,
+        typer.Option("--tasks-path", help="Path to tasks registry JSON."),
+    ] = None,
+) -> None:
+    """Monitor PR; if changes requested, optionally trigger retry; otherwise keep waiting until timeout."""
+
+    try:
+        waited = wait_pr_status(
+            repo=repo,
+            pr_number=pr_number,
+            interval_seconds=interval_seconds,
+            max_attempts=max_attempts,
+        )
+    except AgvvError as exc:
+        _exit_with_agvv_error(exc)
+
+    result = waited.result
+    if result.status == "needs_work":
+        if not auto_retry:
+            typer.echo("status=needs_work\taction=manual_retry\tnote=Review requested changes; run orch retry.")
+            return
+        if not task_id or not agent_cmd:
+            raise typer.BadParameter("--task-id and --agent-cmd are required when --auto-retry is set")
+        try:
+            retried = retry_orch_task(
+                task_id=task_id,
+                base_dir=_base_dir(base_dir),
+                agent_cmd=agent_cmd,
+                session=session,
+                tasks_path=_resolve_optional_path(tasks_path),
+            )
+        except AgvvError as exc:
+            _exit_with_agvv_error(exc)
+        typer.echo(f"status=needs_work\taction=retry_started\ttask={retried.id}\tsession={retried.session}")
+        return
+
+    if result.status == "waiting":
+        typer.echo(
+            f"status=waiting\taction=keep_waiting\treason=no-change-requested\tattempts={waited.attempts}\t"
+            f"timed_out={'yes' if waited.timed_out else 'no'}"
+        )
+        return
+
+    typer.echo(
+        f"status={result.status}\taction=no_retry\tnote=No code change requested.\tattempts={waited.attempts}\t"
+        f"timed_out={'yes' if waited.timed_out else 'no'}"
+    )
+
+
 if __name__ == "__main__":
     app()
