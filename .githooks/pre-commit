@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "pre-commit blocked: uv is required to run docstring coverage checks." >&2
+  exit 1
+fi
+
+echo "Running docstring coverage gate for agvv/ (required: 100%)..."
+uv run interrogate agvv --fail-under=100 --quiet
