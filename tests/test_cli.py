@@ -1,8 +1,8 @@
+"""CLI behavior tests for task/daemon command surface."""
+
 from __future__ import annotations
 
-import json
 import runpy
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,482 +11,217 @@ import pytest
 from typer.testing import CliRunner
 
 from agvv.cli import app
+from agvv.tasking import TaskState
 
 
 runner = CliRunner()
 
 
-def test_cli_help_commands() -> None:
+def test_cli_help_only_new_commands() -> None:
+    """Show top-level help and ensure only new command groups are exposed."""
+
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "project" in result.stdout
-    assert "feature" in result.stdout
-    assert "orch" in result.stdout
-    assert "pr" in result.stdout
+    assert "task" in result.stdout
+    assert "daemon" in result.stdout
+    assert "│ project" not in result.stdout
+    assert "│ feature" not in result.stdout
+    assert "│ orch" not in result.stdout
+    assert "│ pr" not in result.stdout
 
 
-def test_cli_project_init_and_feature_flow(tmp_path: Path) -> None:
-    base = tmp_path / "base"
-    base.mkdir()
+def test_cli_task_help_commands() -> None:
+    """Show task help and verify expected subcommands are listed."""
 
-    init_result = runner.invoke(app, ["project", "init", "demo", "--base-dir", str(base)])
-    assert init_result.exit_code == 0
-    assert "Initialized:" in init_result.stdout
-
-    start_result = runner.invoke(
-        app,
-        [
-            "feature",
-            "start",
-            "demo",
-            "feat-cli",
-            "--base-dir",
-            str(base),
-            "--agent",
-            "agent-a",
-            "--task-id",
-            "task-123",
-            "--ticket",
-            "ABC-1",
-            "--param",
-            "model=gpt",
-            "--mkdir",
-            "src",
-        ],
-    )
-    assert start_result.exit_code == 0
-    assert "Created feature worktree" in start_result.stdout
-
-    metadata = json.loads((base / "demo" / "feat-cli" / ".agvv" / "context.json").read_text(encoding="utf-8"))
-    assert metadata["agent"] == "agent-a"
-    assert metadata["params"] == {"model": "gpt"}
-
-    cleanup_result = runner.invoke(
-        app, ["feature", "cleanup", "demo", "feat-cli", "--base-dir", str(base), "--keep-branch"]
-    )
-    assert cleanup_result.exit_code == 0
-    assert "branch kept" in cleanup_result.stdout
-
-
-def test_cli_feature_start_invalid_param_returns_error(tmp_path: Path) -> None:
-    base = tmp_path / "base"
-    base.mkdir()
-
-    runner.invoke(app, ["project", "init", "demo", "--base-dir", str(base)])
-
-    result = runner.invoke(
-        app,
-        ["feature", "start", "demo", "feat-bad", "--base-dir", str(base), "--param", "not-kv"],
-    )
-    assert result.exit_code != 0
-    assert "Invalid --param value" in result.stderr
-
-
-def test_cli_project_adopt_non_repo_returns_error(tmp_path: Path) -> None:
-    base = tmp_path / "base"
-    base.mkdir()
-    src = tmp_path / "src"
-    src.mkdir()
-
-    result = runner.invoke(app, ["project", "adopt", str(src), "demo", "--base-dir", str(base)])
-    assert result.exit_code != 0
-    assert "git repository" in result.stderr
-
-
-def test_cli_project_adopt_success(tmp_path: Path) -> None:
-    base = tmp_path / "base"
-    base.mkdir()
-    src = tmp_path / "src"
-    src.mkdir()
-
-    subprocess.run(["git", "init", "-b", "main"], cwd=src, check=True, capture_output=True, text=True)
-    (src / "README.md").write_text("seed\n", encoding="utf-8")
-    subprocess.run(["git", "add", "README.md"], cwd=src, check=True, capture_output=True, text=True)
-    subprocess.run(["git", "commit", "-m", "seed"], cwd=src, check=True, capture_output=True, text=True)
-
-    result = runner.invoke(app, ["project", "adopt", str(src), "demo", "--base-dir", str(base)])
+    result = runner.invoke(app, ["task", "--help"])
     assert result.exit_code == 0
-    assert "Adopted existing repo" in result.stdout
-    assert (base / "demo" / "main").exists()
+    assert "run" in result.stdout
+    assert "status" in result.stdout
+    assert "retry" in result.stdout
+    assert "cleanup" in result.stdout
 
 
-def test_cli_feature_cleanup_missing_repo_returns_error(tmp_path: Path) -> None:
-    base = tmp_path / "base"
-    base.mkdir()
-    result = runner.invoke(app, ["feature", "cleanup", "demo", "feat-x", "--base-dir", str(base)])
-    assert result.exit_code != 0
-    assert "Repo not found" in result.stderr
+def test_cli_daemon_help_commands() -> None:
+    """Show daemon help and verify the run command is listed."""
+
+    result = runner.invoke(app, ["daemon", "--help"])
+    assert result.exit_code == 0
+    assert "run" in result.stdout
 
 
 def test_cli_module_entrypoint_help(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Execute module entrypoint with --help and expect clean exit."""
+
     monkeypatch.setattr(sys, "argv", ["agvv", "--help"])
     with pytest.raises(SystemExit) as exc_info:
         runpy.run_module("agvv.cli", run_name="__main__")
     assert exc_info.value.code == 0
 
 
-def test_cli_project_init_error_path(tmp_path: Path) -> None:
-    base = tmp_path / "base"
-    base.mkdir()
-    project_dir = base / "broken"
-    project_dir.mkdir()
-    # Force internal git calls to fail with an invalid repo.git path.
-    (project_dir / "repo.git").write_text("not-a-git-dir", encoding="utf-8")
+def test_cli_task_run_invokes_tasking(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Invoke task run command and ensure tasking adapter receives paths."""
 
-    result = runner.invoke(app, ["project", "init", "broken", "--base-dir", str(base)])
-    assert result.exit_code != 0
-    assert "Command failed: git -C" in result.stderr
+    @dataclass
+    class _FakeTask:
+        id: str
+        state: TaskState
+        project_name: str
+        feature: str
+        session: str
 
+    captured: dict[str, str] = {}
 
-def test_cli_orch_list_reads_tasks_registry(tmp_path: Path) -> None:
-    tasks_path = tmp_path / "tasks.json"
-    tasks_path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "updated_at": "2026-03-02T10:00:00+00:00",
-                "tasks": [
-                    {
-                        "id": "t2",
-                        "project_name": "calcproj",
-                        "feature": "feat-sub",
-                        "status": "failed",
-                        "session": "tmux-2",
-                        "agent": "codex",
-                        "updated_at": "2026-03-02T10:02:00+00:00",
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
+    def _fake_run_task_from_spec(spec_path: Path, db_path: Path | None):
+        captured["spec_path"] = str(spec_path)
+        captured["db_path"] = str(db_path)
+        return _FakeTask(
+            id="task-1",
+            state=TaskState.CODING,
+            project_name="demo",
+            feature="feat-a",
+            session="sess-1",
+        )
+
+    monkeypatch.setattr("agvv.cli.run_task_from_spec", _fake_run_task_from_spec)
+    spec = tmp_path / "task.json"
+    spec.write_text("{}", encoding="utf-8")
 
     result = runner.invoke(
         app,
-        ["orch", "list", "--tasks-path", str(tasks_path), "--status", "failed", "--project", "calcproj"],
+        ["task", "run", "--spec", str(spec), "--db-path", str(tmp_path / "tasks.db")],
     )
     assert result.exit_code == 0
-    assert "t2" in result.stdout
-    assert "calcproj/feat-sub" in result.stdout
+    assert "Task started: task-1" in result.stdout
+    assert str(spec.resolve()) == captured["spec_path"]
 
 
-def test_cli_orch_list_no_tasks(tmp_path: Path) -> None:
-    result = runner.invoke(app, ["orch", "list", "--tasks-path", str(tmp_path / "missing.json")])
+def test_cli_task_status_no_tasks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Print friendly message when status query returns no tasks."""
+
+    monkeypatch.setattr("agvv.cli.list_task_statuses", lambda db_path, state=None: [])
+    result = runner.invoke(app, ["task", "status", "--db-path", str(tmp_path / "tasks.db")])
     assert result.exit_code == 0
     assert "No tasks found." in result.stdout
 
 
-def test_cli_orch_spawn_invokes_core(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_cli_task_status_filters_by_task_id(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Filter status output by task id at CLI layer."""
+
     @dataclass
     class _FakeTask:
         id: str
+        state: TaskState
         project_name: str
         feature: str
-        status: str
-        session: str | None
-        agent: str | None
-        updated_at: str
-
-    captured: dict[str, str] = {}
-
-    def _fake_create_orch_task(**kwargs):
-        captured.update({k: str(v) for k, v in kwargs.items()})
-        return _FakeTask(
-            id=kwargs["task_id"],
-            project_name=kwargs["project_name"],
-            feature=kwargs["feature"],
-            status="running",
-            session=kwargs["session"],
-            agent=kwargs["agent"],
-            updated_at="2026-03-02T10:00:00+00:00",
-        )
-
-    monkeypatch.setattr("agvv.cli.create_orch_task", _fake_create_orch_task)
-
-    result = runner.invoke(
-        app,
-        [
-            "orch",
-            "spawn",
-            "demo",
-            "feat-a",
-            "--task-id",
-            "task-1",
-            "--session",
-            "sess-1",
-            "--agent",
-            "codex",
-            "--agent-cmd",
-            "echo hi",
-            "--base-dir",
-            str(tmp_path),
-            "--tasks-path",
-            str(tmp_path / "tasks.json"),
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert "Spawned task: task-1" in result.stdout
-    assert captured["project_name"] == "demo"
-    assert captured["feature"] == "feat-a"
-
-
-def test_cli_orch_retry_invokes_core(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    @dataclass
-    class _FakeTask:
-        id: str
-        project_name: str
-        feature: str
-        status: str
-        session: str | None
-        agent: str | None
+        session: str
+        pr_number: int | None
+        repair_cycles: int
+        last_error: str | None
         updated_at: str
 
     monkeypatch.setattr(
-        "agvv.cli.retry_orch_task",
-        lambda task_id, base_dir, agent_cmd, session, tasks_path: _FakeTask(
-            id=task_id,
-            project_name="demo",
-            feature="feat-a",
-            status="running",
-            session=session or "sess-default",
-            agent="codex",
-            updated_at="2026-03-02T10:00:00+00:00",
-        ),
-    )
-
-    result = runner.invoke(
-        app,
-        [
-            "orch",
-            "retry",
-            "--task-id",
-            "task-1",
-            "--agent-cmd",
-            "echo retry",
-            "--session",
-            "sess-r",
-            "--base-dir",
-            str(tmp_path),
-            "--tasks-path",
-            str(tmp_path / "tasks.json"),
-        ],
-    )
-    assert result.exit_code == 0
-    assert "Retried task: task-1" in result.stdout
-
-
-def test_cli_pr_check_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
-    @dataclass
-    class _FakeResult:
-        status: str
-        reason: str
-        state: str
-        review_decision: str | None
-
-    monkeypatch.setattr(
-        "agvv.cli.check_pr_status",
-        lambda repo, pr_number: _FakeResult(
-            status="waiting", reason="pending_review_or_ci", state="OPEN", review_decision=None
-        ),
-    )
-
-    result = runner.invoke(app, ["pr", "check", "--repo", "owner/repo", "--pr", "12"])
-    assert result.exit_code == 0
-    assert "status=waiting" in result.stdout
-
-
-def test_cli_pr_wait_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
-    @dataclass
-    class _FakePr:
-        status: str
-        reason: str
-        state: str
-        review_decision: str | None
-
-    @dataclass
-    class _FakeWait:
-        result: _FakePr
-        attempts: int
-        timed_out: bool
-
-    monkeypatch.setattr(
-        "agvv.cli.wait_pr_status",
-        lambda repo, pr_number, interval_seconds, max_attempts: _FakeWait(
-            result=_FakePr(
-                status="needs_work", reason="changes_requested", state="OPEN", review_decision="CHANGES_REQUESTED"
+        "agvv.cli.list_task_statuses",
+        lambda db_path, state=None: [
+            _FakeTask(
+                id="t1",
+                state=TaskState.CODING,
+                project_name="demo",
+                feature="feat-a",
+                session="s1",
+                pr_number=None,
+                repair_cycles=0,
+                last_error=None,
+                updated_at="2026-03-03T00:00:00+00:00",
             ),
-            attempts=4,
-            timed_out=False,
-        ),
+            _FakeTask(
+                id="t2",
+                state=TaskState.FAILED,
+                project_name="demo",
+                feature="feat-b",
+                session="s2",
+                pr_number=7,
+                repair_cycles=2,
+                last_error="boom",
+                updated_at="2026-03-03T00:00:01+00:00",
+            ),
+        ],
     )
-
     result = runner.invoke(
         app,
-        ["pr", "wait", "--repo", "owner/repo", "--pr", "12", "--interval-seconds", "120", "--max-attempts", "30"],
+        ["task", "status", "--db-path", str(tmp_path / "tasks.db"), "--task-id", "t2"],
     )
     assert result.exit_code == 0
-    assert "status=needs_work" in result.stdout
-    assert "attempts=4" in result.stdout
+    assert "t2" in result.stdout
+    assert "t1" not in result.stdout
 
 
-def test_cli_pr_next_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
-    @dataclass
-    class _FakeNext:
-        status: str
-        action: str
-        note: str
-
-    monkeypatch.setattr(
-        "agvv.cli.recommend_pr_next_action",
-        lambda repo, pr_number: _FakeNext(status="needs_work", action="retry", note="fix and push"),
-    )
-
-    result = runner.invoke(app, ["pr", "next", "--repo", "owner/repo", "--pr", "12"])
-    assert result.exit_code == 0
-    assert "action=retry" in result.stdout
-
-
-def test_cli_pr_feedback_invokes_core(monkeypatch: pytest.MonkeyPatch) -> None:
-    @dataclass
-    class _FakeSummary:
-        actionable: list[str]
-        skipped: list[str]
-
-    monkeypatch.setattr(
-        "agvv.cli.summarize_pr_feedback",
-        lambda repo, pr_number: _FakeSummary(actionable=["Actionable comments posted: 2"], skipped=["Skipped informational bot comment"]),
-    )
-
-    result = runner.invoke(app, ["pr", "feedback", "--repo", "owner/repo", "--pr", "12"])
-    assert result.exit_code == 0
-    assert "actionable_count=1" in result.stdout
-    assert "ACTIONABLE" in result.stdout
-
-
-def test_cli_pr_monitor_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
-    @dataclass
-    class _FakePr:
-        status: str
-        reason: str
-        state: str
-        review_decision: str | None
-
-    @dataclass
-    class _FakeWait:
-        result: _FakePr
-        attempts: int
-        timed_out: bool
-
-    monkeypatch.setattr(
-        "agvv.cli.wait_pr_status",
-        lambda repo, pr_number, interval_seconds, max_attempts: _FakeWait(
-            result=_FakePr(status="waiting", reason="pending", state="OPEN", review_decision=None),
-            attempts=30,
-            timed_out=True,
-        ),
-    )
-
-    result = runner.invoke(app, ["pr", "monitor", "--repo", "owner/repo", "--pr", "12"])
-    assert result.exit_code == 0
-    assert "action=keep_waiting" in result.stdout
-
-
-def test_cli_pr_monitor_writes_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    @dataclass
-    class _FakePr:
-        status: str
-        reason: str
-        state: str
-        review_decision: str | None
-
-    @dataclass
-    class _FakeWait:
-        result: _FakePr
-        attempts: int
-        timed_out: bool
-
-    monkeypatch.setattr(
-        "agvv.cli.wait_pr_status",
-        lambda repo, pr_number, interval_seconds, max_attempts: _FakeWait(
-            result=_FakePr(status="waiting", reason="pending", state="OPEN", review_decision=None),
-            attempts=2,
-            timed_out=True,
-        ),
-    )
-
-    log_file = tmp_path / "monitor.log"
-    result = runner.invoke(
-        app,
-        ["pr", "monitor", "--repo", "owner/repo", "--pr", "12", "--log-file", str(log_file)],
-    )
-    assert result.exit_code == 0
-    assert log_file.exists()
-    assert "action=keep_waiting" in log_file.read_text(encoding="utf-8")
-
-
-def test_cli_pr_monitor_auto_retry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    @dataclass
-    class _FakePr:
-        status: str
-        reason: str
-        state: str
-        review_decision: str | None
-
-    @dataclass
-    class _FakeWait:
-        result: _FakePr
-        attempts: int
-        timed_out: bool
+def test_cli_task_retry_invokes_tasking(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Invoke task retry command and forward args to tasking layer."""
 
     @dataclass
     class _FakeTask:
         id: str
-        project_name: str
-        feature: str
-        status: str
-        session: str | None
-        agent: str | None
+        state: TaskState
+        session: str
+
+    monkeypatch.setattr(
+        "agvv.cli.retry_task",
+        lambda task_id, db_path, session: _FakeTask(id=task_id, state=TaskState.CODING, session=session or "sess-1"),
+    )
+    result = runner.invoke(
+        app,
+        ["task", "retry", "--task-id", "task-1", "--db-path", str(tmp_path / "tasks.db")],
+    )
+    assert result.exit_code == 0
+    assert "Task retried: task-1" in result.stdout
+
+
+def test_cli_task_cleanup_invokes_tasking(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Invoke task cleanup command and print resulting state."""
+
+    @dataclass
+    class _FakeTask:
+        id: str
+        state: TaskState
+
+    monkeypatch.setattr(
+        "agvv.cli.cleanup_task",
+        lambda task_id, db_path, force: _FakeTask(id=task_id, state=TaskState.CLEANED),
+    )
+    result = runner.invoke(
+        app,
+        ["task", "cleanup", "--task-id", "task-1", "--db-path", str(tmp_path / "tasks.db")],
+    )
+    assert result.exit_code == 0
+    assert "Task cleaned: task-1" in result.stdout
+
+
+def test_cli_daemon_run_once(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Run daemon once mode and render reconciled task lines."""
+
+    @dataclass
+    class _FakeTask:
+        id: str
+        state: TaskState
         updated_at: str
 
     monkeypatch.setattr(
-        "agvv.cli.wait_pr_status",
-        lambda repo, pr_number, interval_seconds, max_attempts: _FakeWait(
-            result=_FakePr(status="needs_work", reason="changes_requested", state="OPEN", review_decision="CHANGES_REQUESTED"),
-            attempts=2,
-            timed_out=False,
-        ),
+        "agvv.cli.daemon_run_once",
+        lambda db_path: [_FakeTask(id="task-1", state=TaskState.CODING, updated_at="2026-03-03T10:00:00+00:00")],
     )
-    monkeypatch.setattr(
-        "agvv.cli.retry_orch_task",
-        lambda task_id, base_dir, agent_cmd, session, tasks_path: _FakeTask(
-            id=task_id,
-            project_name="demo",
-            feature="feat-a",
-            status="running",
-            session=session or "sess-x",
-            agent="codex",
-            updated_at="2026-03-02T10:00:00+00:00",
-        ),
-    )
+    result = runner.invoke(app, ["daemon", "run", "--once", "--db-path", str(tmp_path / "tasks.db")])
+    assert result.exit_code == 0
+    assert "reconciled=1" in result.stdout
+    assert "task-1" in result.stdout
 
+
+def test_cli_daemon_run_loop(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Run daemon loop mode and print terminal loop count."""
+
+    monkeypatch.setattr("agvv.cli.daemon_run_loop", lambda db_path, interval_seconds, max_loops: 3)
     result = runner.invoke(
         app,
-        [
-            "pr",
-            "monitor",
-            "--repo",
-            "owner/repo",
-            "--pr",
-            "12",
-            "--auto-retry",
-            "--task-id",
-            "task-1",
-            "--agent-cmd",
-            "echo retry",
-            "--base-dir",
-            str(tmp_path),
-        ],
+        ["daemon", "run", "--db-path", str(tmp_path / "tasks.db"), "--interval-seconds", "5", "--max-loops", "3"],
     )
     assert result.exit_code == 0
-    assert "action=retry_started" in result.stdout
+    assert "loops=3" in result.stdout
