@@ -19,31 +19,36 @@ class RunTaskFromSpecFn(Protocol):
         *,
         agent_provider: str | None = None,
         agent_model: str | None = None,
-    ) -> TaskSnapshot: ...
+    ) -> TaskSnapshot:
+        """Create a task from a spec file and launch its coding session."""
 
 
 class ListTaskStatusesFn(Protocol):
     """Typed callable for querying task snapshots."""
 
-    def __call__(self, db_path: Path | None = None, state: TaskState | None = None) -> list[TaskSnapshot]: ...
+    def __call__(self, db_path: Path | None = None, state: TaskState | None = None) -> list[TaskSnapshot]:
+        """List task snapshots, optionally filtered by state."""
 
 
 class RetryTaskFn(Protocol):
     """Typed callable for retrying one task."""
 
-    def __call__(self, task_id: str, db_path: Path | None = None, session: str | None = None) -> TaskSnapshot: ...
+    def __call__(self, task_id: str, db_path: Path | None = None, session: str | None = None) -> TaskSnapshot:
+        """Retry a single task and optionally override the tmux session."""
 
 
 class CleanupTaskFn(Protocol):
     """Typed callable for cleaning up one task."""
 
-    def __call__(self, task_id: str, db_path: Path | None = None, force: bool = False) -> TaskSnapshot: ...
+    def __call__(self, task_id: str, db_path: Path | None = None, force: bool = False) -> TaskSnapshot:
+        """Clean up resources associated with one task."""
 
 
 class DaemonRunOnceFn(Protocol):
     """Typed callable for running one daemon reconcile pass."""
 
-    def __call__(self, db_path: Path | None = None, *, max_workers: int = 1) -> list[TaskSnapshot]: ...
+    def __call__(self, db_path: Path | None = None, *, max_workers: int = 1) -> list[TaskSnapshot]:
+        """Reconcile active tasks once and return updated snapshots."""
 
 
 class DaemonRunLoopFn(Protocol):
@@ -56,4 +61,5 @@ class DaemonRunLoopFn(Protocol):
         max_loops: int | None = None,
         *,
         max_workers: int = 1,
-    ) -> int: ...
+    ) -> int:
+        """Run repeated reconcile loops and return number of completed iterations."""

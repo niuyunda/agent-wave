@@ -24,15 +24,19 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _handle_pending(store: TaskStore, task: TaskSnapshot, orchestration_port: OrchestrationPort) -> TaskSnapshot:
+    """Launch a fresh coding session for pending tasks."""
     return launch_coding_session(store, task, fresh_setup=True, orchestration_port=orchestration_port)
 
 
 def _handle_coding(store: TaskStore, task: TaskSnapshot, orchestration_port: OrchestrationPort) -> TaskSnapshot:
+    """Evaluate coding-session completion and transition state if needed."""
     return handle_coding_completion(store, task, orchestration_port=orchestration_port)
 
 
 def _handle_pr_open(store: TaskStore, task: TaskSnapshot, orchestration_port: OrchestrationPort) -> TaskSnapshot:
+    """Run PR lifecycle checks and reconcile feedback or merge outcomes."""
     def _cleanup_with_port(task_id: str, db_path: Path | None, force: bool = False) -> TaskSnapshot:
+        """Bind cleanup use case to the resolved orchestration port."""
         return cleanup_task(task_id, db_path, force=force, orchestration_port=orchestration_port)
 
     return handle_pr_cycle(

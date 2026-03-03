@@ -13,6 +13,7 @@ class DefaultOrchestrationPort:
     """Port adapter that delegates runtime requests to orchestration API."""
 
     def layout_paths(self, project_name: str, base_dir: Path, *, feature: str | None = None) -> LayoutPathsView:
+        """Return computed project layout paths for runtime operations."""
         return orchestration.layout_paths(project_name, base_dir, feature=feature)
 
     def start_feature(
@@ -28,6 +29,7 @@ class DefaultOrchestrationPort:
         params: dict[str, str],
         create_dirs: list[str],
     ) -> LayoutPathsView:
+        """Initialize feature workspace and return resulting layout paths."""
         return orchestration.start_feature(
             project_name=project_name,
             feature=feature,
@@ -41,6 +43,7 @@ class DefaultOrchestrationPort:
         )
 
     def cleanup_feature(self, project_name: str, feature: str, base_dir: Path, delete_branch: bool) -> LayoutPathsView:
+        """Cleanup feature resources in standard mode."""
         return orchestration.cleanup_feature(project_name, feature, base_dir, delete_branch=delete_branch)
 
     def cleanup_feature_force(
@@ -50,15 +53,19 @@ class DefaultOrchestrationPort:
         base_dir: Path,
         delete_branch: bool,
     ) -> LayoutPathsView:
+        """Cleanup feature resources even if normal cleanup fails."""
         return orchestration.cleanup_feature_force(project_name, feature, base_dir, delete_branch=delete_branch)
 
     def tmux_session_exists(self, session: str) -> bool:
+        """Check whether a tmux session currently exists."""
         return orchestration.tmux_session_exists(session)
 
     def tmux_kill_session(self, session: str) -> None:
+        """Terminate a tmux session by name."""
         orchestration.tmux_kill_session(session)
 
     def tmux_new_session(self, session: str, cwd: Path, command: str) -> None:
+        """Create a detached tmux session and run a command."""
         orchestration.tmux_new_session(session, cwd, command)
 
     def commit_and_push_branch(
@@ -70,6 +77,7 @@ class DefaultOrchestrationPort:
         remote: str,
         commit_message: str,
     ) -> None:
+        """Commit branch changes and push feature branch to remote."""
         orchestration.commit_and_push_branch(
             worktree=worktree,
             feature=feature,
@@ -89,6 +97,7 @@ class DefaultOrchestrationPort:
         worktree: Path,
         pr_number: int | None = None,
     ) -> int:
+        """Return existing PR number or create/update PR for the branch."""
         return orchestration.ensure_pr_number_for_branch(
             repo=repo,
             feature=feature,
@@ -100,9 +109,11 @@ class DefaultOrchestrationPort:
         )
 
     def check_pr_status(self, repo: str, pr_number: int) -> PrCheckResultView:
+        """Fetch merged/open/closed status for a PR."""
         return orchestration.check_pr_status(repo, pr_number)
 
     def summarize_pr_feedback(self, repo: str, pr_number: int) -> PrFeedbackSummaryView:
+        """Collect actionable and skipped PR feedback comments."""
         return orchestration.summarize_pr_feedback(repo, pr_number)
 
     def write_pr_feedback_file(
@@ -114,6 +125,7 @@ class DefaultOrchestrationPort:
         actionable: list[str],
         skipped: list[str],
     ) -> Path:
+        """Persist PR feedback details to a task-scoped markdown file."""
         return orchestration.write_pr_feedback_file(
             worktree=worktree,
             task_id=task_id,
