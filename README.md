@@ -215,3 +215,46 @@ When this project is used as a skill, a practical workflow is:
 uv run pytest
 uv run ruff check .
 ```
+```
+
+With coverage:
+
+```bash
+uv run pytest --cov=agvv --cov-branch --cov-report=term-missing --cov-report=xml
+```
+
+### Docstring Coverage Gate (100%)
+
+Enable the local pre-commit hook once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+On every `git commit`, the hook runs:
+
+```bash
+uv run interrogate agvv --fail-under=100 --quiet
+```
+
+`--fail-under=100` enforces docstring coverage to be 100%.
+
+### Lint
+
+```bash
+uv run ruff check .
+```
+
+## CI
+
+GitHub Actions workflow runs:
+
+- lint (`ruff`) on Python 3.12,
+- tests on Python 3.10/3.11/3.12 with coverage,
+- package build after lint+test pass.
+
+## Package Metadata
+
+- package name: `agent-wave`
+- CLI entrypoint: `agvv` (mapped to `agvv.cli:app`)
+- build backend: `hatchling`
