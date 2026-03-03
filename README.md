@@ -1,328 +1,220 @@
-# Agent Wave (`agvv`)
+# Agent Wave Skill (`agvv`)
 
-Agent Wave is a Python CLI for running AI coding tasks in isolated Git worktrees with optional `tmux` orchestration.
+[中文说明 (README.zh-CN.md)](./README.zh-CN.md)
 
-It standardizes a project layout so each feature or task runs in its own branch/worktree, keeps `main` separate, and records task metadata/status in a registry.
+Agent Wave is a tool for coding agents.  
+It gives each task an isolated Git worktree, runs the agent in `tmux`, tracks task state in SQLite, and helps move work from coding to PR.
 
-## Why This Exists
+This repository will be packaged as a reusable skill.  
+This README focuses on how users and agents should use the skill in daily work.
 
-When multiple coding tasks or agents run in parallel, it is easy to:
+## Who This Is For
 
-- overwrite unrelated changes,
-- lose context about which run did what,
-- run commands in the wrong branch,
-- leave stale worktrees behind.
+- Designed for coding tasks run by AI agents.
+- Safer parallel work without direct edits in the main branch workspace.
+- Simple command flow to run, monitor, retry, and clean tasks.
 
-`agvv` gives a repeatable workflow to avoid that:
+## What The Skill Does
 
-- project bootstrap (new or adopted repo),
-- feature worktree creation with metadata,
-- optional detached `tmux` task execution,
-- task lifecycle updates (`running`, `failed`, `needs_changes`, `done`),
-- cleanup of worktree and branch after merge.
+For each task, Agent Wave will:
 
-## Core Concepts
-
-### Project Layout
-
-For a project named `<project>` under `<base_dir>`:
-
-```text
-<base_dir>/<project>/
-  repo.git/        # bare repository (source of truth)
-  main/            # integration worktree
-  <feature>/       # per-feature worktree(s)
-```
-
-Feature runs also get context metadata:
-
-```text
-<base_dir>/<project>/<feature>/.agvv/context.json
-```
-
-### Task Registry
-
-Orchestrated tasks are stored in a JSON registry (default global path):
-
-```text
-~/.agvv/tasks.json
-```
-
-You can override this with:
-
-```bash
-export AGVV_TASKS_PATH=/custom/path/tasks.json
-```
-
-Registry includes:
-
-- `tasks[]` entries (id, status, feature, session, retries, history, etc.),
-- `summary` aggregates (by status and by project),
-- `updated_at` timestamp and schema `version`.
+1. Create a feature worktree in a standard project layout.
+2. Start an agent command in a dedicated `tmux` session.
+3. Track task lifecycle and errors in a local SQLite DB.
+4. Help finalize code into a PR and follow PR feedback loops.
+5. Support retry and cleanup commands for operations.
 
 ## Requirements
 
 - Python `>=3.10`
-- `git` available on `PATH`
-- `tmux` available on `PATH` (only required for `agvv orch ...` and `agvv feat start`)
-- `uv` for dependency management and running commands
+- `git`
+- `tmux`
+- `gh` (GitHub CLI, authenticated)
+- `uv`
 
-## Installation
-
-### Development Install (recommended)
+## Install And Check
 
 ```bash
 uv sync --dev
-```
-
-Run CLI without global install:
-
-```bash
 uv run agvv --help
 ```
 
-### Build Package
+If you use this as a skill, make sure `agvv` is available in the environment where the agent runs.
 
-```bash
-uv build
+## 5-Minute Quick Start
+
+### 1) Create a task spec file
+
+Create `task.json`:
+
+```json
+{
+  "task_id": "demo_task_1",
+  "project_name": "demo",
+  "feature": "feat_demo",
+  "repo": "owner/repo",
+  "base_dir": "~/Code",
+  "from_branch": "main",
+  "agent": {
+    "provider": "codex",
+    "model": "gpt-5",
+    "extra_args": ["--approval-mode", "auto"]
+  },
+  "create_dirs": ["src", "tests"],
+  "pr_title": "[agvv] feat_demo",
+  "pr_body": "Implement demo feature",
+  "timeout_minutes": 240,
+  "max_retry_cycles": 5,
+  "auto_cleanup": true
+}
 ```
 
-## Quick Start
-
-### 1) Initialize or adopt a project
-
-Create fresh project layout:
+### 2) Start the task
 
 ```bash
-uv run agvv project init myproj --base-dir ~/Code
+uv run agvv task run --spec ./task.json
 ```
 
-Adopt an existing Git repository:
+Expected output includes task id, state, and tmux session name.
+
+### 3) Check status
 
 ```bash
-uv run agvv project adopt /path/to/existing/repo myproj --base-dir ~/Code
+uv run agvv task status
 ```
 
-### 2) Create a feature worktree
+### 4) Reconcile once (daemon single pass)
 
 ```bash
-uv run agvv create worktree myproj feat-login \
-  --base-dir ~/Code \
-  --from-branch main \
-  --agent codex \
-  --task-id run-20260226-001 \
-  --ticket APP-123 \
-  --param model=gpt-5 \
-  --param change_type=feature \
-  --mkdir src \
-  --mkdir tests/unit
+uv run agvv daemon run --once
 ```
 
-This creates:
+This is the core loop for the skill: it checks active tasks and advances their state.
 
-- feature branch/worktree at `~/Code/myproj/feat-login`,
-- metadata file at `~/Code/myproj/feat-login/.agvv/context.json`.
+## Command Guide (User-Facing)
 
-### 3) Work and verify inside the feature worktree
+### `task run`
+
+Create and launch one task from spec:
 
 ```bash
-cd ~/Code/myproj/feat-login
-git status
+agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--model gpt-5]
 ```
 
-### 4) Cleanup when done
+Common use: start new work with optional temporary agent/model override.
 
-Remove worktree and delete feature branch:
+### `task status`
+
+List tasks and current state:
 
 ```bash
-uv run agvv feat cleanup myproj feat-login --base-dir ~/Code
+agvv task status [--db-path ./tasks.db] [--task-id demo_task_1] [--state coding]
 ```
 
-Keep branch while removing only worktree:
+Common use: monitor many tasks or filter one task.
+
+### `task retry`
+
+Retry a recoverable task:
 
 ```bash
-uv run agvv feat cleanup myproj feat-login --base-dir ~/Code --keep-branch
+agvv task retry --task-id demo_task_1 [--db-path ./tasks.db] [--session custom-session]
 ```
 
-## One-Step Agent Run (`feat start`)
+Common use: resume after failure, timeout, or PR feedback cycle.
 
-`feat start` combines:
+### `task cleanup`
 
-1. feature worktree creation (`create worktree` behavior),
-2. detached `tmux` session launch,
-3. task registry creation with status `running`.
-
-Example:
+Stop session and remove task resources:
 
 ```bash
-uv run agvv feat start myproj feat-login \
-  --base-dir ~/Code \
-  --agent codex \
-  --agent-cmd "python -m pytest -q"
+agvv task cleanup --task-id demo_task_1 [--db-path ./tasks.db] [--force]
 ```
 
-Notes:
+Common use: cleanup after merge/close, or force cleanup when needed.
 
-- `--agent-cmd` is required.
-- If `--task-id` is omitted, a timestamped one is generated.
-- If `--session` is omitted, default is `<agent>-<feature>`.
+### `daemon run`
 
-## Orchestration Commands (`orch`)
-
-### Spawn
-
-Launch a detached `tmux` session for an existing feature worktree and register task:
+Run monitor loop once or continuously:
 
 ```bash
-uv run agvv orch spawn myproj feat-login \
-  --base-dir ~/Code \
-  --session codex-feat-login \
-  --agent codex \
-  --agent-cmd "make test"
+agvv daemon run [--db-path ./tasks.db] [--once] [--interval-seconds 30] [--max-loops 10] [--max-workers 1]
 ```
 
-### List
+Common use: run `--once` in scripts, run loop mode in long-running automation.
 
-```bash
-uv run agvv orch list myproj --base-dir ~/Code
-```
+## Task Spec: What Users Usually Need
 
-### Nudge
+Required fields:
 
-Send command/message into running task session:
+- `project_name`
+- `feature`
+- `repo`
 
-```bash
-uv run agvv orch nudge myproj run-20260226-001 \
-  --base-dir ~/Code \
-  --message "please rerun failing tests"
-```
+Very common fields:
 
-### Sync
+- `task_id`: custom ID (auto-generated if omitted)
+- `base_dir`: where project/worktrees live (default `~/code`)
+- `from_branch`: starting branch (default `main`)
+- `agent`:
+  - `provider`: `codex` or `claude_code`
+  - `model`: optional model name
+  - `extra_args`: optional list of args
+- `create_dirs`: directories to pre-create in feature worktree
+- `pr_title` / `pr_body`: PR content
+- `task_doc`: file path used as PR body fallback
+- `timeout_minutes`: timeout before task becomes `timed_out`
+- `max_retry_cycles`: max auto retry cycles for PR feedback
+- `auto_cleanup`: cleanup automatically after merge/close/timeout
+- `keep_branch_on_cleanup`: keep feature branch after cleanup
 
-Reconcile task status with `tmux` session liveness:
+## Recommended Skill Workflow
 
-```bash
-uv run agvv orch sync myproj --base-dir ~/Code
-```
+When this project is used as a skill, a practical workflow is:
 
-If a `running` task's session no longer exists, it is marked `failed`.
+1. Receive a task requirement.
+2. Create a `task.json` spec.
+3. Run `agvv task run`.
+4. Schedule `agvv daemon run --once` (manually or through automation).
+5. Check `agvv task status`.
+6. Run `agvv task retry` or `agvv task cleanup` when needed.
 
-### Retry
+## State Meanings (Simple)
 
-Relaunch a `failed` or `needs_changes` task:
+- `pending`: task created, waiting to start
+- `coding`: agent session is running or coding in progress
+- `pr_open`: code pushed, PR open and being tracked
+- `pr_merged`: PR merged
+- `pr_closed`: PR closed without merge
+- `timed_out`: task exceeded timeout
+- `failed`: operation failed
+- `cleaned`: resources cleaned
+- `blocked`: manually or externally blocked
 
-```bash
-uv run agvv orch retry myproj run-20260226-001 \
-  --base-dir ~/Code \
-  --max-retries 3
-```
+## Environment Variable
 
-Optional override command:
+- `AGVV_DB_PATH`: default path for the task SQLite DB
 
-```bash
-uv run agvv orch retry myproj run-20260226-001 \
-  --base-dir ~/Code \
-  --max-retries 3 \
-  --agent-cmd "uv run pytest -q"
-```
+## Troubleshooting
 
-### Feedback
+- `tmux not found`: install `tmux` first.
+- `gh` command issues: run `gh auth login` and verify repo access.
+- `Task id already exists`: change `task_id` or reuse existing task.
+- `Feature worktree has uncommitted changes`: commit/stash or use `task cleanup --force`.
+- `Unsupported agent provider`: use `codex` or `claude_code`.
 
-Apply review outcome:
+## For Skill Authors
 
-```bash
-uv run agvv orch feedback myproj run-20260226-001 \
-  --base-dir ~/Code \
-  --result changes_requested \
-  --note "Address edge case in parser"
-```
+- Keep prompts simple: tell the agent to generate a task spec, run `task run`, then monitor with `daemon run --once`.
+- Always pass explicit `base_dir` in automation to avoid ambiguous paths.
+- Prefer short-lived feature tasks and regular cleanup.
 
-Allowed `--result` values:
-
-- `passed` -> marks task `done`
-- `changes_requested` -> marks task `needs_changes`
-
-### Complete
-
-Mark task complete, optionally cleanup worktree/branch:
-
-```bash
-uv run agvv orch complete myproj run-20260226-001 \
-  --base-dir ~/Code \
-  --cleanup
-```
-
-Keep branch during cleanup:
-
-```bash
-uv run agvv orch complete myproj run-20260226-001 \
-  --base-dir ~/Code \
-  --cleanup \
-  --keep-branch
-```
-
-## Command Groups and Aliases
-
-- `project`
-  - `init`
-  - `adopt`
-- `create`
-  - `worktree`
-- `feat` (alias: `feature`)
-  - `start`
-  - `cleanup`
-- `orch` (alias: `orchestrate`)
-  - `spawn`, `list`, `nudge`, `sync`, `retry`, `feedback`, `complete`
-
-## Naming and Safety Rules
-
-Project and feature names are validated:
-
-- only letters, numbers, `_`, `-`,
-- no path separators,
-- no path traversal segments.
-
-Feature names cannot be reserved names:
-
-- `main`
-- `repo.git`
-
-`--mkdir` paths are restricted to safe relative segments only.
-
-Cleanup safety:
-
-- `feat cleanup` refuses to remove a worktree with uncommitted tracked/staged changes.
-
-## Status Model
-
-Supported task statuses:
-
-- `queued`
-- `running`
-- `needs_changes`
-- `failed`
-- `done`
-
-Task history appends an event record on create/update with timestamp and metadata.
-
-## Error Handling
-
-Operational failures raise `AgvvError` and are shown in CLI with non-zero exit code.
-
-Typical causes:
-
-- missing project layout (`project init`/`project adopt` not run),
-- invalid `--param` format (must be `KEY=VALUE`),
-- duplicate task IDs,
-- missing `tmux`,
-- missing or already-existing `tmux` session.
-
-## Development
-
-### Run Tests
+## Local Development
 
 ```bash
 uv run pytest
+uv run ruff check .
+```
 ```
 
 With coverage:

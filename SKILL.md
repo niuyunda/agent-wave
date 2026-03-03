@@ -1,136 +1,127 @@
 ---
 name: agent-wave
-description: Agent Wave workflow for AI Agent orchestration. Use the `agvv` CLI to enforce parallel Git worktree development, reduce failures, and save token usage.
+description: Agent execution skill for running coding tasks via `agvv` with isolated worktrees, tmux sessions, and runtime state reconciliation.
 ---
 
 # Agent Wave Skill
 
-Project name: `Agent Wave`  
-CLI command: `agvv`
+## Purpose
 
-This skill standardizes project setup, branch/worktree isolation, and task context capture so multiple agents can work safely in parallel with consistent guardrails.
+Use this skill to execute coding tasks through `agvv` as an agent runtime primitive:
 
-## Scope
+- isolate each task in a feature worktree
+- launch coding in `tmux`
+- track task lifecycle in SQLite
+- reconcile PR-driven state transitions
 
-Use this skill for all code tasks:
+This file defines **agent behavior**, not end-user documentation.
 
-- New project initialization
-- Existing project adoption and refactor
-- Feature development
-- Bug fixing
-- Ongoing maintenance changes
+## Trigger Conditions
 
-## Core Model
+Use this skill when the task includes one or more of:
 
-Every project follows this layout:
+- "start/run a coding task"
+- "track/reconcile task status"
+- "retry failed task"
+- "cleanup task resources"
+- "operate multiple agent tasks consistently"
 
-- `<base>/<project>/repo.git` - bare repository
-- `<base>/<project>/main` - protected integration worktree
-- `<base>/<project>/<feature>` - task-specific implementation worktree
+## Command Contract (Current And Valid)
 
-Agent context is stored per feature:
+Use only these commands:
 
-- `<base>/<project>/<feature>/.agvv/context.json`
+- `uv run agvv task run`
+- `uv run agvv task status`
+- `uv run agvv task retry`
+- `uv run agvv task cleanup`
+- `uv run agvv daemon run`
 
-## Non-Negotiable Rules
+Do not use deprecated command groups such as `project`, `feature`, or `orch`.
 
-1. Never implement directly in `<project>/main`.
-2. Every task uses `agvv feature start` to create/reuse an isolated feature worktree.
-3. Build, test, and commit only inside that feature worktree.
-4. Merge through PR workflow.
-5. After merge, run cleanup (`agvv feature cleanup`).
-6. Always pass explicit `--base-dir` in automation contexts.
+## Required Inputs
 
-## Canonical Workflow
+Before execution, ensure there is a task spec file (`.json` or `.yaml`) with at least:
+YAML support requires PyYAML to be installed (for example `uv add pyyaml` or `pip install pyyaml`); without it, `.yaml` specs can fail at runtime:
 
-### 1) Project Bootstrapping
+- `project_name`
+- `feature`
+- `repo`
 
-For a new project:
+Recommended fields:
 
-```bash
-agvv project init <project> --base-dir <base_dir>
-```
+- `task_id`
+- `base_dir`
+- `from_branch`
+- `agent.provider` (`codex` or `claude_code`)
+- `agent.model`
+- `agent.extra_args`
+- `create_dirs`
+- `pr_title`, `pr_body`
+- `timeout_minutes`, `max_retry_cycles`
+- `auto_cleanup`, `keep_branch_on_cleanup`
 
-For an existing repository:
+## Hard Rules
 
-```bash
-agvv project adopt <existing_repo_path> <project> --base-dir <base_dir>
-```
+1. Never modify runtime DB rows directly.
+2. Never bypass `agvv` lifecycle commands with ad-hoc manual state transitions.
+3. Never run deprecated `agvv` subcommands.
+4. Retry only through `agvv task retry`.
+5. Clean up finished or abandoned tasks through `agvv task cleanup`.
+6. Prefer explicit `task_id` in automation.
+7. Use explicit `base_dir` in automation contexts.
 
-### 2) Start Feature Work
+## Execution Algorithm
 
-```bash
-agvv feature start <project> <feature> --base-dir <base_dir>
-```
+1. **Validate Inputs**
+   - Confirm spec file exists and is readable.
+   - Confirm required fields exist.
 
-### 3) Implement and Validate
+2. **Start Task**
+   - Run:
+   - `uv run agvv task run --spec <spec_path> [--db-path <db_path>] [--agent <provider>] [--model <model>]`
 
-- `cd` into `<base>/<project>/<feature>`
-- Run coding, formatting, tests, and checks
-- Commit on the feature branch only
+3. **Observe Status**
+   - Run:
+   - `uv run agvv task status [--db-path <db_path>] [--task-id <task_id>] [--state <state>]`
 
-### 4) Merge and Cleanup
+4. **Reconcile State**
+   - Single-pass automation default:
+   - `uv run agvv daemon run --once [--db-path <db_path>] [--max-workers <n>]`
+   - Loop mode only when explicitly required:
+   - `uv run agvv daemon run --interval-seconds <sec> [--max-loops <n>]`
 
-After PR merge:
+5. **Retry If Recoverable**
+   - Run:
+   - `uv run agvv task retry --task-id <task_id> [--db-path <db_path>] [--session <session>]`
 
-```bash
-agvv feature cleanup <project> <feature> --base-dir <base_dir>
-```
+6. **Cleanup**
+   - Normal:
+   - `uv run agvv task cleanup --task-id <task_id> [--db-path <db_path>]`
+   - Force (only when necessary):
+   - `uv run agvv task cleanup --task-id <task_id> [--db-path <db_path>] --force`
 
-Keep branch temporarily if needed:
+## Failure Handling Policy
 
-```bash
-agvv feature cleanup <project> <feature> --base-dir <base_dir> --keep-branch
-```
+- If command fails due to invalid spec: fix spec and retry `task run`.
+- If task is non-recoverable: do not force retry logic; report and stop.
+- If cleanup fails because of local changes: prefer normal resolution, use `--force` only when requested or operationally required.
+- If `gh`/`tmux` is unavailable: report dependency issue clearly.
 
-## Agent Parameter Contract
+## Output Contract For Agent Responses
 
-Use these options with `agvv feature start` to capture execution context:
+When using this skill, the agent response should include:
 
-- `--agent <agent_name_or_id>`: source agent identity
-- `--task-id <task_execution_id>`: task/run identifier
-- `--ticket <issue_id>`: external tracker ID
-- `--param KEY=VALUE` (repeatable): arbitrary structured context
-- `--mkdir <path>` (repeatable): precreate task directories
-- `--from-branch <branch>`: base branch for new feature branch (default: `main`)
+1. action taken (exact command family used)
+2. task id and current state (if available)
+3. next recommended action (`status`, `daemon run --once`, `retry`, or `cleanup`)
+4. blocking reason (if any)
 
-Example:
-
-```bash
-agvv feature start <project> <feature> \
-  --base-dir <base_dir> \
-  --from-branch main \
-  --agent codex \
-  --task-id run-20260225-001 \
-  --ticket PROJ-123 \
-  --param language=python \
-  --param change_type=feature \
-  --mkdir src \
-  --mkdir tests
-```
-
-## Operational Guidance for Agents
-
-- Resolve all paths before execution.
-- Treat `main` as read-only integration surface.
-- Keep feature naming deterministic (`feat-*`, `fix-*`, `refactor-*`).
-- Write meaningful `--param` metadata for traceability.
-- Prefer short-lived feature worktrees and fast cleanup.
-
-## Anti-Patterns
-
-Do not:
-
-- Edit directly in `<project>/main`
-- Reuse one feature worktree for unrelated tasks
-- Skip context metadata for automated agent tasks
-- Keep stale merged worktrees/branches indefinitely
-
-## Minimal Command Reference
+## Minimal Reference
 
 ```bash
-agvv project init <project> --base-dir <base_dir>
-agvv project adopt <existing_repo_path> <project> --base-dir <base_dir>
-agvv feature start <project> <feature> --base-dir <base_dir> [options...]
-agvv feature cleanup <project> <feature> --base-dir <base_dir> [--keep-branch]
+uv run agvv task run --spec ./task.json
+uv run agvv task status --task-id <task_id>
+uv run agvv daemon run --once
+uv run agvv task retry --task-id <task_id>
+uv run agvv task cleanup --task-id <task_id>
 ```
