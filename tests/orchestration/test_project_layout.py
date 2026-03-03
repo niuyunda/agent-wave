@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agvv.orchestration import AgvvError, adopt_project, cleanup_feature, init_project, start_feature
+from agvv.orchestration import AgvvError, adopt_project, cleanup_feature, commit_and_push_branch, init_project, start_feature
 
 
 def _git(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -22,6 +22,13 @@ def _create_existing_repo(path: Path, branch: str = "main") -> Path:
     _git(["add", "README.md"], cwd=path)
     _git(["commit", "-m", "init repo"], cwd=path)
     return path
+
+
+def _create_existing_repo_with_remote(path: Path, remote_bare: Path, branch: str = "main") -> Path:
+    repo = _create_existing_repo(path, branch=branch)
+    _git(["remote", "add", "origin", str(remote_bare)], cwd=repo)
+    _git(["push", "-u", "origin", branch], cwd=repo)
+    return repo
 
 
 def test_init_project_creates_layout_and_is_idempotent(tmp_path: Path) -> None:
@@ -55,6 +62,41 @@ def test_adopt_project_prefers_main_when_present(tmp_path: Path) -> None:
     paths, branch = adopt_project(existing_repo, "adopted-main", tmp_path)
     assert branch == "main"
     assert paths.main_dir.exists()
+
+
+def test_adopt_project_allows_branch_push_after_start_feature(tmp_path: Path) -> None:
+    remote_bare = tmp_path / "upstream.git"
+    _git(["init", "--bare", str(remote_bare)], cwd=tmp_path)
+    existing_repo = _create_existing_repo_with_remote(tmp_path / "src-upstream", remote_bare, branch="main")
+
+    adopt_project(existing_repo, "adopted-push", tmp_path)
+    paths = start_feature(
+        project_name="adopted-push",
+        feature="feat-push",
+        base_dir=tmp_path,
+        from_branch="main",
+        agent=None,
+        task_id=None,
+        ticket=None,
+        params={},
+        create_dirs=[],
+    )
+    assert paths.feature_dir is not None
+    (paths.feature_dir / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+
+    commit_and_push_branch(
+        worktree=paths.feature_dir,
+        feature="feat-push",
+        base_branch="main",
+        remote="origin",
+        commit_message="feat: add calculator helper",
+    )
+
+    pushed = subprocess.run(
+        ["git", "-C", str(remote_bare), "show-ref", "--verify", "--quiet", "refs/heads/feat-push"],
+        check=False,
+    )
+    assert pushed.returncode == 0
 
 
 def test_adopt_project_fails_when_source_not_git_repo(tmp_path: Path) -> None:

@@ -128,7 +128,19 @@ def adopt_project(existing_repo: Path, project_name: str, base_dir: Path) -> tup
             "Use a different project name or clean target first."
         )
 
-    run_git(["clone", "--mirror", str(existing_repo), str(paths.repo_dir)])
+    # Use --bare instead of --mirror so later `git push <remote> <branch>`
+    # remains valid. `--mirror` sets remote.origin.mirror=true, which makes
+    # branch refspec pushes fail with:
+    # "fatal: --mirror can't be combined with refspecs".
+    run_git(["clone", "--bare", str(existing_repo), str(paths.repo_dir)])
+
+    # If source repo has an upstream origin URL, preserve it so adopted tasks
+    # push to the original remote instead of the local source path.
+    if run_git_success(["-C", str(existing_repo), "config", "--get", "remote.origin.url"]):
+        source_origin = run_git(["-C", str(existing_repo), "config", "--get", "remote.origin.url"]).stdout.strip()
+        if source_origin:
+            run_git(["-C", str(paths.repo_dir), "remote", "set-url", "origin", source_origin])
+
     branch = _default_branch(paths.repo_dir)
     run_git(["-C", str(paths.repo_dir), "worktree", "add", str(paths.main_dir), branch])
     return paths, branch
