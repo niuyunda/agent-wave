@@ -113,20 +113,7 @@ def init_project(project_name: str, base_dir: Path) -> LayoutPaths:
 
 
 def adopt_project(existing_repo: Path, project_name: str, base_dir: Path) -> tuple[LayoutPaths, str]:
-    """Adopt an existing repository into Agent Wave layout under ``base_dir``.
-
-    The function performs a bare clone of ``existing_repo`` into the managed
-    ``repo.git`` path, prepares the ``main`` worktree under the project layout,
-    and returns the resulting layout paths plus the selected default branch.
-
-    Args:
-        existing_repo: Source non-bare repository path to adopt.
-        project_name: Managed project name under ``base_dir``.
-        base_dir: Destination root directory for Agent Wave project layout.
-
-    Returns:
-        tuple[LayoutPaths, str]: Created layout paths and selected base branch.
-    """
+    """Mirror an existing repository into the Agent Wave layout."""
 
     _ensure_layout_name(project_name, "Project name")
     if not (existing_repo / ".git").exists():

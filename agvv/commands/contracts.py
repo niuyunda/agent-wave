@@ -67,14 +67,14 @@ class DaemonRunLoopFn(Protocol):
 
 
 class InitProjectFn(Protocol):
-    """Typed callable for initializing a project layout."""
+    """Typed callable for project layout initialization."""
 
     def __call__(self, project_name: str, base_dir: Path) -> LayoutPaths:
-        """Initialize a project and return resolved layout paths."""
+        """Initialize project layout and return resolved paths."""
 
 
 class AdoptProjectFn(Protocol):
     """Typed callable for adopting an existing repository."""
 
     def __call__(self, existing_repo: Path, project_name: str, base_dir: Path) -> tuple[LayoutPaths, str]:
-        """Adopt an existing repo and return layout paths and chosen base branch."""
+        """Adopt repository and return layout paths plus selected branch."""

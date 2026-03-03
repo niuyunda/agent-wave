@@ -15,6 +15,7 @@ from agvv.commands.task import (
     execute_task_run,
     execute_task_status,
 )
+from agvv.orchestration import adopt_project, init_project
 from agvv.runtime import (
     cleanup_task,
     daemon_run_loop,
@@ -23,7 +24,6 @@ from agvv.runtime import (
     retry_task,
     run_task_from_spec,
 )
-from agvv.orchestration import adopt_project, init_project
 from agvv.shared.errors import AgvvError
 
 app = typer.Typer(help="Agent Wave task orchestration CLI.")
