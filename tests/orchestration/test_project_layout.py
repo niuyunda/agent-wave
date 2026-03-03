@@ -64,12 +64,16 @@ def test_adopt_project_prefers_main_when_present(tmp_path: Path) -> None:
     assert paths.main_dir.exists()
 
 
-def test_adopt_project_allows_branch_push_after_start_feature(tmp_path: Path) -> None:
+def test_adopt_project_preserves_upstream_origin_and_allows_feature_push_e2e(tmp_path: Path) -> None:
     remote_bare = tmp_path / "upstream.git"
     _git(["init", "--bare", str(remote_bare)], cwd=tmp_path)
     existing_repo = _create_existing_repo_with_remote(tmp_path / "src-upstream", remote_bare, branch="main")
 
-    adopt_project(existing_repo, "adopted-push", tmp_path)
+    paths, branch = adopt_project(existing_repo, "adopted-push", tmp_path)
+    assert branch == "main"
+    origin_url = _git(["-C", str(paths.repo_dir), "config", "--get", "remote.origin.url"], cwd=tmp_path).stdout.strip()
+    assert origin_url == str(remote_bare)
+
     paths = start_feature(
         project_name="adopted-push",
         feature="feat-push",
