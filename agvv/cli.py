@@ -8,6 +8,7 @@ import typer
 
 from agvv.commands.common import exit_with_agvv_error, parse_task_state, resolve_optional_path
 from agvv.commands.daemon import execute_daemon_run
+from agvv.commands.project import execute_project_adopt, execute_project_init
 from agvv.commands.task import (
     execute_task_cleanup,
     execute_task_retry,
@@ -22,14 +23,17 @@ from agvv.runtime import (
     retry_task,
     run_task_from_spec,
 )
+from agvv.orchestration import adopt_project, init_project
 from agvv.shared.errors import AgvvError
 
 app = typer.Typer(help="Agent Wave task orchestration CLI.")
 task_app = typer.Typer(help="Task state-machine orchestration operations.")
 daemon_app = typer.Typer(help="Task monitor daemon operations.")
+project_app = typer.Typer(help="Project repository layout operations.")
 
 app.add_typer(task_app, name="task")
 app.add_typer(daemon_app, name="daemon")
+app.add_typer(project_app, name="project")
 
 
 @task_app.command("run")
@@ -153,6 +157,57 @@ def daemon_run(
 
     for line in lines:
         typer.echo(line)
+
+
+@project_app.command("init")
+def project_init(
+    project_name: Annotated[str, typer.Argument(help="Project name for the managed layout.")],
+    base_dir: Annotated[
+        str | None,
+        typer.Option("--base-dir", help="Base directory where project layout is created."),
+    ] = None,
+) -> None:
+    """Initialize a project as bare repository plus ``main`` worktree."""
+
+    try:
+        line = execute_project_init(
+            project_name=project_name,
+            base_dir=base_dir,
+            init_project=init_project,
+            resolve_optional_path=resolve_optional_path,
+        )
+    except AgvvError as exc:
+        exit_with_agvv_error(exc)
+
+    typer.echo(line)
+
+
+@project_app.command("adopt")
+def project_adopt(
+    project_name: Annotated[str, typer.Argument(help="Project name for the managed layout.")],
+    existing_repo: Annotated[
+        str,
+        typer.Option("--existing-repo", help="Path to an existing non-bare git repository."),
+    ],
+    base_dir: Annotated[
+        str | None,
+        typer.Option("--base-dir", help="Base directory where project layout is created."),
+    ] = None,
+) -> None:
+    """Adopt an existing repository into the managed project layout."""
+
+    try:
+        line = execute_project_adopt(
+            existing_repo=existing_repo,
+            project_name=project_name,
+            base_dir=base_dir,
+            adopt_project=adopt_project,
+            resolve_optional_path=resolve_optional_path,
+        )
+    except AgvvError as exc:
+        exit_with_agvv_error(exc)
+
+    typer.echo(line)
 
 
 if __name__ == "__main__":
