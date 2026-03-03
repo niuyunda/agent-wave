@@ -29,8 +29,6 @@ def _create_existing_repo_with_remote(path: Path, remote_bare: Path, branch: str
     _git(["remote", "add", "origin", str(remote_bare)], cwd=repo)
     _git(["push", "-u", "origin", branch], cwd=repo)
     return repo
-
-
 def test_init_project_creates_layout_and_is_idempotent(tmp_path: Path) -> None:
     paths = init_project("demo", tmp_path)
     assert paths.repo_dir.exists()
