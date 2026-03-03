@@ -19,10 +19,10 @@ def test_cli_help_only_new_commands() -> None:
     assert result.exit_code == 0
     assert "task" in result.stdout
     assert "daemon" in result.stdout
-    assert "│ project" not in result.stdout
-    assert "│ feature" not in result.stdout
-    assert "│ orch" not in result.stdout
-    assert "│ pr" not in result.stdout
+    assert "project" in result.stdout
+    assert "│ feature " not in result.stdout
+    assert "│ orch " not in result.stdout
+    assert "│ pr " not in result.stdout
 
 
 def test_cli_task_help_commands() -> None:
@@ -38,6 +38,13 @@ def test_cli_daemon_help_commands() -> None:
     result = runner.invoke(app, ["daemon", "--help"])
     assert result.exit_code == 0
     assert "run" in result.stdout
+
+
+def test_cli_project_help_commands() -> None:
+    result = runner.invoke(app, ["project", "--help"])
+    assert result.exit_code == 0
+    assert "init" in result.stdout
+    assert "adopt" in result.stdout
 
 
 def test_cli_module_entrypoint_help(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -73,7 +73,6 @@ def test_adopt_project_preserves_upstream_origin_and_allows_feature_push_e2e(tmp
     assert branch == "main"
     origin_url = _git(["-C", str(paths.repo_dir), "config", "--get", "remote.origin.url"], cwd=tmp_path).stdout.strip()
     assert origin_url == str(remote_bare)
-
     paths = start_feature(
         project_name="adopted-push",
         feature="feat-push",
