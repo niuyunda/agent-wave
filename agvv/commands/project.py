@@ -19,10 +19,7 @@ def execute_project_init(
 
     resolved_base_dir = resolve_optional_path(base_dir) or Path.cwd()
     paths = init_project(project_name=project_name, base_dir=resolved_base_dir)
-    return (
-        f"Project initialized: {project_name}\t"
-        f"repo={paths.repo_dir}\tmain={paths.main_dir}"
-    )
+    return f"Project initialized: {project_name}\trepo={paths.repo_dir}\tmain={paths.main_dir}"
 
 
 def execute_project_adopt(
@@ -41,7 +38,4 @@ def execute_project_adopt(
         project_name=project_name,
         base_dir=resolved_base_dir,
     )
-    return (
-        f"Project adopted: {project_name}\tbranch={branch}\t"
-        f"repo={paths.repo_dir}\tmain={paths.main_dir}"
-    )
+    return f"Project adopted: {project_name}\tbranch={branch}\trepo={paths.repo_dir}\tmain={paths.main_dir}"

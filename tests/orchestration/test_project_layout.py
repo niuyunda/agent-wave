@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from urllib.parse import unquote, urlparse
 
 import pytest
 
@@ -30,19 +29,6 @@ def _create_existing_repo_with_remote(path: Path, remote_bare: Path, branch: str
     _git(["remote", "add", "origin", str(remote_bare)], cwd=repo)
     _git(["push", "-u", "origin", branch], cwd=repo)
     return repo
-
-
-def _normalize_repo_path(value: str) -> Path:
-    parsed = urlparse(value)
-    if parsed.scheme == "file":
-        normalized = Path(unquote(parsed.path))
-    else:
-        normalized = Path(value)
-    if normalized.suffix == ".git":
-        normalized = normalized.with_suffix("")
-    return normalized.resolve()
-
-
 def test_init_project_creates_layout_and_is_idempotent(tmp_path: Path) -> None:
     paths = init_project("demo", tmp_path)
     assert paths.repo_dir.exists()
@@ -84,7 +70,7 @@ def test_adopt_project_preserves_upstream_origin_and_allows_feature_push_e2e(tmp
     paths, branch = adopt_project(existing_repo, "adopted-push", tmp_path)
     assert branch == "main"
     origin_url = _git(["-C", str(paths.repo_dir), "config", "--get", "remote.origin.url"], cwd=tmp_path).stdout.strip()
-    assert _normalize_repo_path(origin_url) == _normalize_repo_path(str(remote_bare))
+    assert origin_url == str(remote_bare)
     paths = start_feature(
         project_name="adopted-push",
         feature="feat-push",
