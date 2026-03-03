@@ -12,11 +12,22 @@ from agvv.shared.errors import AgvvError
 class CommandRunner(Protocol):
     """Typed callable contract for shell command execution."""
 
-    def __call__(self, cmd: Sequence[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    def __call__(
+        self,
+        cmd: Sequence[str],
+        cwd: Path | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         """Run a command and return captured process output."""
 
 
-def run_checked(cmd: Sequence[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def run_checked(
+    cmd: Sequence[str],
+    cwd: Path | None = None,
+    *,
+    timeout_seconds: float | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run a shell command and normalize failures into ``AgvvError``."""
 
     argv = [str(part) for part in cmd]
@@ -29,9 +40,12 @@ def run_checked(cmd: Sequence[str], cwd: Path | None = None) -> subprocess.Compl
             text=True,
             capture_output=True,
             check=True,
+            timeout=timeout_seconds,
         )
     except FileNotFoundError as exc:
         raise AgvvError(f"Command not found: {argv[0]}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise AgvvError(f"Command timed out after {timeout_seconds}s: {' '.join(argv)}") from exc
     except subprocess.CalledProcessError as exc:
         raise AgvvError(
             f"Command failed: {' '.join(argv)}\n"
@@ -40,23 +54,38 @@ def run_checked(cmd: Sequence[str], cwd: Path | None = None) -> subprocess.Compl
         ) from exc
 
 
-def run_success(cmd: Sequence[str], cwd: Path | None = None) -> bool:
+def run_success(
+    cmd: Sequence[str],
+    cwd: Path | None = None,
+    *,
+    timeout_seconds: float | None = None,
+) -> bool:
     """Return whether a command completes successfully."""
 
     try:
-        run_checked(cmd, cwd=cwd)
+        run_checked(cmd, cwd=cwd, timeout_seconds=timeout_seconds)
         return True
     except AgvvError:
         return False
 
 
-def run_git(args: Sequence[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def run_git(
+    args: Sequence[str],
+    cwd: Path | None = None,
+    *,
+    timeout_seconds: float | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run a ``git`` command with shared error handling."""
 
-    return run_checked(["git", *args], cwd=cwd)
+    return run_checked(["git", *args], cwd=cwd, timeout_seconds=timeout_seconds)
 
 
-def run_git_success(args: Sequence[str], cwd: Path | None = None) -> bool:
+def run_git_success(
+    args: Sequence[str],
+    cwd: Path | None = None,
+    *,
+    timeout_seconds: float | None = None,
+) -> bool:
     """Return whether a ``git`` command succeeds."""
 
-    return run_success(["git", *args], cwd=cwd)
+    return run_success(["git", *args], cwd=cwd, timeout_seconds=timeout_seconds)

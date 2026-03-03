@@ -41,6 +41,7 @@ Do not use deprecated command groups such as `project`, `feature`, or `orch`.
 ## Required Inputs
 
 Before execution, ensure there is a task spec file (`.json` or `.yaml`) with at least:
+YAML support requires PyYAML to be installed (for example `uv add pyyaml` or `pip install pyyaml`); without it, `.yaml` specs can fail at runtime:
 
 - `project_name`
 - `feature`
@@ -65,7 +66,7 @@ Recommended fields:
 2. Never bypass `agvv` lifecycle commands with ad-hoc manual state transitions.
 3. Never run deprecated `agvv` subcommands.
 4. Retry only through `agvv task retry`.
-5. Cleanup finished or abandoned tasks through `agvv task cleanup`.
+5. Clean up finished or abandoned tasks through `agvv task cleanup`.
 6. Prefer explicit `task_id` in automation.
 7. Use explicit `base_dir` in automation contexts.
 

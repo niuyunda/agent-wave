@@ -105,6 +105,8 @@ def init_project(project_name: str, base_dir: Path) -> LayoutPaths:
             run_git(["-C", str(paths.repo_dir), "worktree", "add", "-b", "main", str(paths.main_dir)])
 
     if not run_git_success(["-C", str(paths.main_dir), "rev-parse", "--verify", "HEAD"]):
+        run_git(["-C", str(paths.main_dir), "config", "user.email", "agvv@example.invalid"])
+        run_git(["-C", str(paths.main_dir), "config", "user.name", "Agent Wave"])
         run_git(["-C", str(paths.main_dir), "commit", "--allow-empty", "-m", "init: bare repo setup"])
 
     return paths

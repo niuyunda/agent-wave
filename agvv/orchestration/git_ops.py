@@ -25,8 +25,11 @@ def commit_and_push_branch(
 
     status = runner(["status", "--porcelain"], cwd=worktree).stdout.strip()
     if status:
+        normalized_message = (commit_message or "").strip()
+        if not normalized_message:
+            raise AgvvError("commit message is required")
         runner(["add", "-A"], cwd=worktree)
-        runner(["commit", "-m", commit_message], cwd=worktree)
+        runner(["commit", "-m", normalized_message], cwd=worktree)
 
     ahead_raw = runner(["rev-list", "--count", f"{base_branch}..{feature}"], cwd=worktree).stdout.strip()
     if int(ahead_raw or "0") <= 0:

@@ -167,6 +167,9 @@ class TaskSpec:
     def to_payload(self) -> dict[str, Any]:
         """Serialize this spec into JSON-safe primitives."""
 
+        extra_args = list(self.agent_extra_args) if self.agent_extra_args is not None else []
+        params = dict(self.params) if self.params is not None else {}
+        create_dirs = list(self.create_dirs) if self.create_dirs is not None else []
         return {
             "task_id": self.task_id,
             "project_name": self.project_name,
@@ -175,18 +178,18 @@ class TaskSpec:
             "agent": {
                 "provider": self.agent or "codex",
                 "model": self.agent_model,
-                "extra_args": self.agent_extra_args or [],
+                "extra_args": list(extra_args),
             },
             "agent_model": self.agent_model,
-            "agent_extra_args": self.agent_extra_args or [],
+            "agent_extra_args": extra_args,
             "repo": self.repo,
             "base_dir": str(self.base_dir),
             "from_branch": self.from_branch,
             "session": self.session,
             "ticket": self.ticket,
             "task_doc": str(self.task_doc) if self.task_doc else None,
-            "params": self.params or {},
-            "create_dirs": self.create_dirs or [],
+            "params": params,
+            "create_dirs": create_dirs,
             "pr_title": self.pr_title,
             "pr_body": self.pr_body,
             "pr_base": self.pr_base,

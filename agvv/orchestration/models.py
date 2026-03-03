@@ -50,5 +50,5 @@ class PrNextAction:
 class PrFeedbackSummary:
     """Condensed actionable/non-actionable feedback summary for a PR."""
 
-    actionable: list[str]
-    skipped: list[str]
+    actionable: tuple[str, ...]
+    skipped: tuple[str, ...]

@@ -101,7 +101,15 @@ def handle_pr_cycle(
             return cleanup_task_fn(task.id, store.path, False)
         return closed
 
-    feedback = port.summarize_pr_feedback(task.repo, task.pr_number)
+    try:
+        feedback = port.summarize_pr_feedback(task.repo, task.pr_number)
+    except Exception as exc:
+        return mark_failed(
+            store,
+            task,
+            "pr.feedback.fetch",
+            f"Failed to summarize PR feedback for {task.repo}#{task.pr_number}: {exc}",
+        )
     if task.repair_cycles >= task.spec.max_retry_cycles:
         return mark_failed(
             store,
@@ -114,13 +122,24 @@ def handle_pr_cycle(
     if not worktree.exists():
         return mark_failed(store, task, "pr.retry", f"Worktree missing: {worktree}")
 
-    feedback_path = port.write_pr_feedback_file(
-        worktree=worktree,
-        task_id=task.id,
-        pr_number=task.pr_number,
-        actionable=feedback.actionable,
-        skipped=feedback.skipped,
-    )
+    try:
+        feedback_path = port.write_pr_feedback_file(
+            worktree=worktree,
+            task_id=task.id,
+            pr_number=task.pr_number,
+            actionable=feedback.actionable,
+            skipped=feedback.skipped,
+        )
+    except Exception as exc:
+        return mark_failed(
+            store,
+            task,
+            "pr.feedback.write",
+            (
+                f"Failed to write PR feedback file for {task.repo}#{task.pr_number} "
+                f"at worktree={worktree}: {exc}"
+            ),
+        )
 
     if port.tmux_session_exists(task.session):
         return store.update_task(task.id, state=TaskState.CODING)

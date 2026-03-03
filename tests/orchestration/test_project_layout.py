@@ -16,6 +16,8 @@ def _git(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
 def _create_existing_repo(path: Path, branch: str = "main") -> Path:
     path.mkdir(parents=True, exist_ok=True)
     _git(["init", "-b", branch], cwd=path)
+    _git(["config", "user.email", "test@example.com"], cwd=path)
+    _git(["config", "user.name", "Test User"], cwd=path)
     (path / "README.md").write_text("hello\n", encoding="utf-8")
     _git(["add", "README.md"], cwd=path)
     _git(["commit", "-m", "init repo"], cwd=path)

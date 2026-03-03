@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -55,7 +56,11 @@ def execute_task_status(
     lines: list[str] = []
     for task in tasks:
         pr_value = str(task.pr_number) if task.pr_number is not None else "-"
-        error_value = task.last_error or "-"
+        if task.last_error is None:
+            error_value = "-"
+        else:
+            normalized_error = re.sub(r"[\r\n\t]+", " ", task.last_error)
+            error_value = re.sub(r"\s+", " ", normalized_error).strip() or "-"
         lines.append(
             f"{task.id}\t{task.state.value}\t{task.project_name}/{task.feature}\t"
             f"session={task.session}\tpr={pr_value}\tcycles={task.repair_cycles}\t"

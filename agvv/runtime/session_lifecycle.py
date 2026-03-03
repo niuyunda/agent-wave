@@ -21,10 +21,9 @@ def launch_coding_session(
 
     port = resolve_orchestration_port(orchestration_port)
 
-    if port.tmux_session_exists(task.session):
-        raise AgvvError(f"tmux session already exists: {task.session}")
-
     try:
+        if port.tmux_session_exists(task.session):
+            raise AgvvError(f"tmux session already exists: {task.session}")
         if fresh_setup:
             port.start_feature(
                 project_name=task.project_name,

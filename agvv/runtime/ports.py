@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, Sequence
 
 from agvv.shared.pr import PrStatus
 
@@ -23,8 +23,8 @@ class PrCheckResultView(Protocol):
 class PrFeedbackSummaryView(Protocol):
     """Minimal PR feedback summary consumed by runtime."""
 
-    actionable: list[str]
-    skipped: list[str]
+    actionable: Sequence[str]
+    skipped: Sequence[str]
 
 
 class OrchestrationPort(Protocol):
@@ -105,7 +105,7 @@ class OrchestrationPort(Protocol):
         worktree: Path,
         task_id: str,
         pr_number: int,
-        actionable: list[str],
-        skipped: list[str],
+        actionable: Sequence[str],
+        skipped: Sequence[str],
     ) -> Path:
         """Write PR feedback report to disk and return its path."""

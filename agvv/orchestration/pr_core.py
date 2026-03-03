@@ -32,6 +32,10 @@ def check_pr_status(
         payload = json.loads(run_cmd(cmd).stdout)
     except json.JSONDecodeError as exc:
         raise AgvvError(f"Invalid JSON from gh pr view for {repo}#{pr_number}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise AgvvError(
+            f"Invalid gh pr view payload for {repo}#{pr_number}: expected object, got {type(payload).__name__}: {payload!r}"
+        )
 
     state = str(payload.get("state", ""))
     merged_at = payload.get("mergedAt")
@@ -114,6 +118,10 @@ def summarize_pr_feedback(
         payload = json.loads(run_cmd(cmd).stdout)
     except json.JSONDecodeError as exc:
         raise AgvvError(f"Invalid JSON from gh pr comments for {repo}#{pr_number}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise AgvvError(
+            f"Invalid gh pr comments payload for {repo}#{pr_number}: expected object, got {type(payload).__name__}: {payload!r}"
+        )
 
     actionable: list[str] = []
     skipped: list[str] = []
@@ -139,4 +147,4 @@ def summarize_pr_feedback(
         if "actionable comments posted" in lower or "potential issue" in lower:
             actionable.append(body.splitlines()[0][:180])
 
-    return PrFeedbackSummary(actionable=actionable, skipped=skipped)
+    return PrFeedbackSummary(actionable=tuple(actionable), skipped=tuple(skipped))

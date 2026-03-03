@@ -28,7 +28,10 @@ def load_task_spec(path: Path) -> TaskSpec:
             raise AgvvError(
                 "Spec file is not valid JSON. Install PyYAML to use YAML spec files."
             ) from exc
-        payload = yaml.safe_load(raw)
+        try:
+            payload = yaml.safe_load(raw)
+        except yaml.YAMLError as exc:
+            raise AgvvError("Spec file is not valid JSON or YAML.") from exc
 
     if not isinstance(payload, dict):
         raise AgvvError("Task spec must be an object.")

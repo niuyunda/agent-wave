@@ -170,10 +170,36 @@ class TaskStore:
                         json.dumps(spec.to_payload(), sort_keys=True),
                     ),
                 )
+                self._add_event_conn(
+                    conn,
+                    spec.task_id,
+                    "info",
+                    "task.create",
+                    "Task created",
+                    {"state": TaskState.PENDING.value},
+                )
             except sqlite3.IntegrityError as exc:
                 raise AgvvError(f"Task id already exists: {spec.task_id}") from exc
-        self.add_event(spec.task_id, "info", "task.create", "Task created", {"state": TaskState.PENDING.value})
         return self.get_task(spec.task_id)
+
+    @staticmethod
+    def _add_event_conn(
+        conn: sqlite3.Connection,
+        task_id: str,
+        level: str,
+        step: str,
+        message: str,
+        meta: dict[str, Any] | None = None,
+    ) -> None:
+        """Append a task event using the provided open connection."""
+
+        conn.execute(
+            """
+            INSERT INTO task_events (task_id, created_at, level, step, message, meta_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (task_id, now_iso(), level, step, message, json.dumps(meta or {}, sort_keys=True)),
+        )
 
     def add_event(
         self,
@@ -186,13 +212,7 @@ class TaskStore:
         """Append a structured event record for task auditing."""
 
         with self._connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO task_events (task_id, created_at, level, step, message, meta_json)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (task_id, now_iso(), level, step, message, json.dumps(meta or {}, sort_keys=True)),
-            )
+            self._add_event_conn(conn, task_id, level, step, message, meta)
 
     def update_task(
         self,
@@ -208,34 +228,35 @@ class TaskStore:
         """Update selected task fields and return the latest snapshot."""
 
         current = self.get_task(task_id)
-        next_state = state or current.state
-        values: dict[str, Any] = {
-            "state": next_state.value,
-            "updated_at": now_iso(),
-            "pr_number": current.pr_number if pr_number is _UNSET else pr_number,
-            "repair_cycles": current.repair_cycles if repair_cycles is _UNSET else repair_cycles,
-            "last_error": current.last_error if last_error is _UNSET else last_error,
-            "started_at": current.started_at if started_at is _UNSET else started_at,
-            "finished_at": current.finished_at if finished_at is _UNSET else finished_at,
-        }
+        now = now_iso()
+        set_clauses = ["updated_at = ?"]
+        params: list[Any] = [now]
+        if state is not None:
+            set_clauses.append("state = ?")
+            params.append(state.value)
+        if pr_number is not _UNSET:
+            set_clauses.append("pr_number = ?")
+            params.append(pr_number)
+        if repair_cycles is not _UNSET:
+            set_clauses.append("repair_cycles = ?")
+            params.append(repair_cycles)
+        if last_error is not _UNSET:
+            set_clauses.append("last_error = ?")
+            params.append(last_error)
+        if started_at is not _UNSET:
+            set_clauses.append("started_at = ?")
+            params.append(started_at)
+        if finished_at is not _UNSET:
+            set_clauses.append("finished_at = ?")
+            params.append(finished_at)
+
         with self._connection() as conn:
-            conn.execute(
-                """
-                UPDATE tasks
-                SET state = ?, updated_at = ?, pr_number = ?, repair_cycles = ?, last_error = ?, started_at = ?, finished_at = ?
-                WHERE id = ?
-                """,
-                (
-                    values["state"],
-                    values["updated_at"],
-                    values["pr_number"],
-                    values["repair_cycles"],
-                    values["last_error"],
-                    values["started_at"],
-                    values["finished_at"],
-                    task_id,
-                ),
+            cursor = conn.execute(
+                f"UPDATE tasks SET {', '.join(set_clauses)} WHERE id = ? AND updated_at = ?",
+                (*params, task_id, current.updated_at),
             )
+            if cursor.rowcount == 0:
+                raise AgvvError(f"Task update conflict for {task_id}; retry operation.")
         return self.get_task(task_id)
 
     def get_task(self, task_id: str) -> TaskSnapshot:

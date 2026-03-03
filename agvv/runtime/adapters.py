@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Sequence
 
 import agvv.orchestration as orchestration
 from agvv.orchestration.models import PrFeedbackSummary
@@ -122,15 +123,15 @@ class DefaultOrchestrationPort:
         worktree: Path,
         task_id: str,
         pr_number: int,
-        actionable: list[str],
-        skipped: list[str],
+        actionable: Sequence[str],
+        skipped: Sequence[str],
     ) -> Path:
         """Persist PR feedback details to a task-scoped markdown file."""
         return orchestration.write_pr_feedback_file(
             worktree=worktree,
             task_id=task_id,
             pr_number=pr_number,
-            feedback=PrFeedbackSummary(actionable=actionable, skipped=skipped),
+            feedback=PrFeedbackSummary(actionable=tuple(actionable), skipped=tuple(skipped)),
         )
 
 
@@ -140,4 +141,4 @@ DEFAULT_ORCHESTRATION_PORT: OrchestrationPort = DefaultOrchestrationPort()
 def resolve_orchestration_port(port: OrchestrationPort | None = None) -> OrchestrationPort:
     """Resolve explicit orchestration port override or use default adapter."""
 
-    return port or DEFAULT_ORCHESTRATION_PORT
+    return DEFAULT_ORCHESTRATION_PORT if port is None else port

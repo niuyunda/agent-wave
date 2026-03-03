@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import NoReturn
 
 import typer
 
@@ -10,7 +11,7 @@ from agvv.shared.errors import AgvvError
 from agvv.runtime.models import TaskState
 
 
-def exit_with_agvv_error(exc: AgvvError) -> None:
+def exit_with_agvv_error(exc: AgvvError) -> NoReturn:
     """Render operational errors to stderr and exit non-zero."""
 
     typer.secho(str(exc), err=True, fg=typer.colors.RED)

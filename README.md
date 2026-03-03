@@ -10,9 +10,9 @@ This README focuses on how users and agents should use the skill in daily work.
 
 ## Who This Is For
 
-- You run coding tasks with AI agents.
-- You want safer parallel work (no direct edits in main branch workspace).
-- You want a simple command flow to run, monitor, retry, and clean tasks.
+- Designed for coding tasks run by AI agents.
+- Safer parallel work without direct edits in the main branch workspace.
+- Simple command flow to run, monitor, retry, and clean tasks.
 
 ## What The Skill Does
 
@@ -172,12 +172,12 @@ Very common fields:
 
 When this project is used as a skill, a practical workflow is:
 
-1. Agent receives task requirement.
-2. Agent writes a `task.json` spec.
-3. Agent runs `agvv task run`.
-4. Agent (or automation) runs `agvv daemon run --once` on a schedule.
-5. Agent checks `agvv task status`.
-6. If needed, agent runs `agvv task retry` or `agvv task cleanup`.
+1. Receive a task requirement.
+2. Create a `task.json` spec.
+3. Run `agvv task run`.
+4. Schedule `agvv daemon run --once` (manually or through automation).
+5. Check `agvv task status`.
+6. Run `agvv task retry` or `agvv task cleanup` when needed.
 
 ## State Meanings (Simple)
 

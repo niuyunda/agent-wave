@@ -146,6 +146,10 @@ def daemon_run_loop(
 
     if interval_seconds <= 0:
         raise AgvvError("interval_seconds must be > 0")
+    if max_loops is not None and max_loops < 0:
+        raise AgvvError("max_loops must be >= 0")
+    if max_loops == 0:
+        return 0
 
     loops = 0
     port = resolve_orchestration_port(orchestration_port)

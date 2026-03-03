@@ -26,6 +26,10 @@ def test_resolve_optional_path_resolves_user_path(monkeypatch: pytest.MonkeyPatc
     assert resolved == Path("/tmp/agvv-home/tasks.db").resolve()
 
 
+def test_resolve_optional_path_returns_none_for_none_input() -> None:
+    assert resolve_optional_path(None) is None
+
+
 def test_exit_with_agvv_error_raises_typer_exit() -> None:
     with pytest.raises(typer.Exit) as exc_info:
         exit_with_agvv_error(AgvvError("boom"))

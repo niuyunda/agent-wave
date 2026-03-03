@@ -16,3 +16,6 @@ def test_runtime_api_reexports_expected_symbols() -> None:
         "list_task_statuses",
     }
     assert expected.issubset(set(runtime_api.__all__))
+    for name in expected:
+        assert hasattr(runtime_api, name)
+        assert getattr(runtime_api, name) is not None
