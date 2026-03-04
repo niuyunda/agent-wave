@@ -104,6 +104,7 @@ agvv project init --project-name demo [--base-dir ~/code]
 ```
 
 常见用途：在启动任务前创建受管的裸仓库 + `main` worktree 结构。
+如果任务启动时缺失该布局，`agvv task run` 会自动执行初始化流程。
 
 ### `project adopt`
 
@@ -172,12 +173,13 @@ agvv daemon run [--db-path ./tasks.db] [--once] [--interval-seconds 30] [--max-l
 - `project_name`
 - `feature`
 - `repo`
+- `base_dir`
 
 高频字段：
 
 - `task_id`：自定义任务 ID（不填会自动生成）
 - `task_id` 格式：仅允许字母、数字、`_`、`-`
-- `base_dir`：项目/worktree 根目录（默认 `~/code`）
+- `base_dir`：项目/worktree 根目录（必填）
 - `from_branch`：起始分支（默认 `main`）
 - `session`：tmux session 名称覆盖（默认 `agvv-<task_id>`）
 - `agent`：

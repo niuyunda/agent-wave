@@ -208,7 +208,7 @@ class TaskSpec:
         if not isinstance(payload, dict):
             raise AgvvError("Task spec root must be an object.")
 
-        required = ["project_name", "feature", "repo"]
+        required = ["project_name", "feature", "repo", "base_dir"]
         missing = [key for key in required if not payload.get(key)]
         if missing:
             raise AgvvError(f"Task spec missing required fields: {', '.join(missing)}")
@@ -260,7 +260,7 @@ class TaskSpec:
             feature=str(payload["feature"]),
             agent_cmd=agent_cmd,
             repo=str(payload["repo"]),
-            base_dir=Path(str(payload.get("base_dir", "~/code"))).expanduser().resolve(),
+            base_dir=Path(str(payload["base_dir"])).expanduser().resolve(),
             from_branch=str(payload.get("from_branch", "main")),
             session=(str(payload["session"]) if payload.get("session") else None),
             agent=provider,

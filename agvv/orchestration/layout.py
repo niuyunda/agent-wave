@@ -180,11 +180,9 @@ def start_feature(
             f"Internal error: missing feature directory for project={project_name}, base_dir={base_dir}, feature={feature}."
         )
 
+    # Task launch should be resilient: initialize the standard layout on demand.
     if not paths.repo_dir.exists() or not paths.main_dir.exists():
-        raise AgvvError(
-            f"Project not initialized at {paths.project_dir}. "
-            "Initialize the project layout before starting a feature."
-        )
+        init_project(project_name, base_dir)
 
     if paths.feature_dir.exists():
         raise AgvvError(f"Feature worktree path already exists: {paths.feature_dir}")

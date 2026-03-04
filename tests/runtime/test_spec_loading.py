@@ -100,3 +100,17 @@ def test_load_task_spec_rejects_invalid_json_without_yaml_support(
     monkeypatch.setattr("builtins.__import__", _fake_import)
     with pytest.raises(AgvvError, match="Install PyYAML"):
         load_task_spec(spec_path)
+
+
+def test_load_task_spec_requires_base_dir(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path / "task-missing-base-dir.json",
+        {
+            "task_id": "task_missing_base_dir",
+            "project_name": "demo",
+            "feature": "feat_missing_base_dir",
+            "repo": "owner/repo",
+        },
+    )
+    with pytest.raises(AgvvError, match="Task spec missing required fields: base_dir"):
+        load_task_spec(spec_path)
