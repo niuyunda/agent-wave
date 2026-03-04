@@ -41,7 +41,6 @@ Use only these commands:
 If running from source checkout (not tool-installed), use the `uv run agvv ...` form.
 
 Do not use deprecated command groups such as `feature` or `orch`.
-
 ## Required Inputs
 
 Before execution, ensure there is a task spec file (`.json` or `.yaml`) with at least:

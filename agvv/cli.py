@@ -8,12 +8,14 @@ import typer
 
 from agvv.commands.common import exit_with_agvv_error, parse_task_state, resolve_optional_path
 from agvv.commands.daemon import execute_daemon_run
+from agvv.commands.project import execute_project_adopt, execute_project_init
 from agvv.commands.task import (
     execute_task_cleanup,
     execute_task_retry,
     execute_task_run,
     execute_task_status,
 )
+from agvv.orchestration import adopt_project, init_project
 from agvv.runtime import (
     cleanup_task,
     daemon_run_loop,
@@ -27,9 +29,53 @@ from agvv.shared.errors import AgvvError
 app = typer.Typer(help="Agent Wave task orchestration CLI.")
 task_app = typer.Typer(help="Task state-machine orchestration operations.")
 daemon_app = typer.Typer(help="Task monitor daemon operations.")
+project_app = typer.Typer(help="Project layout operations.")
 
 app.add_typer(task_app, name="task")
 app.add_typer(daemon_app, name="daemon")
+app.add_typer(project_app, name="project")
+
+
+@project_app.command("init")
+def project_init(
+    project_name: Annotated[str, typer.Option("--project-name", help="Project layout name.")],
+    base_dir: Annotated[str, typer.Option("--base-dir", help="Base directory for project layout.")] = "~/code",
+) -> None:
+    """Initialize a project layout."""
+
+    try:
+        line = execute_project_init(
+            project_name=project_name,
+            base_dir=base_dir,
+            init_project=init_project,
+            resolve_optional_path=resolve_optional_path,
+        )
+    except AgvvError as exc:
+        exit_with_agvv_error(exc)
+
+    typer.echo(line)
+
+
+@project_app.command("adopt")
+def project_adopt(
+    project_name: Annotated[str, typer.Option("--project-name", help="Project layout name.")],
+    repo: Annotated[str, typer.Option("--repo", help="Path to existing git repository.")],
+    base_dir: Annotated[str, typer.Option("--base-dir", help="Base directory for project layout.")] = "~/code",
+) -> None:
+    """Adopt an existing git repository into project layout."""
+
+    try:
+        line = execute_project_adopt(
+            project_name=project_name,
+            repo=repo,
+            base_dir=base_dir,
+            adopt_project=adopt_project,
+            resolve_optional_path=resolve_optional_path,
+        )
+    except AgvvError as exc:
+        exit_with_agvv_error(exc)
+
+    typer.echo(line)
 
 
 @task_app.command("run")
