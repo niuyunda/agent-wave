@@ -35,11 +35,13 @@ Agent Wave 是一个给编码 Agent 使用的工具。
 ## 安装与检查
 
 ```bash
-uv sync --dev
-uv run agvv --help
+uv tool install agvv
+agvv --help
 ```
 
 如果你把它当作 skill 使用，请确保 Agent 的运行环境里可以直接调用 `agvv`。
+如果你在本仓库本地开发，请使用 `uv sync --dev`，并通过 `uv run agvv ...` 运行命令。
+如果要使用 YAML 任务规格文件，请先安装 PyYAML（例如：`uv add pyyaml`）。
 
 ## 5 分钟快速开始
 
@@ -72,7 +74,7 @@ uv run agvv --help
 ### 2）启动任务
 
 ```bash
-uv run agvv task run --spec ./task.json
+agvv task run --spec ./task.json
 ```
 
 输出中会包含 task id、状态和 tmux session 名称。
@@ -80,18 +82,38 @@ uv run agvv task run --spec ./task.json
 ### 3）查看状态
 
 ```bash
-uv run agvv task status
+agvv task status
 ```
 
 ### 4）执行一次调度
 
 ```bash
-uv run agvv daemon run --once
+agvv daemon run --once
 ```
 
 这是 skill 的核心循环：检查活跃任务并推进状态。
 
 ## 命令说明（面向使用者）
+
+### `project init`
+
+初始化 Agent Wave 项目布局：
+
+```bash
+agvv project init --project-name demo [--base-dir ~/code]
+```
+
+常见用途：在启动任务前创建受管的裸仓库 + `main` worktree 结构。
+
+### `project adopt`
+
+把已有本地 git 仓库接入 Agent Wave 布局：
+
+```bash
+agvv project adopt --project-name demo --repo /path/to/repo [--base-dir ~/code]
+```
+
+常见用途：把已有项目迁移为 Agent Wave 管理的 worktree 布局。
 
 ### `task run`
 
@@ -154,15 +176,23 @@ agvv daemon run [--db-path ./tasks.db] [--once] [--interval-seconds 30] [--max-l
 高频字段：
 
 - `task_id`：自定义任务 ID（不填会自动生成）
+- `task_id` 格式：仅允许字母、数字、`_`、`-`
 - `base_dir`：项目/worktree 根目录（默认 `~/code`）
 - `from_branch`：起始分支（默认 `main`）
+- `session`：tmux session 名称覆盖（默认 `agvv-<task_id>`）
 - `agent`：
-  - `provider`：`codex` 或 `claude_code`
+  - `provider`：`codex` 或 `claude_code`（也接受 `claude` / `claude-code`）
   - `model`：可选模型名
   - `extra_args`：可选参数列表
+- `agent_cmd`：可选完整命令覆盖（不填则按 provider/model/extra_args 自动生成）
+- `ticket`：可选外部需求单号，会写入任务上下文
+- `params`：可选键值参数，会写入任务上下文
 - `create_dirs`：预创建目录
 - `pr_title` / `pr_body`：PR 标题与描述
 - `task_doc`：可作为 PR 描述的文件路径
+- `pr_base`：PR 目标分支（默认与 `from_branch` 一致）
+- `branch_remote`：推送使用的远程名（默认 `origin`）
+- `commit_message`：最终提交时的自定义 commit message
 - `timeout_minutes`：超时时间
 - `max_retry_cycles`：PR 反馈最大自动修复轮次
 - `auto_cleanup`：合并/关闭/超时后自动清理
