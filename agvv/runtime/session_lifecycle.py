@@ -2,13 +2,59 @@
 
 from __future__ import annotations
 
-from agvv.runtime.adapters import resolve_orchestration_port
+from pathlib import Path
+from typing import TypedDict
+
+from agvv.runtime.adapters import DEFAULT_ORCHESTRATION_PORT as port
 from agvv.runtime.models import TaskState
-from agvv.runtime.ports import OrchestrationPort
 from agvv.runtime.prompting import agent_requires_tty, build_launch_command, write_launch_artifacts
 from agvv.runtime.store import TaskSnapshot, TaskStore, now_iso
 from agvv.runtime.task_helpers import feature_worktree_path, mark_failed
 from agvv.shared.errors import AgvvError
+
+
+class LaunchArtifacts(TypedDict):
+    """Paths to files written during agent session startup."""
+
+    prompt_path: Path
+    input_snapshot_path: Path
+    output_log_path: Path
+
+
+def start_tmux_agent(
+    store: TaskStore,
+    task: TaskSnapshot,
+    worktree: Path,
+    *,
+    event_step_prefix: str = "task.launch",
+) -> LaunchArtifacts:
+    """Start a tmux session running the coding agent and capture output.
+
+    Creates the tmux session, injects the prompt, and sets up pane logging
+    when the agent requires a TTY.  Returns typed artifact paths.
+
+    Raises on hard failures so callers can handle errors consistently.
+    """
+    artifacts: LaunchArtifacts = write_launch_artifacts(worktree=worktree, spec=task.spec)
+    launch_command = build_launch_command(
+        spec=task.spec,
+        prompt_path=artifacts["prompt_path"],
+        output_log_path=artifacts["output_log_path"],
+    )
+    port.tmux_new_session(task.session, worktree, launch_command)
+
+    if agent_requires_tty(task.spec):
+        try:
+            port.tmux_pipe_pane(task.session, artifacts["output_log_path"])
+        except Exception as exc:
+            store.add_event(
+                task.id,
+                "warning",
+                f"{event_step_prefix}.log_capture",
+                f"Failed to enable tmux pane log capture: {exc}",
+                {"session": task.session, "output_log_path": str(artifacts["output_log_path"])},
+            )
+    return artifacts
 
 
 def launch_coding_session(
@@ -16,11 +62,8 @@ def launch_coding_session(
     task: TaskSnapshot,
     *,
     fresh_setup: bool,
-    orchestration_port: OrchestrationPort | None = None,
 ) -> TaskSnapshot:
     """Ensure feature worktree exists and launch tmux coding session."""
-
-    port = resolve_orchestration_port(orchestration_port)
 
     try:
         if port.tmux_session_exists(task.session):
@@ -41,27 +84,10 @@ def launch_coding_session(
                 create_dirs=task.spec.create_dirs or [],
             )
 
-        worktree = feature_worktree_path(task, orchestration_port=port)
+        worktree = feature_worktree_path(task)
         if not worktree.exists():
             raise AgvvError(f"Feature worktree not found: {worktree}")
-        artifacts = write_launch_artifacts(worktree=worktree, spec=task.spec)
-        launch_command = build_launch_command(
-            spec=task.spec,
-            prompt_path=artifacts["prompt_path"],
-            output_log_path=artifacts["output_log_path"],
-        )
-        port.tmux_new_session(task.session, worktree, launch_command)
-        if agent_requires_tty(task.spec):
-            try:
-                port.tmux_pipe_pane(task.session, artifacts["output_log_path"])
-            except Exception as exc:
-                store.add_event(
-                    task.id,
-                    "warning",
-                    "task.launch.log_capture",
-                    f"Failed to enable tmux pane log capture: {exc}",
-                    {"session": task.session, "output_log_path": str(artifacts["output_log_path"])},
-                )
+        artifacts = start_tmux_agent(store, task, worktree, event_step_prefix="task.launch")
     except Exception as exc:
         return mark_failed(store, task, "task.launch", f"Failed to launch coding session: {exc}")
 

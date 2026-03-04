@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import re
 import shlex
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, ValidationError
 
 from agvv.shared.errors import AgvvError
 
@@ -23,14 +24,12 @@ _AGENT_PROVIDER_ALIASES = {
 
 def _generate_task_id(project_name: str, feature: str) -> str:
     """Generate runtime task id from project and feature."""
-
     stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S")
     return f"{project_name}-{feature}-{stamp}"
 
 
 class TaskState(str, Enum):
     """Lifecycle states for the task state machine."""
-
     PENDING = "pending"
     CODING = "coding"
     PR_OPEN = "pr_open"
@@ -43,125 +42,17 @@ class TaskState(str, Enum):
 
 
 TERMINAL_STATES = {
-    TaskState.PR_MERGED,
-    TaskState.PR_CLOSED,
-    TaskState.TIMED_OUT,
-    TaskState.CLEANED,
-    TaskState.FAILED,
-    TaskState.BLOCKED,
+    TaskState.PR_MERGED, TaskState.PR_CLOSED, TaskState.TIMED_OUT,
+    TaskState.CLEANED, TaskState.FAILED, TaskState.BLOCKED,
 }
 ACTIVE_STATES = {TaskState.PENDING, TaskState.CODING, TaskState.PR_OPEN}
 RECOVERABLE_RETRY_STATES = {
-    TaskState.FAILED,
-    TaskState.TIMED_OUT,
-    TaskState.BLOCKED,
-    TaskState.CODING,
+    TaskState.FAILED, TaskState.TIMED_OUT, TaskState.BLOCKED, TaskState.CODING,
 }
-
-
-def _coerce_bool(value: Any, default: bool) -> bool:
-    """Convert user-provided values into booleans with a default fallback."""
-
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"1", "true", "yes", "on"}:
-            return True
-        if lowered in {"0", "false", "no", "off"}:
-            return False
-    raise AgvvError(f"Invalid boolean value: {value!r}")
-
-
-def _coerce_int(value: Any, label: str, default: int, min_value: int = 0) -> int:
-    """Convert user-provided values into bounded integers."""
-
-    if value is None:
-        return default
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise AgvvError(f"{label} must be an integer, got: {value!r}") from exc
-    if parsed < min_value:
-        raise AgvvError(f"{label} must be >= {min_value}, got: {parsed}")
-    return parsed
-
-
-def _coerce_agent_extra_args(value: Any, label: str) -> list[str]:
-    """Validate agent extra args as a list of non-empty strings."""
-
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        raise AgvvError(f"{label} must be a list.")
-    parsed: list[str] = []
-    for item in value:
-        if not isinstance(item, str):
-            raise AgvvError(f"{label} must contain only strings.")
-        normalized = item.strip()
-        if not normalized:
-            raise AgvvError(f"{label} must not contain empty values.")
-        parsed.append(normalized)
-    return parsed
-
-
-def _coerce_string_list(value: Any, label: str) -> list[str]:
-    """Validate a string list field with non-empty normalized values."""
-
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        raise AgvvError(f"{label} must be a list.")
-    parsed: list[str] = []
-    for item in value:
-        if not isinstance(item, str):
-            raise AgvvError(f"{label} must contain only strings.")
-        normalized = item.strip()
-        if not normalized:
-            raise AgvvError(f"{label} must not contain empty values.")
-        parsed.append(normalized)
-    return parsed
-
-
-def _normalize_acceptance_criteria(value: Any) -> list[str]:
-    """Normalize acceptance criteria to a bounded machine-readable checklist."""
-
-    parsed = _coerce_string_list(value, "Task spec field 'acceptance_criteria'")
-    if not parsed:
-        return [
-            "Relevant tests/checks pass for changed scope.",
-            "Changed files and verification results are summarized.",
-        ]
-    if len(parsed) < 2 or len(parsed) > 5:
-        raise AgvvError("Task spec field 'acceptance_criteria' must contain 2-5 items.")
-    return parsed
-
-
-def _coerce_task_doc_path(value: Any, spec_dir: Path | None = None) -> Path | None:
-    """Normalize optional task_doc path from payload data.
-
-    Relative paths are resolved against ``spec_dir`` (the directory containing
-    the spec file) when provided, falling back to CWD otherwise.
-    """
-
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise AgvvError("Task spec field 'task_doc' must be a string path.")
-    normalized = value.strip()
-    if not normalized:
-        return None
-    p = Path(normalized).expanduser()
-    if not p.is_absolute() and spec_dir is not None:
-        return (spec_dir / p).resolve()
-    return p.resolve()
 
 
 def normalize_agent_provider(value: str | None) -> str:
     """Normalize provider aliases into canonical provider identifiers."""
-
     raw = (value or "codex").strip()
     if not raw:
         raw = "codex"
@@ -175,7 +66,6 @@ def normalize_agent_provider(value: str | None) -> str:
 
 def build_agent_command(provider: str, model: str | None, extra_args: list[str]) -> str:
     """Build a shell-safe command line for the configured coding agent."""
-
     if provider == "codex":
         parts = ["codex"]
     elif provider == "claude_code":
@@ -189,52 +79,129 @@ def build_agent_command(provider: str, model: str | None, extra_args: list[str])
     return shlex.join(parts)
 
 
-@dataclass(frozen=True)
-class TaskSpec:
+class TaskSpec(BaseModel):
     """Task spec consumed by the state machine."""
+    model_config = ConfigDict(frozen=True, validate_default=True, arbitrary_types_allowed=True)
 
-    task_id: str
-    project_name: str
-    feature: str
-    agent_cmd: str
+    project_name: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
+    feature: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
     repo: str
-    base_dir: Path
+    base_dir: Path = Field(default_factory=Path.cwd)
     from_branch: str = "main"
     session: str | None = None
     agent: str | None = "codex"
     agent_model: str | None = None
-    agent_extra_args: list[str] | None = None
+    agent_extra_args: list[str] = Field(default_factory=list)
     agent_non_interactive: bool = True
     ticket: str | None = None
     task_doc: Path | None = None
     requirements: str | None = None
-    constraints: list[str] | None = None
-    acceptance_criteria: list[str] | None = None
-    params: dict[str, str] | None = None
-    create_dirs: list[str] | None = None
+    constraints: list[str] = Field(default_factory=list)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    params: dict[str, str] = Field(default_factory=dict)
+    create_dirs: list[str] = Field(default_factory=list)
     pr_title: str | None = None
     pr_body: str | None = None
     pr_base: str = "main"
     branch_remote: str = "origin"
-    max_retry_cycles: int = 5
-    timeout_minutes: int = 240
+    max_retry_cycles: int = Field(default=5, ge=0)
+    timeout_minutes: int = Field(default=240, ge=1)
     auto_cleanup: bool = True
     keep_branch_on_cleanup: bool = False
     commit_message: str | None = None
 
+    task_id: str = ""
+    agent_cmd: str = ""
+    spec_dir__: Path | None = Field(default=None, exclude=True)
+
+    @field_validator("project_name", "feature", "repo", mode="before")
+    @classmethod
+    def check_non_empty(cls, v: Any) -> str:
+        if v is None or str(v).strip() == "":
+            raise ValueError("Must be a non-empty string")
+        v_str = str(v).strip()
+        if v_str in ("main", "repo.git"):
+            raise ValueError(f"Value '{v_str}' is reserved.")
+        return v_str
+
+    @field_validator("constraints", "agent_extra_args", "create_dirs", mode="before")
+    @classmethod
+    def sanitize_string_list(cls, v: Any) -> list[str]:
+        if v is None:
+            return []
+        if isinstance(v, str):
+            v = [v]
+        if not isinstance(v, list):
+            raise ValueError("Must be a list")
+        parsed = []
+        for item in v:
+            item_str = str(item).strip() if item is not None else ""
+            if not item_str:
+                raise ValueError("Must contain only non-empty strings")
+            parsed.append(item_str)
+        return parsed
+
+    @field_validator("acceptance_criteria", mode="before")
+    @classmethod
+    def validate_ac(cls, v: Any) -> list[str]:
+        parsed = cls.sanitize_string_list(v)
+        if not parsed:
+            return [
+                "Relevant tests/checks pass for changed scope.",
+                "Changed files and verification results are summarized.",
+            ]
+        if len(parsed) < 2 or len(parsed) > 5:
+            raise ValueError("must contain 2-5 items")
+        return parsed
+
+    @model_validator(mode="before")
+    @classmethod
+    def prepare_data(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            raise ValueError("Task spec must be an object.")
+            
+        task_doc = data.get("task_doc")
+        if task_doc is not None:
+            if not isinstance(task_doc, str) or not task_doc.strip().lower().endswith(".md"):
+                raise ValueError("task_doc must be a Markdown (.md) file path")
+            
+            p = Path(task_doc.strip()).expanduser()
+            spec_dir = data.get("spec_dir__")
+            if not p.is_absolute() and spec_dir:
+                p = (spec_dir / p).resolve()
+            else:
+                p = p.resolve()
+            data["task_doc"] = p
+
+        if "base_dir" in data and data["base_dir"]:
+            data["base_dir"] = Path(str(data["base_dir"])).expanduser().resolve()
+
+        if "pr_base" not in data and "from_branch" in data:
+            data["pr_base"] = data.get("from_branch", "main")
+            
+        return data
+
+    @model_validator(mode="after")
+    def compute_fields(self) -> TaskSpec:
+        agent_provider = normalize_agent_provider(self.agent)
+        object.__setattr__(self, "agent", agent_provider)
+
+        if not self.task_id:
+            object.__setattr__(self, "task_id", _generate_task_id(self.project_name, self.feature))
+        
+        if not self.agent_cmd:
+            cmd = build_agent_command(agent_provider, self.agent_model, self.agent_extra_args)
+            object.__setattr__(self, "agent_cmd", cmd)
+            
+        return self
+
     def normalized_session(self) -> str:
         """Return a deterministic tmux session name for the task."""
-
         return self.session or f"agvv-{self.task_id}"
 
     def to_payload(self) -> dict[str, Any]:
         """Serialize this spec into JSON-safe primitives."""
-
-        extra_args = list(self.agent_extra_args) if self.agent_extra_args is not None else []
-        params = dict(self.params) if self.params is not None else {}
-        create_dirs = list(self.create_dirs) if self.create_dirs is not None else []
-        constraints = list(self.constraints) if self.constraints is not None else []
-        acceptance_criteria = list(self.acceptance_criteria) if self.acceptance_criteria is not None else []
+        # Note: Pydantic's model_dump is cleaner, but this maintains exactly the old output payload keys/values.
         return {
             "task_id": self.task_id,
             "project_name": self.project_name,
@@ -243,10 +210,10 @@ class TaskSpec:
             "agent": {
                 "provider": self.agent or "codex",
                 "model": self.agent_model,
-                "extra_args": list(extra_args),
+                "extra_args": list(self.agent_extra_args),
             },
             "agent_model": self.agent_model,
-            "agent_extra_args": extra_args,
+            "agent_extra_args": list(self.agent_extra_args),
             "agent_non_interactive": self.agent_non_interactive,
             "repo": self.repo,
             "base_dir": str(self.base_dir),
@@ -255,10 +222,10 @@ class TaskSpec:
             "ticket": self.ticket,
             "task_doc": str(self.task_doc) if self.task_doc else None,
             "requirements": self.requirements,
-            "constraints": constraints,
-            "acceptance_criteria": acceptance_criteria,
-            "params": params,
-            "create_dirs": create_dirs,
+            "constraints": list(self.constraints),
+            "acceptance_criteria": list(self.acceptance_criteria),
+            "params": dict(self.params),
+            "create_dirs": list(self.create_dirs),
             "pr_title": self.pr_title,
             "pr_body": self.pr_body,
             "pr_base": self.pr_base,
@@ -272,70 +239,66 @@ class TaskSpec:
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any], *, spec_dir: Path | None = None) -> TaskSpec:
-        """Build a validated ``TaskSpec`` from untyped JSON payload.
+        """Build a validated TaskSpec from a user-authored spec JSON file.
 
-        Args:
-            payload: Parsed JSON object from the spec file.
-            spec_dir: Directory of the spec file, used to resolve relative
-                paths (e.g. ``task_doc``). When ``None``, relative paths fall
-                back to CWD resolution.
+        Runtime-controlled fields (agent provider, task_id, from_branch) are
+        reset to their canonical defaults so the spec file cannot lock in
+        execution-time decisions that belong to the CLI or daemon.
         """
-
         if not isinstance(payload, dict):
             raise AgvvError("Task spec root must be an object.")
 
-        required = ["project_name", "feature", "repo"]
-        missing = [key for key in required if not payload.get(key)]
-        if missing:
-            raise AgvvError(f"Task spec missing required fields: {', '.join(missing)}")
+        payload = payload.copy()
+        if spec_dir:
+            payload["spec_dir__"] = spec_dir
 
-        task_id = _generate_task_id(str(payload["project_name"]), str(payload["feature"]))
+        # Runtime-controlled fields: always reset when loading from spec file.
+        payload["agent"] = "codex"
+        payload["agent_model"] = None
+        payload.pop("task_id", None)      # Regenerated from project+feature+timestamp
+        payload.pop("agent_cmd", None)    # Recomputed by model_validator
+        payload["from_branch"] = "main"   # Always base off main from fresh spec
 
-        params = payload.get("params") or {}
-        if not isinstance(params, dict):
-            raise AgvvError("Task spec field 'params' must be an object.")
+        # Spec files must provide at least one instruction source.
+        if not payload.get("task_doc") and not payload.get("requirements"):
+            raise AgvvError(
+                "Spec must include 'task_doc' (a Markdown file path) or 'requirements' (a text string)."
+            )
 
-        create_dirs = payload.get("create_dirs") or []
-        if not isinstance(create_dirs, list):
-            raise AgvvError("Task spec field 'create_dirs' must be a list.")
-        constraints = _coerce_string_list(payload.get("constraints"), "Task spec field 'constraints'")
-        acceptance_criteria = _normalize_acceptance_criteria(payload.get("acceptance_criteria"))
-        requirements = str(payload["requirements"]).strip() if payload.get("requirements") else None
+        try:
+            return cls.model_validate(payload)
+        except ValidationError as e:
+            raise AgvvError(f"Validation error: {e}") from e
 
-        # Runtime agent selection is controlled by CLI flags (`task run --agent`).
-        provider = "codex"
-        model = None
-        extra_args: list[str] = _coerce_agent_extra_args(payload.get("agent_extra_args"), "Task spec field 'agent_extra_args'")
-        agent_cmd = build_agent_command(provider=provider, model=model, extra_args=extra_args)
+    @classmethod
+    def from_db_payload(cls, payload: dict[str, Any]) -> TaskSpec:
+        """Reconstruct a TaskSpec from a stored DB spec_json payload.
 
-        task_doc = _coerce_task_doc_path(payload.get("task_doc"), spec_dir=spec_dir)
-        return cls(
-            task_id=task_id,
-            project_name=str(payload["project_name"]),
-            feature=str(payload["feature"]),
-            agent_cmd=agent_cmd,
-            repo=str(payload["repo"]),
-            base_dir=Path(str(payload.get("base_dir") or Path.cwd())).expanduser().resolve(),
-            from_branch="main",
-            session=(str(payload["session"]) if payload.get("session") else None),
-            agent=provider,
-            agent_model=model,
-            agent_extra_args=extra_args,
-            agent_non_interactive=_coerce_bool(payload.get("agent_non_interactive"), default=True),
-            ticket=(str(payload["ticket"]) if payload.get("ticket") else None),
-            task_doc=task_doc,
-            requirements=requirements,
-            constraints=constraints,
-            acceptance_criteria=acceptance_criteria,
-            params={str(k): str(v) for k, v in params.items()},
-            create_dirs=[str(item) for item in create_dirs],
-            pr_title=(str(payload["pr_title"]) if payload.get("pr_title") else None),
-            pr_body=(str(payload["pr_body"]) if payload.get("pr_body") else None),
-            pr_base=str(payload.get("pr_base", payload.get("from_branch", "main"))),
-            branch_remote=str(payload.get("branch_remote", "origin")),
-            max_retry_cycles=_coerce_int(payload.get("max_retry_cycles"), "max_retry_cycles", 5, min_value=0),
-            timeout_minutes=_coerce_int(payload.get("timeout_minutes"), "timeout_minutes", 240, min_value=1),
-            auto_cleanup=_coerce_bool(payload.get("auto_cleanup"), default=True),
-            keep_branch_on_cleanup=_coerce_bool(payload.get("keep_branch_on_cleanup"), default=False),
-            commit_message=(str(payload["commit_message"]) if payload.get("commit_message") else None),
-        )
+        Unlike ``from_payload``, this preserves all stored values (agent
+        provider, task_id, from_branch) so that DB round-trips are faithful.
+        The nested ``agent`` dict produced by ``to_payload`` is unwrapped back
+        into a flat string so the model validator can process it.
+        """
+        if not isinstance(payload, dict):
+            raise AgvvError("Task spec root must be an object.")
+
+        payload = payload.copy()
+
+        # to_payload() stores agent as {"provider": ..., "model": ..., "extra_args": [...]}.
+        # Unwrap it back to the flat fields the model expects.
+        agent_val = payload.get("agent")
+        if isinstance(agent_val, dict):
+            payload["agent"] = agent_val.get("provider", "codex")
+            if "agent_model" not in payload or payload["agent_model"] is None:
+                payload["agent_model"] = agent_val.get("model")
+            if not payload.get("agent_extra_args"):
+                payload["agent_extra_args"] = agent_val.get("extra_args", [])
+
+        # Drop agent_cmd so it is recomputed consistently from stored provider.
+        payload.pop("agent_cmd", None)
+
+        try:
+            return cls.model_validate(payload)
+        except ValidationError as e:
+            raise AgvvError(f"Validation error: {e}") from e
+

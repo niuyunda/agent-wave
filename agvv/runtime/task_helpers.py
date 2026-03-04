@@ -4,17 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agvv.runtime.adapters import resolve_orchestration_port
+from agvv.runtime.adapters import DEFAULT_ORCHESTRATION_PORT as port
 from agvv.runtime.models import TaskSpec, TaskState
-from agvv.runtime.ports import OrchestrationPort
 from agvv.runtime.store import TaskSnapshot, TaskStore, now_iso
 from agvv.shared.errors import AgvvError
 
 
-def feature_worktree_path(task: TaskSnapshot, *, orchestration_port: OrchestrationPort | None = None) -> Path:
+def feature_worktree_path(task: TaskSnapshot) -> Path:
     """Resolve feature worktree path for one runtime task."""
 
-    port = resolve_orchestration_port(orchestration_port)
     paths = port.layout_paths(task.project_name, task.spec.base_dir, feature=task.feature)
     if paths.feature_dir is None:
         raise AgvvError("Internal error: feature_dir missing")

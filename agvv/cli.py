@@ -2,26 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+import re
+from pathlib import Path
+from typing import Annotated, NoReturn
 
 import typer
 
-from agvv.commands.common import exit_with_agvv_error, parse_task_state, resolve_optional_path
-from agvv.commands.daemon import execute_daemon_run
-from agvv.commands.task import (
-    execute_task_cleanup,
-    execute_task_retry,
-    execute_task_run,
-    execute_task_status,
-)
-from agvv.runtime import (
-    cleanup_task,
-    daemon_run_loop,
-    daemon_run_once,
-    list_task_statuses,
-    retry_task,
-    run_task_from_spec,
-)
+from agvv.runtime.models import TaskState
+from agvv.runtime.core import cleanup_task, list_task_statuses, retry_task, run_task_from_spec
+from agvv.runtime.dispatcher import daemon_run_loop, daemon_run_once
 from agvv.shared.errors import AgvvError
 
 app = typer.Typer(help="Agent Wave task orchestration CLI.")
@@ -31,6 +20,35 @@ daemon_app = typer.Typer(help="Task monitor daemon operations.")
 app.add_typer(task_app, name="task")
 app.add_typer(daemon_app, name="daemon")
 
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+def _exit_error(exc: AgvvError) -> NoReturn:
+    typer.secho(str(exc), err=True, fg=typer.colors.RED)
+    raise typer.Exit(code=1) from exc
+
+
+def _resolve_path(path: str | None) -> Path | None:
+    return Path(path).expanduser().resolve() if path else None
+
+
+def _parse_state(value: str | None) -> TaskState | None:
+    if value is None:
+        return None
+    try:
+        return TaskState(value)
+    except ValueError as exc:
+        supported = ", ".join(item.value for item in TaskState)
+        raise typer.BadParameter(
+            f"Unsupported --state value '{value}'. Use one of: {supported}"
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
+# task run
+# ---------------------------------------------------------------------------
 
 @task_app.command("run")
 def task_run(
@@ -53,22 +71,26 @@ def task_run(
     ] = None,
 ) -> None:
     """Create and launch a task from spec."""
-
     try:
-        line = execute_task_run(
-            spec=spec,
-            db_path=db_path,
-            agent=agent,
+        task = run_task_from_spec(
+            spec_path=Path(spec).expanduser().resolve(),
+            db_path=_resolve_path(db_path),
+            agent_provider=agent,
             agent_non_interactive=agent_non_interactive,
-            project_dir=project_dir,
-            run_task_from_spec=run_task_from_spec,
-            resolve_optional_path=resolve_optional_path,
+            project_dir=_resolve_path(project_dir),
         )
     except AgvvError as exc:
-        exit_with_agvv_error(exc)
+        _exit_error(exc)
 
-    typer.echo(line)
+    typer.echo(
+        f"Task started: {task.id}\tstate={task.state.value}\t"
+        f"target={task.project_name}/{task.feature}\tsession={task.session}"
+    )
 
+
+# ---------------------------------------------------------------------------
+# task status
+# ---------------------------------------------------------------------------
 
 @task_app.command("status")
 def task_status(
@@ -77,22 +99,35 @@ def task_status(
     state: Annotated[str | None, typer.Option("--state", help="Filter by state value.")] = None,
 ) -> None:
     """List task state-machine runtime status."""
-
     try:
-        lines = execute_task_status(
-            db_path=db_path,
-            task_id=task_id,
-            state=state,
-            list_task_statuses=list_task_statuses,
-            resolve_optional_path=resolve_optional_path,
-            parse_task_state=parse_task_state,
-        )
+        tasks = list_task_statuses(db_path=_resolve_path(db_path), state=_parse_state(state))
     except AgvvError as exc:
-        exit_with_agvv_error(exc)
+        _exit_error(exc)
 
-    for line in lines:
-        typer.echo(line)
+    if task_id is not None:
+        tasks = [t for t in tasks if t.id == task_id]
 
+    if not tasks:
+        typer.echo("No tasks found.")
+        return
+
+    for task in tasks:
+        pr_value = str(task.pr_number) if task.pr_number is not None else "-"
+        if task.last_error is None:
+            error_value = "-"
+        else:
+            normalized = re.sub(r"[\r\n\t]+", " ", task.last_error)
+            error_value = re.sub(r"\s+", " ", normalized).strip() or "-"
+        typer.echo(
+            f"{task.id}\t{task.state.value}\t{task.project_name}/{task.feature}\t"
+            f"session={task.session}\tpr={pr_value}\tcycles={task.repair_cycles}\t"
+            f"error={error_value}\tupdated={task.updated_at}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# task retry
+# ---------------------------------------------------------------------------
 
 @task_app.command("retry")
 def task_retry(
@@ -108,21 +143,22 @@ def task_retry(
     ] = False,
 ) -> None:
     """Retry a task by launching a new coding session."""
-
     try:
-        line = execute_task_retry(
+        task = retry_task(
             task_id=task_id,
-            db_path=db_path,
+            db_path=_resolve_path(db_path),
             session=session,
             force_restart=force_restart,
-            retry_task=retry_task,
-            resolve_optional_path=resolve_optional_path,
         )
     except AgvvError as exc:
-        exit_with_agvv_error(exc)
+        _exit_error(exc)
 
-    typer.echo(line)
+    typer.echo(f"Task retried: {task.id}\tstate={task.state.value}\tsession={task.session}")
 
+
+# ---------------------------------------------------------------------------
+# task cleanup
+# ---------------------------------------------------------------------------
 
 @task_app.command("cleanup")
 def task_cleanup(
@@ -131,20 +167,17 @@ def task_cleanup(
     force: Annotated[bool, typer.Option("--force", help="Force cleanup (discard local changes).")] = False,
 ) -> None:
     """Cleanup task resources and mark task as cleaned."""
-
     try:
-        line = execute_task_cleanup(
-            task_id=task_id,
-            db_path=db_path,
-            force=force,
-            cleanup_task=cleanup_task,
-            resolve_optional_path=resolve_optional_path,
-        )
+        task = cleanup_task(task_id=task_id, db_path=_resolve_path(db_path), force=force)
     except AgvvError as exc:
-        exit_with_agvv_error(exc)
+        _exit_error(exc)
 
-    typer.echo(line)
+    typer.echo(f"Task cleaned: {task.id}\tstate={task.state.value}")
 
+
+# ---------------------------------------------------------------------------
+# daemon run
+# ---------------------------------------------------------------------------
 
 @daemon_app.command("run")
 def daemon_run(
@@ -155,26 +188,26 @@ def daemon_run(
     max_workers: Annotated[int, typer.Option("--max-workers", help="Max worker tasks per daemon pass.")] = 1,
 ) -> None:
     """Run task monitor daemon loop."""
-
+    resolved_db = _resolve_path(db_path)
     try:
-        lines = execute_daemon_run(
-            db_path=db_path,
-            interval_seconds=interval_seconds,
-            once=once,
-            max_loops=max_loops,
-            max_workers=max_workers,
-            daemon_run_once=daemon_run_once,
-            daemon_run_loop=daemon_run_loop,
-            resolve_optional_path=resolve_optional_path,
-        )
+        if once:
+            results = daemon_run_once(db_path=resolved_db, max_workers=max_workers)
+            typer.echo(f"daemon pass complete: reconciled={len(results)}")
+            for task in results:
+                typer.echo(f"{task.id}\t{task.state.value}\tupdated={task.updated_at}")
+        else:
+            loops = daemon_run_loop(
+                db_path=resolved_db,
+                interval_seconds=interval_seconds,
+                max_loops=max_loops,
+                max_workers=max_workers,
+            )
+            typer.echo(f"daemon exited after loops={loops}")
     except AgvvError as exc:
-        exit_with_agvv_error(exc)
+        _exit_error(exc)
     except KeyboardInterrupt:
         typer.echo("daemon interrupted")
         raise typer.Exit(code=130) from None
-
-    for line in lines:
-        typer.echo(line)
 
 
 if __name__ == "__main__":

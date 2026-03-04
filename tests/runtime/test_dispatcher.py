@@ -196,10 +196,10 @@ def test_daemon_run_once_uses_parallel_path_when_multiple_workers(monkeypatch: p
         def __exit__(self, exc_type, exc, tb):
             return False
 
-        def submit(self, fn, task_id, store_obj, port, *, lock_owner):
+        def submit(self, fn, task_id, store_obj, *, lock_owner):
             submitted.append(task_id)
             future: Future = Future()
-            future.set_result(fn(task_id, store_obj, port, lock_owner=lock_owner))
+            future.set_result(fn(task_id, store_obj, lock_owner=lock_owner))
             return future
 
     monkeypatch.setattr("agvv.runtime.dispatcher._STATE_HANDLERS", {})

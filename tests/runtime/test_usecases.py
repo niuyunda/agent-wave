@@ -10,7 +10,7 @@ import pytest
 from agvv.orchestration import layout_paths
 from agvv.runtime.models import TaskSpec, TaskState
 from agvv.runtime.store import TaskStore
-from agvv.runtime.usecases import cleanup_task, list_task_statuses, retry_task, run_task_from_spec
+from agvv.runtime.core import cleanup_task, list_task_statuses, retry_task, run_task_from_spec
 from agvv.shared.errors import AgvvError
 
 
