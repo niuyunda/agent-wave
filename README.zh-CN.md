@@ -31,6 +31,7 @@ Agent Wave 是一个给编码 Agent 使用的工具。
 - `tmux`
 - `gh`（GitHub CLI，需要先登录）
 - `uv`
+- 已配置的 git 远端（受管项目仓库默认远端名为 `origin`）
 
 ## 安装与检查
 
@@ -71,7 +72,18 @@ agvv --help
 }
 ```
 
-### 2）启动任务
+### 2）配置 git 远端（必需）
+
+在执行 `task run` 前，请先为受管裸仓库配置推送远端：
+
+```bash
+git -C ~/Code/demo/repo.git remote add origin <repo-url>
+```
+
+请按你的 `project_name` 和 `base_dir` 替换路径。
+如果你在 spec 中通过 `branch_remote` 使用了非默认远端名，请配置对应远端。
+
+### 3）启动任务
 
 ```bash
 agvv task run --spec ./task.json
@@ -79,13 +91,13 @@ agvv task run --spec ./task.json
 
 输出中会包含 task id、状态和 tmux session 名称。
 
-### 3）查看状态
+### 4）查看状态
 
 ```bash
 agvv task status
 ```
 
-### 4）执行一次调度
+### 5）执行一次调度
 
 ```bash
 agvv daemon run --once
@@ -125,6 +137,7 @@ agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--model
 ```
 
 常见用途：启动新任务，也可以临时覆盖 agent/model。
+注意：如果项目远端未配置，命令会在启动前直接失败。
 
 ### `task status`
 
@@ -231,6 +244,7 @@ agvv daemon run [--db-path ./tasks.db] [--once] [--interval-seconds 30] [--max-l
 
 - `tmux not found`：先安装 `tmux`。
 - `gh` 相关报错：先执行 `gh auth login` 并确认仓库权限。
+- `No git remote 'origin' configured`：先配置远端（例如 `git -C <managed-repo.git> remote add origin <repo-url>`），或改用/配置 `branch_remote` 指定的远端。
 - `Task id already exists`：更换 `task_id` 或复用已有任务。
 - `Feature worktree has uncommitted changes`：先提交/暂存，或使用 `task cleanup --force`。
 - `Unsupported agent provider`：仅支持 `codex` 与 `claude_code`。

@@ -69,6 +69,34 @@ def test_handle_coding_completion_fails_when_finalize_raises(monkeypatch: pytest
     assert "Finalize coding failed" in (updated.last_error or "")
 
 
+def test_handle_coding_completion_surfaces_missing_remote_guidance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    spec = TaskSpec(
+        task_id="task_missing_remote",
+        project_name="demo",
+        feature="feat_missing_remote",
+        agent_cmd="echo run",
+        repo="owner/repo",
+        base_dir=tmp_path,
+    )
+    created = store.create_task(spec)
+    coding = store.update_task(created.id, state=TaskState.CODING)
+    (tmp_path / "demo" / "feat_missing_remote").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.commit_and_push_branch",
+        lambda **kwargs: (_ for _ in ()).throw(
+            RuntimeError("No git remote 'origin' configured for worktree /tmp/demo.")
+        ),
+    )
+
+    updated = handle_coding_completion(store, coding)
+    assert updated.state == TaskState.FAILED
+    assert "No git remote 'origin' configured" in (updated.last_error or "")
+
+
 def test_handle_pr_cycle_fails_when_pr_number_missing(tmp_path: Path) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(

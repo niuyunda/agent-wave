@@ -31,6 +31,7 @@ For each task, Agent Wave will:
 - `tmux`
 - `gh` (GitHub CLI, authenticated)
 - `uv`
+- A configured git remote for the managed project repo (default remote name: `origin`)
 
 ## Install And Check
 
@@ -74,7 +75,18 @@ Create `task.json`:
 }
 ```
 
-### 2) Start the task
+### 2) Configure git remote (required)
+
+Before `task run`, configure push remote for the managed bare repository:
+
+```bash
+git -C ~/Code/demo/repo.git remote add origin <repo-url>
+```
+
+Use the project path from your own `project_name` and `base_dir`.
+If your task uses a non-default remote name via `branch_remote`, configure that remote instead.
+
+### 3) Start the task
 
 ```bash
 agvv task run --spec ./task.json
@@ -82,13 +94,13 @@ agvv task run --spec ./task.json
 
 Expected output includes task id, state, and tmux session name.
 
-### 3) Check status
+### 4) Check status
 
 ```bash
 agvv task status
 ```
 
-### 4) Reconcile once (daemon single pass)
+### 5) Reconcile once (daemon single pass)
 
 ```bash
 agvv daemon run --once
@@ -128,6 +140,7 @@ agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--model
 ```
 
 Common use: start new work with optional temporary agent/model override.
+Important: this command fails fast if the project remote is not configured.
 
 ### `task status`
 
@@ -234,6 +247,7 @@ When this project is used as a skill, a practical workflow is:
 
 - `tmux not found`: install `tmux` first.
 - `gh` command issues: run `gh auth login` and verify repo access.
+- `No git remote 'origin' configured`: configure remote first (for example, `git -C <managed-repo.git> remote add origin <repo-url>`), or set/use the remote from `branch_remote`.
 - `Task id already exists`: change `task_id` or reuse existing task.
 - `Feature worktree has uncommitted changes`: commit/stash or use `task cleanup --force`.
 - `Unsupported agent provider`: use `codex` or `claude_code`.

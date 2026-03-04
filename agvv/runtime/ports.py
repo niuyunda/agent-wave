@@ -11,6 +11,8 @@ from agvv.shared.pr import PrStatus
 class LayoutPathsView(Protocol):
     """Minimal layout view consumed by runtime."""
 
+    repo_dir: Path
+    main_dir: Path
     feature_dir: Path | None
 
 
@@ -79,6 +81,9 @@ class OrchestrationPort(Protocol):
         commit_message: str,
     ) -> None:
         """Commit local changes and push the feature branch to remote."""
+
+    def git_remote_exists(self, *, worktree: Path, remote: str) -> bool:
+        """Return whether the configured git remote exists in target repository."""
 
     def ensure_pr_number_for_branch(
         self,
