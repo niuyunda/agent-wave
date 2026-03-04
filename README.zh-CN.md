@@ -42,7 +42,7 @@ agvv --help
 
 如果你把它当作 skill 使用，请确保 Agent 的运行环境里可以直接调用 `agvv`。
 如果你在本仓库本地开发，请使用 `uv sync --dev`，并通过 `uv run agvv ...` 运行命令。
-如果要使用 YAML 任务规格文件，请先安装 PyYAML（例如：`uv add pyyaml`）。
+任务规格文件仅支持 JSON。
 
 ## 5 分钟快速开始
 
@@ -72,32 +72,23 @@ agvv --help
 }
 ```
 
-### 2）配置 git 远端（必需）
-
-在执行 `task run` 前，请先为受管裸仓库配置推送远端：
+### 2）启动任务
 
 ```bash
-git -C ~/Code/demo/repo.git remote add origin <repo-url>
-```
-
-请按你的 `project_name` 和 `base_dir` 替换路径。
-如果你在 spec 中通过 `branch_remote` 使用了非默认远端名，请配置对应远端。
-
-### 3）启动任务
-
-```bash
-agvv task run --spec ./task.json
+agvv task run --spec ./task.json [--project-dir /path/to/existing/repo]
 ```
 
 输出中会包含 task id、状态和 tmux session 名称。
+如果传入 `--project-dir`，会自动按已有项目执行 adopt。
+如果不传入，会自动初始化新项目布局（init）后再启动任务。
 
-### 4）查看状态
+### 3）查看状态
 
 ```bash
 agvv task status
 ```
 
-### 5）执行一次调度
+### 4）执行一次调度
 
 ```bash
 agvv daemon run --once
@@ -107,37 +98,18 @@ agvv daemon run --once
 
 ## 命令说明（面向使用者）
 
-### `project init`
-
-初始化 Agent Wave 项目布局：
-
-```bash
-agvv project init --project-name demo [--base-dir ~/code]
-```
-
-常见用途：在启动任务前创建受管的裸仓库 + `main` worktree 结构。
-如果任务启动时缺失该布局，`agvv task run` 会自动执行初始化流程。
-
-### `project adopt`
-
-把已有本地 git 仓库接入 Agent Wave 布局：
-
-```bash
-agvv project adopt --project-name demo --repo /path/to/repo [--base-dir ~/code]
-```
-
-常见用途：把已有项目迁移为 Agent Wave 管理的 worktree 布局。
-
 ### `task run`
 
-根据 spec 创建并启动任务：
+根据 JSON spec 创建并启动任务：
 
 ```bash
-agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--model gpt-5]
+agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--model gpt-5] [--project-dir /path/to/repo]
 ```
 
 常见用途：启动新任务，也可以临时覆盖 agent/model。
-注意：如果项目远端未配置，命令会在启动前直接失败。
+行为说明：
+- 传入 `--project-dir`：自动 adopt 现有本地项目；
+- 不传入 `--project-dir`：自动 init 新项目布局。
 
 ### `task status`
 

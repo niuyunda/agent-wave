@@ -42,10 +42,7 @@ agvv --help
 
 If you use this as a skill, make sure `agvv` is available in the environment where the agent runs.
 For local development from source, use `uv sync --dev` and run CLI commands as `uv run agvv ...`.
-If you want to use YAML task specs, install PyYAML using the flow that matches your setup:
-
-- Tool-installed `agvv`: reinstall with dependency included, e.g. `uv tool install --with pyyaml agvv` (or `uv tool install -w pyyaml agvv`).
-- Source checkout: add it to the project environment with `uv add pyyaml`.
+Task specs are JSON only.
 
 ## 5-Minute Quick Start
 
@@ -93,6 +90,8 @@ agvv task run --spec ./task.json
 ```
 
 Expected output includes task id, state, and tmux session name.
+You must initialize/adopt project layout and configure remote before running tasks.
+`agvv task run` does not auto-configure push remotes.
 
 ### 4) Check status
 
@@ -110,37 +109,16 @@ This is the core loop for the skill: it checks active tasks and advances their s
 
 ## Command Guide (User-Facing)
 
-### `project init`
-
-Initialize an Agent Wave project layout:
-
-```bash
-agvv project init --project-name demo [--base-dir ~/code]
-```
-
-Common use: create a managed bare repo + `main` worktree structure before running tasks.
-If missing at task launch time, `agvv task run` auto-runs this initialization process.
-
-### `project adopt`
-
-Adopt an existing local git repository into Agent Wave layout:
-
-```bash
-agvv project adopt --project-name demo --repo /path/to/repo [--base-dir ~/code]
-```
-
-Common use: migrate an existing repository into Agent Wave-managed worktree layout.
-
 ### `task run`
 
-Create and launch one task from spec:
+Create and launch one task from JSON spec:
 
 ```bash
 agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--model gpt-5]
 ```
 
 Common use: start new work with optional temporary agent/model override.
-Important: this command fails fast if the project remote is not configured.
+Important: this command fails fast if the project layout is missing or the project remote is not configured.
 
 ### `task status`
 

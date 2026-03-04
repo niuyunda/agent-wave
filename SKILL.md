@@ -95,7 +95,7 @@ Recommended fields:
    - Confirm spec file exists and is readable.
    - Confirm required fields exist.
    - Confirm project layout exists (`project init` or `project adopt` completed).
-   - Confirm remote exists in `<base_dir>/<project_name>/repo.git` (default `origin` or `branch_remote`).
+   - Verify remote exists in `<base_dir>/<project_name>/repo.git` (default `origin` or `branch_remote`).
 
 2. **Prepare Project (If Needed)**
    - Initialize or adopt repository layout:
