@@ -50,7 +50,9 @@ def test_run_task_from_spec_starts_coding_session(monkeypatch: pytest.MonkeyPatc
     )
     launched: list[str] = []
     repo_dir = tmp_path / "demo" / "repo.git"
+    main_dir = tmp_path / "demo" / "main"
     repo_dir.mkdir(parents=True, exist_ok=True)
+    main_dir.mkdir(parents=True, exist_ok=True)
 
     def _fake_start_feature(**kwargs):
         feature_dir = Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
@@ -83,7 +85,9 @@ def test_run_task_from_spec_applies_agent_overrides(monkeypatch: pytest.MonkeyPa
     )
     launched: list[str] = []
     repo_dir = tmp_path / "demo" / "repo.git"
+    main_dir = tmp_path / "demo" / "main"
     repo_dir.mkdir(parents=True, exist_ok=True)
+    main_dir.mkdir(parents=True, exist_ok=True)
 
     def _fake_start_feature(**kwargs):
         feature_dir = Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
@@ -125,39 +129,79 @@ def test_run_task_from_spec_rejects_invalid_agent_override(tmp_path: Path) -> No
         run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db", agent_provider="not-real")
 
 
-def test_run_task_from_spec_requires_initialized_project(tmp_path: Path) -> None:
+def test_run_task_from_spec_auto_inits_project_when_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     spec_path = _write_spec(
-        tmp_path / "task-missing-project.json",
+        tmp_path / "task-auto-init.json",
         {
-            "task_id": "task_missing_project",
+            "task_id": "task_auto_init",
             "project_name": "demo",
-            "feature": "feat_missing_project",
+            "feature": "feat_auto_init",
             "agent_cmd": "echo from-spec",
             "repo": "owner/repo",
             "base_dir": str(tmp_path),
         },
     )
-    with pytest.raises(AgvvError, match="Project repository is not initialized"):
-        run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db")
+    started = {"init": False}
+
+    def _fake_init_project(project_name: str, base_dir: Path):
+        started["init"] = True
+        repo_dir = base_dir / project_name / "repo.git"
+        main_dir = base_dir / project_name / "main"
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        main_dir.mkdir(parents=True, exist_ok=True)
+
+    def _fake_start_feature(**kwargs):
+        feature_dir = Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+        feature_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.init_project", _fake_init_project)
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.start_feature", _fake_start_feature)
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_new_session", lambda _s, _c, _m: None)
+
+    task = run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db")
+    assert started["init"] is True
+    assert task.state == TaskState.CODING
 
 
-def test_run_task_from_spec_requires_remote_configuration(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_run_task_from_spec_auto_adopts_existing_project(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     spec_path = _write_spec(
-        tmp_path / "task-missing-remote.json",
+        tmp_path / "task-auto-adopt.json",
         {
-            "task_id": "task_missing_remote",
+            "task_id": "task_auto_adopt",
             "project_name": "demo",
-            "feature": "feat_missing_remote",
+            "feature": "feat_auto_adopt",
             "agent_cmd": "echo from-spec",
             "repo": "owner/repo",
             "base_dir": str(tmp_path),
         },
     )
-    repo_dir = tmp_path / "demo" / "repo.git"
-    repo_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.git_remote_exists", lambda **kwargs: False)
-    with pytest.raises(AgvvError, match="No git remote 'origin' configured for project 'demo'"):
-        run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db")
+    source_repo = tmp_path / "source-repo"
+    source_repo.mkdir(parents=True, exist_ok=True)
+    (source_repo / ".git").mkdir(parents=True, exist_ok=True)
+    adopted = {"called": False}
+
+    def _fake_adopt_project(existing_repo: Path, project_name: str, base_dir: Path):
+        adopted["called"] = True
+        assert existing_repo == source_repo.resolve()
+        repo_dir = base_dir / project_name / "repo.git"
+        main_dir = base_dir / project_name / "main"
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        main_dir.mkdir(parents=True, exist_ok=True)
+        return (type("L", (), {"repo_dir": repo_dir, "main_dir": main_dir, "feature_dir": None})(), "main")
+
+    def _fake_start_feature(**kwargs):
+        feature_dir = Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+        feature_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.adopt_project", _fake_adopt_project)
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.start_feature", _fake_start_feature)
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_new_session", lambda _s, _c, _m: None)
+
+    task = run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db", project_dir=source_repo)
+    assert adopted["called"] is True
+    assert task.state == TaskState.CODING
 
 
 def test_retry_task_relaunches_when_session_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

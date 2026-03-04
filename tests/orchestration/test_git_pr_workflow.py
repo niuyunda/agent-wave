@@ -42,7 +42,7 @@ def test_commit_and_push_branch_commits_when_worktree_dirty(monkeypatch: pytest.
         commit_message="feat: update readme",
     )
     assert ["add", "-A", "--", ".", ":(exclude).agvv/**"] in calls
-    assert ["commit", "-m", "feat: update readme"] in calls
+    assert ["commit", "-m", "feat: update readme", "--", ".", ":(exclude).agvv/**"] in calls
     assert ["push", "-u", "origin", "feat-1"] in calls
 
 
@@ -111,7 +111,7 @@ def test_commit_and_push_branch_ignores_agvv_internal_changes(monkeypatch: pytes
             commit_message="feat: update readme",
         )
     assert ["add", "-A", "--", ".", ":(exclude).agvv/**"] not in calls
-    assert ["commit", "-m", "feat: update readme"] not in calls
+    assert ["commit", "-m", "feat: update readme", "--", ".", ":(exclude).agvv/**"] not in calls
     assert ["push", "-u", "origin", "feat-1"] not in calls
 
 
@@ -130,6 +130,15 @@ def test_git_remote_exists_false_when_lookup_fails(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr("agvv.orchestration.git_ops._run_git", _fake_run_git)
     assert git_remote_exists(worktree=tmp_path, remote="origin") is False
+
+
+def test_git_remote_exists_blank_or_whitespace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def _fake_run_git(args: list[str], cwd: Path | None = None):
+        raise AssertionError(f"_run_git should not be called for blank remote, got: {args}")
+
+    monkeypatch.setattr("agvv.orchestration.git_ops._run_git", _fake_run_git)
+    assert git_remote_exists(worktree=tmp_path, remote="") is False
+    assert git_remote_exists(worktree=tmp_path, remote="   ") is False
 
 
 def test_ensure_pr_number_for_branch_falls_back_when_create_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

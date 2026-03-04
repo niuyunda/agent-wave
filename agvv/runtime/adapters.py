@@ -13,6 +13,14 @@ from agvv.runtime.ports import LayoutPathsView, OrchestrationPort, PrCheckResult
 class DefaultOrchestrationPort:
     """Port adapter that delegates runtime requests to orchestration API."""
 
+    def init_project(self, project_name: str, base_dir: Path) -> LayoutPathsView:
+        """Initialize managed project layout for a new project."""
+        return orchestration.init_project(project_name, base_dir)
+
+    def adopt_project(self, existing_repo: Path, project_name: str, base_dir: Path) -> tuple[LayoutPathsView, str]:
+        """Adopt an existing repository into the managed project layout."""
+        return orchestration.adopt_project(existing_repo, project_name, base_dir)
+
     def layout_paths(self, project_name: str, base_dir: Path, *, feature: str | None = None) -> LayoutPathsView:
         """Return computed project layout paths for runtime operations."""
         return orchestration.layout_paths(project_name, base_dir, feature=feature)

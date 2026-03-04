@@ -16,6 +16,7 @@ def execute_task_run(
     db_path: str | None,
     agent: str | None,
     model: str | None,
+    project_dir: str | None,
     run_task_from_spec: RunTaskFromSpecFn,
     resolve_optional_path: Callable[[str | None], Path | None],
 ) -> str:
@@ -26,6 +27,7 @@ def execute_task_run(
         db_path=resolve_optional_path(db_path),
         agent_provider=agent,
         agent_model=model,
+        project_dir=resolve_optional_path(project_dir),
     )
     return (
         f"Task started: {task.id}\tstate={task.state.value}\t"

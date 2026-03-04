@@ -11,7 +11,7 @@ from agvv.runtime.models import TaskSpec
 
 
 def load_task_spec(path: Path) -> TaskSpec:
-    """Load task spec from JSON or YAML (if PyYAML is installed)."""
+    """Load task spec from JSON."""
 
     try:
         raw = path.read_text(encoding="utf-8")
@@ -21,17 +21,8 @@ def load_task_spec(path: Path) -> TaskSpec:
     payload: Any
     try:
         payload = json.loads(raw)
-    except json.JSONDecodeError:
-        try:
-            import yaml  # type: ignore[import-not-found]
-        except ImportError as exc:
-            raise AgvvError(
-                "Spec file is not valid JSON. Install PyYAML to use YAML spec files."
-            ) from exc
-        try:
-            payload = yaml.safe_load(raw)
-        except yaml.YAMLError as exc:
-            raise AgvvError("Spec file is not valid JSON or YAML.") from exc
+    except json.JSONDecodeError as exc:
+        raise AgvvError("Spec file is not valid JSON.") from exc
 
     if not isinstance(payload, dict):
         raise AgvvError("Task spec must be an object.")
