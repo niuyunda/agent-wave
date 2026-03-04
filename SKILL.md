@@ -30,6 +30,8 @@ Use this skill when the task includes one or more of:
 
 Use only these commands:
 
+- `agvv project init`
+- `agvv project adopt`
 - `agvv task run`
 - `agvv task status`
 - `agvv task retry`
@@ -38,7 +40,7 @@ Use only these commands:
 
 If running from source checkout (not tool-installed), use the `uv run agvv ...` form.
 
-Do not use deprecated command groups such as `project`, `feature`, or `orch`.
+Do not use deprecated command groups such as `feature` or `orch`.
 
 ## Required Inputs
 

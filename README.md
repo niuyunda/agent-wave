@@ -41,7 +41,10 @@ agvv --help
 
 If you use this as a skill, make sure `agvv` is available in the environment where the agent runs.
 For local development from source, use `uv sync --dev` and run CLI commands as `uv run agvv ...`.
-If you want to use YAML task specs, install PyYAML first (for example: `uv add pyyaml`).
+If you want to use YAML task specs, install PyYAML using the flow that matches your setup:
+
+- Tool-installed `agvv`: reinstall with dependency included, e.g. `uv tool install --with pyyaml agvv` (or `uv tool install -w pyyaml agvv`).
+- Source checkout: add it to the project environment with `uv add pyyaml`.
 
 ## 5-Minute Quick Start
 
@@ -94,6 +97,26 @@ agvv daemon run --once
 This is the core loop for the skill: it checks active tasks and advances their state.
 
 ## Command Guide (User-Facing)
+
+### `project init`
+
+Initialize an Agent Wave project layout:
+
+```bash
+agvv project init --project-name demo [--base-dir ~/code]
+```
+
+Common use: create a managed bare repo + `main` worktree structure before running tasks.
+
+### `project adopt`
+
+Adopt an existing local git repository into Agent Wave layout:
+
+```bash
+agvv project adopt --project-name demo --repo /path/to/repo [--base-dir ~/code]
+```
+
+Common use: migrate an existing repository into Agent Wave-managed worktree layout.
 
 ### `task run`
 
