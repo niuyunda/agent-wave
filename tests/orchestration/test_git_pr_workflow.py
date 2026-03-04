@@ -140,7 +140,6 @@ def test_git_remote_exists_blank_or_whitespace(monkeypatch: pytest.MonkeyPatch, 
     assert git_remote_exists(worktree=tmp_path, remote="") is False
     assert git_remote_exists(worktree=tmp_path, remote="   ") is False
 
-
 def test_ensure_pr_number_for_branch_falls_back_when_create_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     def _fake_run(cmd: list[str], cwd: Path | None = None):
         if cmd[:4] == ["gh", "pr", "create", "--repo"]:

@@ -58,7 +58,6 @@ def run_task_from_spec(
         layout = port.layout_paths(spec.project_name, spec.base_dir)
         if not layout.repo_dir.exists() or not layout.main_dir.exists():
             port.init_project(project_name=spec.project_name, base_dir=spec.base_dir)
-
     layout = port.layout_paths(spec.project_name, spec.base_dir)
     if not layout.repo_dir.exists():
         raise AgvvError(

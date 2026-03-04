@@ -42,10 +42,7 @@ agvv --help
 
 If you use this as a skill, make sure `agvv` is available in the environment where the agent runs.
 For local development from source, use `uv sync --dev` and run CLI commands as `uv run agvv ...`.
-If you want to use YAML task specs, install PyYAML using the flow that matches your setup:
-
-- Tool-installed `agvv`: reinstall with dependency included, e.g. `uv tool install --with pyyaml agvv` (or `uv tool install -w pyyaml agvv`).
-- Source checkout: add it to the project environment with `uv add pyyaml`.
+Task specs are JSON only.
 
 ## 5-Minute Quick Start
 
@@ -89,10 +86,12 @@ If your task uses a non-default remote name via `branch_remote`, configure that 
 ### 3) Start the task
 
 ```bash
-agvv task run --spec ./task.json
+agvv task run --spec ./task.json [--project-dir /path/to/existing/repo]
 ```
 
 Expected output includes task id, state, and tmux session name.
+If `--project-dir` is provided, Agent Wave auto-adopts that existing local project.
+If omitted, Agent Wave auto-initializes a new managed project layout.
 
 ### 4) Check status
 
@@ -110,37 +109,18 @@ This is the core loop for the skill: it checks active tasks and advances their s
 
 ## Command Guide (User-Facing)
 
-### `project init`
-
-Initialize an Agent Wave project layout:
-
-```bash
-agvv project init --project-name demo [--base-dir ~/code]
-```
-
-Common use: create a managed bare repo + `main` worktree structure before running tasks.
-If missing at task launch time, `agvv task run` auto-runs this initialization process.
-
-### `project adopt`
-
-Adopt an existing local git repository into Agent Wave layout:
-
-```bash
-agvv project adopt --project-name demo --repo /path/to/repo [--base-dir ~/code]
-```
-
-Common use: migrate an existing repository into Agent Wave-managed worktree layout.
-
 ### `task run`
 
-Create and launch one task from spec:
+Create and launch one task from JSON spec:
 
 ```bash
-agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--model gpt-5]
+agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--model gpt-5] [--project-dir /path/to/repo]
 ```
 
 Common use: start new work with optional temporary agent/model override.
-Important: this command fails fast if the project remote is not configured.
+Behavior:
+- with `--project-dir`: auto-adopt existing local project before launch.
+- without `--project-dir`: auto-init a new managed project layout before launch.
 
 ### `task status`
 

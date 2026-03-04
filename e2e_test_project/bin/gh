@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_FILE="${AGVV_FAKE_GH_STATE:-/tmp/agvv-fake-gh-state.json}"
+MODE="${AGVV_GH_MODE:-waiting}"
+
+mkdir -p "$(dirname "$STATE_FILE")"
+if [[ ! -f "$STATE_FILE" ]]; then
+  printf '{"pr_number":101}\n' >"$STATE_FILE"
+fi
+
+pr_number="$(python - <<'PY' "$STATE_FILE"
+import json,sys
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    data = json.load(f)
+print(int(data.get("pr_number", 101)))
+PY
+)"
+
+if [[ "${1:-}" != "pr" ]]; then
+  echo "fake gh supports only 'pr' commands" >&2
+  exit 1
+fi
+
+sub="${2:-}"
+case "$sub" in
+  create)
+    repo="demo/repo"
+    for ((i=1; i<=$#; i++)); do
+      if [[ "${!i}" == "--repo" ]]; then
+        j=$((i+1))
+        repo="${!j}"
+      fi
+    done
+    echo "https://github.com/${repo}/pull/${pr_number}"
+    ;;
+  list)
+    echo "${pr_number}"
+    ;;
+  view)
+    args=" $* "
+    if [[ "$args" == *" --json comments,reviews "* ]]; then
+      if [[ "$MODE" == "needs_work" ]]; then
+        cat <<'EOF'
+{"comments":[{"body":"Potential issue: please handle division by zero in calculator divide()."}],"reviews":[{"body":"Actionable comments posted: add a test for divide-by-zero behavior."}]}
+EOF
+      else
+        echo '{"comments":[],"reviews":[]}'
+      fi
+      exit 0
+    fi
+
+    case "$MODE" in
+      waiting)
+        echo '{"state":"OPEN","mergedAt":null,"reviewDecision":null,"statusCheckRollup":[]}'
+        ;;
+      needs_work)
+        echo '{"state":"OPEN","mergedAt":null,"reviewDecision":"CHANGES_REQUESTED","statusCheckRollup":[]}'
+        ;;
+      merged)
+        echo '{"state":"OPEN","mergedAt":"2026-03-04T00:00:00Z","reviewDecision":"APPROVED","statusCheckRollup":[]}'
+        ;;
+      closed)
+        echo '{"state":"CLOSED","mergedAt":null,"reviewDecision":null,"statusCheckRollup":[]}'
+        ;;
+      *)
+        echo '{"state":"OPEN","mergedAt":null,"reviewDecision":null,"statusCheckRollup":[]}'
+        ;;
+    esac
+    ;;
+  *)
+    echo "unsupported fake gh subcommand: $sub" >&2
+    exit 1
+    ;;
+esac

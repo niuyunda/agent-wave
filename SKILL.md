@@ -96,6 +96,7 @@ Recommended fields:
    - Confirm required fields exist.
    - Confirm project layout exists (`project init` or `project adopt` completed).
    - Confirm remote exists in `<base_dir>/<project_name>/repo.git` (default `origin` or `branch_remote`).
+   - Confirm remote exists in `<base_dir>/<project_name>/repo.git` (default `origin` or `branch_remote`).
 
 2. **Prepare Project (If Needed)**
    - Initialize or adopt repository layout:

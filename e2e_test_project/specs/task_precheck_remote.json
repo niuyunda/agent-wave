@@ -1,0 +1,1 @@
+{"task_id": "precheck_remote_block", "project_name": "calc-precheck", "feature": "feat_precheck", "repo": "demo/e2e-calc", "base_dir": "/home/yunda/projects/agent-wave/main/e2e_test_project/managed", "agent_cmd": "echo run"}
