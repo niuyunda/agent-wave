@@ -12,6 +12,10 @@ from agvv.shared.errors import AgvvError
 
 
 def _write_spec(path: Path, payload: dict) -> Path:
+    if "task_doc" not in payload:
+        task_doc_path = path.with_suffix(".md")
+        task_doc_path.write_text("# Task Doc\n\n- Test task details.\n", encoding="utf-8")
+        payload["task_doc"] = str(task_doc_path)
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 
@@ -152,4 +156,17 @@ def test_load_task_spec_rejects_invalid_acceptance_criteria_length(tmp_path: Pat
         },
     )
     with pytest.raises(AgvvError, match="acceptance_criteria"):
+        load_task_spec(spec_path)
+
+
+def test_load_task_spec_rejects_feature_with_spaces(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path / "task-invalid-feature.json",
+        {
+            "project_name": "demo",
+            "feature": "bad feature",
+            "repo": "owner/repo",
+        },
+    )
+    with pytest.raises(AgvvError, match="feature"):
         load_task_spec(spec_path)

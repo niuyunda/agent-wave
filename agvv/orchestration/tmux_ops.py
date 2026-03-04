@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import shlex
 from pathlib import Path
 from typing import Callable
 
@@ -70,3 +71,24 @@ def tmux_new_session(
             f"exec {normalized_command}",
         ]
     )
+
+
+def tmux_pipe_pane(
+    session: str,
+    output_log_path: Path,
+    *,
+    run_cmd: CommandRunner | None = None,
+    session_exists: Callable[[str], bool] | None = None,
+) -> None:
+    """Pipe tmux pane output to file while preserving interactive TTY."""
+
+    runner = run_cmd or _run
+    exists = session_exists or tmux_session_exists
+
+    if not exists(session):
+        raise AgvvError(f"tmux session not found: {session}")
+
+    resolved = output_log_path.expanduser().resolve()
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    # `cat >> file` appends all pane output and keeps the pane interactive.
+    runner(["tmux", "pipe-pane", "-o", "-t", session, f"cat >> {shlex.quote(str(resolved))}"])

@@ -15,6 +15,10 @@ from agvv.shared.errors import AgvvError
 
 
 def _write_spec(path: Path, payload: dict) -> Path:
+    if "task_doc" not in payload:
+        task_doc_path = path.with_suffix(".md")
+        task_doc_path.write_text("# Task Doc\n\n- Implement required changes.\n", encoding="utf-8")
+        payload["task_doc"] = str(task_doc_path)
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 
@@ -66,6 +70,7 @@ def test_run_task_from_spec_starts_coding_session(monkeypatch: pytest.MonkeyPatc
         "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_new_session",
         lambda session, cwd, command: launched.append(f"{session}:{cwd}:{command}"),
     )
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_pipe_pane", lambda _s, _p: None)
 
     task = run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db")
     assert task.state == TaskState.CODING
@@ -90,6 +95,7 @@ def test_run_task_from_spec_applies_agent_overrides(monkeypatch: pytest.MonkeyPa
         },
     )
     launched: list[str] = []
+    piped: list[str] = []
     repo_dir = tmp_path / "demo" / "repo.git"
     main_dir = tmp_path / "demo" / "main"
     repo_dir.mkdir(parents=True, exist_ok=True)
@@ -106,6 +112,10 @@ def test_run_task_from_spec_applies_agent_overrides(monkeypatch: pytest.MonkeyPa
         "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_new_session",
         lambda _session, _cwd, command: launched.append(command),
     )
+    monkeypatch.setattr(
+        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_pipe_pane",
+        lambda _session, output_log_path: piped.append(str(output_log_path)),
+    )
 
     task = run_task_from_spec(
         spec_path=spec_path,
@@ -117,7 +127,9 @@ def test_run_task_from_spec_applies_agent_overrides(monkeypatch: pytest.MonkeyPa
     assert launched[0].startswith("bash -lc ")
     assert "codex" in launched[0]
     assert "rendered_prompt.md" in launched[0]
-    assert "agent_output.log" in launched[0]
+    assert "tee -a" not in launched[0]
+    assert len(piped) == 1
+    assert piped[0].endswith("agent_output.log")
     assert task.spec.agent == "codex"
     assert task.spec.agent_model is None
 
@@ -136,6 +148,39 @@ def test_run_task_from_spec_rejects_invalid_agent_override(tmp_path: Path) -> No
     )
     with pytest.raises(AgvvError, match="Unsupported agent provider"):
         run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db", agent_provider="not-real")
+
+
+def test_run_task_from_spec_rejects_missing_task_doc(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task-missing-task-doc.json"
+    spec_path.write_text(
+        json.dumps(
+            {
+                "project_name": "demo",
+                "feature": "feat_missing_doc",
+                "repo": "owner/repo",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(AgvvError, match="task_doc"):
+        run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db")
+
+
+def test_run_task_from_spec_rejects_non_markdown_task_doc(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task-bad-task-doc.json"
+    spec_path.write_text(
+        json.dumps(
+            {
+                "project_name": "demo",
+                "feature": "feat_bad_doc",
+                "repo": "owner/repo",
+                "task_doc": "./task.txt",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(AgvvError, match="Markdown"):
+        run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db")
 
 
 def test_run_task_from_spec_ignores_spec_base_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -168,6 +213,7 @@ def test_run_task_from_spec_ignores_spec_base_dir(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
     monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.start_feature", _fake_start_feature)
     monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_new_session", lambda _s, _c, _m: None)
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_pipe_pane", lambda _s, _p: None)
 
     run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db")
     assert seen["base_dir"] == tmp_path.resolve()
@@ -203,6 +249,7 @@ def test_run_task_from_spec_auto_inits_project_when_missing(monkeypatch: pytest.
     monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
     monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.start_feature", _fake_start_feature)
     monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_new_session", lambda _s, _c, _m: None)
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_pipe_pane", lambda _s, _p: None)
 
     task = run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db")
     assert started["init"] is True
@@ -244,6 +291,7 @@ def test_run_task_from_spec_auto_adopts_existing_project(monkeypatch: pytest.Mon
     monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
     monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.start_feature", _fake_start_feature)
     monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_new_session", lambda _s, _c, _m: None)
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_pipe_pane", lambda _s, _p: None)
 
     task = run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db", project_dir=source_repo)
     assert adopted["called"] is True
@@ -268,6 +316,7 @@ def test_retry_task_relaunches_when_session_missing(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
     monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.start_feature", lambda **kwargs: None)
     monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_new_session", lambda _s, _c, _m: None)
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_pipe_pane", lambda _s, _p: None)
 
     retried = retry_task(task_id="task_retry", db_path=tmp_path / "tasks.db")
     assert retried.state == TaskState.CODING

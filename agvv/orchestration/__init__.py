@@ -22,6 +22,7 @@ from agvv.orchestration.api import (
     write_pr_feedback_file,
     tmux_kill_session,
     tmux_new_session,
+    tmux_pipe_pane,
     tmux_session_exists,
     wait_pr_status,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "tmux_session_exists",
     "tmux_kill_session",
     "tmux_new_session",
+    "tmux_pipe_pane",
     "commit_and_push_branch",
     "git_remote_exists",
     "ensure_pr_number_for_branch",

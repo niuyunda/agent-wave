@@ -139,6 +139,19 @@ def _normalize_acceptance_criteria(value: Any) -> list[str]:
     return parsed
 
 
+def _coerce_task_doc_path(value: Any) -> Path | None:
+    """Normalize optional task_doc path from payload data."""
+
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise AgvvError("Task spec field 'task_doc' must be a string path.")
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return Path(normalized).expanduser().resolve()
+
+
 def normalize_agent_provider(value: str | None) -> str:
     """Normalize provider aliases into canonical provider identifiers."""
 
@@ -274,13 +287,12 @@ class TaskSpec:
         requirements = str(payload["requirements"]).strip() if payload.get("requirements") else None
 
         # Runtime agent selection is controlled by CLI flags (`task run --agent`).
-        # Keep spec focused on development requirements and acceptance criteria.
         provider = "codex"
         model = None
         extra_args: list[str] = []
         agent_cmd = build_agent_command(provider=provider, model=model, extra_args=extra_args)
 
-        task_doc = payload.get("task_doc")
+        task_doc = _coerce_task_doc_path(payload.get("task_doc"))
         return cls(
             task_id=task_id,
             project_name=str(payload["project_name"]),
@@ -294,7 +306,7 @@ class TaskSpec:
             agent_model=model,
             agent_extra_args=extra_args,
             ticket=(str(payload["ticket"]) if payload.get("ticket") else None),
-            task_doc=(Path(str(task_doc)).expanduser().resolve() if task_doc else None),
+            task_doc=task_doc,
             requirements=requirements,
             constraints=constraints,
             acceptance_criteria=acceptance_criteria,
