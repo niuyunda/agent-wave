@@ -31,6 +31,14 @@ def _apply_agent_overrides(
     return replace(spec, agent=provider, agent_model=model, agent_cmd=agent_cmd, agent_extra_args=extra_args)
 
 
+def _resolve_runtime_base_dir(spec: TaskSpec, *, project_dir: Path | None) -> Path:
+    """Resolve runtime base directory from CLI context instead of task spec."""
+
+    if project_dir is None:
+        return Path.cwd().resolve()
+    return project_dir.expanduser().resolve().parent
+
+
 def run_task_from_spec(
     spec_path: Path,
     db_path: Path | None = None,
@@ -43,6 +51,8 @@ def run_task_from_spec(
 
     spec = load_task_spec(spec_path)
     spec = _apply_agent_overrides(spec, agent_provider=agent_provider)
+    resolved_base_dir = _resolve_runtime_base_dir(spec, project_dir=project_dir)
+    spec = replace(spec, base_dir=resolved_base_dir)
     port = resolve_orchestration_port(orchestration_port)
 
     if project_dir is not None:

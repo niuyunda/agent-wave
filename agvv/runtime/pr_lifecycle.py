@@ -9,6 +9,7 @@ from typing import Callable
 from agvv.runtime.adapters import resolve_orchestration_port
 from agvv.runtime.models import TaskState
 from agvv.runtime.ports import OrchestrationPort
+from agvv.runtime.prompting import build_launch_command, validate_dod_result, write_launch_artifacts, write_output_summary
 from agvv.runtime.store import TaskSnapshot, TaskStore, now_iso, parse_iso
 from agvv.runtime.task_helpers import feature_worktree_path, mark_failed, task_doc_text
 from agvv.shared.pr import PrStatus
@@ -32,6 +33,19 @@ def handle_coding_completion(
     worktree = feature_worktree_path(task, orchestration_port=port)
     if not worktree.exists():
         return mark_failed(store, task, "coding.verify", f"Worktree missing: {worktree}")
+    summary_path = write_output_summary(worktree=worktree)
+    if summary_path is not None:
+        store.add_event(
+            task.id,
+            "info",
+            "coding.output.summary",
+            "Captured agent output summary",
+            {"summary_path": str(summary_path)},
+        )
+    dod_ok, dod_message = validate_dod_result(worktree=worktree, spec=task.spec)
+    if not dod_ok:
+        return mark_failed(store, task, "coding.dod", f"DoD validation failed: {dod_message}")
+    store.add_event(task.id, "info", "coding.dod", "DoD validation passed", {"details": dod_message})
 
     try:
         port.commit_and_push_branch(
@@ -145,7 +159,13 @@ def handle_pr_cycle(
         return store.update_task(task.id, state=TaskState.CODING)
 
     try:
-        port.tmux_new_session(task.session, worktree, task.spec.agent_cmd)
+        artifacts = write_launch_artifacts(worktree=worktree, spec=task.spec)
+        launch_command = build_launch_command(
+            spec=task.spec,
+            prompt_path=artifacts["prompt_path"],
+            output_log_path=artifacts["output_log_path"],
+        )
+        port.tmux_new_session(task.session, worktree, launch_command)
     except Exception as exc:
         return mark_failed(store, task, "pr.retry", f"Failed to relaunch coding session: {exc}")
 
@@ -154,7 +174,13 @@ def handle_pr_cycle(
         "info",
         "pr.retry",
         "Feedback received; coding session relaunched",
-        {"cycle": task.repair_cycles + 1, "feedback_file": str(feedback_path)},
+        {
+            "cycle": task.repair_cycles + 1,
+            "feedback_file": str(feedback_path),
+            "prompt_path": str(artifacts["prompt_path"]),
+            "input_snapshot_path": str(artifacts["input_snapshot_path"]),
+            "output_log_path": str(artifacts["output_log_path"]),
+        },
     )
     return store.update_task(
         task.id,

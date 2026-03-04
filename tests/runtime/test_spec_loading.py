@@ -20,57 +20,58 @@ def test_load_task_spec_json_success(tmp_path: Path) -> None:
     spec_path = _write_spec(
         tmp_path / "task.json",
         {
-            "task_id": "task_1",
             "project_name": "demo",
             "feature": "feat_1",
-            "agent_cmd": "echo build",
             "repo": "owner/repo",
             "base_dir": str(tmp_path),
         },
     )
     spec = load_task_spec(spec_path)
-    assert spec.task_id == "task_1"
+    assert spec.task_id.startswith("demo-feat_1-")
     assert spec.base_dir == tmp_path.resolve()
     assert spec.timeout_minutes == 240
+    assert spec.agent_cmd == "codex"
 
 
-def test_load_task_spec_builds_agent_cmd_from_agent_object(tmp_path: Path) -> None:
+def test_load_task_spec_ignores_agent_fields_from_spec(tmp_path: Path) -> None:
     spec_path = _write_spec(
         tmp_path / "task-agent.json",
         {
-            "task_id": "task_structured_agent",
             "project_name": "demo",
             "feature": "feat_agent",
             "repo": "owner/repo",
             "base_dir": str(tmp_path),
+            "agent_cmd": "echo should-not-be-used",
             "agent": {
-                "provider": "codex",
-                "model": "gpt-5",
+                "provider": "claude_code",
+                "model": "sonnet",
                 "extra_args": ["--approval-mode", "auto"],
             },
+            "agent_model": "gpt-5",
+            "agent_extra_args": ["--dangerously-skip-permissions"],
         },
     )
     spec = load_task_spec(spec_path)
     assert spec.agent == "codex"
-    assert spec.agent_model == "gpt-5"
-    assert spec.agent_extra_args == ["--approval-mode", "auto"]
-    assert spec.agent_cmd == "codex --model gpt-5 --approval-mode auto"
+    assert spec.agent_model is None
+    assert spec.agent_extra_args == []
+    assert spec.agent_cmd == "codex"
 
 
-def test_load_task_spec_rejects_unknown_agent_provider(tmp_path: Path) -> None:
+def test_load_task_spec_ignores_task_id_from_spec(tmp_path: Path) -> None:
     spec_path = _write_spec(
-        tmp_path / "task-invalid-agent.json",
+        tmp_path / "task-ignore-id.json",
         {
-            "task_id": "task_invalid_agent",
             "project_name": "demo",
-            "feature": "feat_agent",
+            "feature": "feat_ignore_id",
             "repo": "owner/repo",
             "base_dir": str(tmp_path),
-            "agent": {"provider": "unknown-agent"},
+            "task_id": "custom-id-should-be-ignored",
         },
     )
-    with pytest.raises(AgvvError, match="Unsupported agent provider"):
-        load_task_spec(spec_path)
+    spec = load_task_spec(spec_path)
+    assert spec.task_id.startswith("demo-feat_ignore_id-")
+    assert spec.task_id != "custom-id-should-be-ignored"
 
 
 def test_load_task_spec_fails_when_file_missing(tmp_path: Path) -> None:
@@ -104,3 +105,51 @@ def test_load_task_spec_defaults_base_dir_to_cwd(tmp_path: Path) -> None:
     )
     spec = load_task_spec(spec_path)
     assert spec.base_dir == Path.cwd().resolve()
+
+
+def test_load_task_spec_forces_from_branch_main(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path / "task-force-main.json",
+        {
+            "project_name": "demo",
+            "feature": "feat_branch",
+            "repo": "owner/repo",
+            "from_branch": "release",
+        },
+    )
+    spec = load_task_spec(spec_path)
+    assert spec.from_branch == "main"
+
+
+def test_load_task_spec_parses_requirement_contract_fields(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path / "task-contract.json",
+        {
+            "task_id": "task_contract",
+            "project_name": "demo",
+            "feature": "feat_contract",
+            "repo": "owner/repo",
+            "base_dir": str(tmp_path),
+            "requirements": "Implement API endpoint for health check.",
+            "constraints": ["Do not change existing API schema.", "Use stdlib only."],
+            "acceptance_criteria": ["`GET /health` returns 200", "Unit tests pass"],
+        },
+    )
+    spec = load_task_spec(spec_path)
+    assert spec.requirements == "Implement API endpoint for health check."
+    assert spec.constraints == ["Do not change existing API schema.", "Use stdlib only."]
+    assert spec.acceptance_criteria == ["`GET /health` returns 200", "Unit tests pass"]
+
+
+def test_load_task_spec_rejects_invalid_acceptance_criteria_length(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path / "task-invalid-dod.json",
+        {
+            "project_name": "demo",
+            "feature": "feat_bad_dod",
+            "repo": "owner/repo",
+            "acceptance_criteria": ["only one"],
+        },
+    )
+    with pytest.raises(AgvvError, match="acceptance_criteria"):
+        load_task_spec(spec_path)

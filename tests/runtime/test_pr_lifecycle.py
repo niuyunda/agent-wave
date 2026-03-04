@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -11,6 +12,17 @@ from agvv.runtime.models import TaskSpec, TaskState
 from agvv.runtime.pr_lifecycle import handle_coding_completion, handle_pr_cycle
 from agvv.runtime.store import TaskStore
 from agvv.shared.pr import PrStatus
+
+
+def _write_default_dod_result(feature_dir: Path) -> None:
+    (feature_dir / ".agvv").mkdir(parents=True, exist_ok=True)
+    payload = {
+        "criteria": [
+            {"item": "Relevant tests/checks pass for changed scope.", "status": "pass", "evidence": "ok"},
+            {"item": "Changed files and verification results are summarized.", "status": "pass", "evidence": "ok"},
+        ]
+    }
+    (feature_dir / ".agvv" / "dod_result.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
 def _create_pr_open_task(store: TaskStore, tmp_path: Path, task_id: str) -> None:
@@ -58,7 +70,9 @@ def test_handle_coding_completion_fails_when_finalize_raises(monkeypatch: pytest
     )
     created = store.create_task(spec)
     coding = store.update_task(created.id, state=TaskState.CODING)
-    (tmp_path / "demo" / "feat_finalize_error").mkdir(parents=True, exist_ok=True)
+    feature_dir = tmp_path / "demo" / "feat_finalize_error"
+    feature_dir.mkdir(parents=True, exist_ok=True)
+    _write_default_dod_result(feature_dir)
     monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
     monkeypatch.setattr(
         "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.commit_and_push_branch",
@@ -83,7 +97,9 @@ def test_handle_coding_completion_surfaces_missing_remote_guidance(
     )
     created = store.create_task(spec)
     coding = store.update_task(created.id, state=TaskState.CODING)
-    (tmp_path / "demo" / "feat_missing_remote").mkdir(parents=True, exist_ok=True)
+    feature_dir = tmp_path / "demo" / "feat_missing_remote"
+    feature_dir.mkdir(parents=True, exist_ok=True)
+    _write_default_dod_result(feature_dir)
     monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
     monkeypatch.setattr(
         "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.commit_and_push_branch",
@@ -95,6 +111,27 @@ def test_handle_coding_completion_surfaces_missing_remote_guidance(
     updated = handle_coding_completion(store, coding)
     assert updated.state == TaskState.FAILED
     assert "No git remote 'origin' configured" in (updated.last_error or "")
+
+
+def test_handle_coding_completion_fails_when_dod_result_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    spec = TaskSpec(
+        task_id="task_missing_dod",
+        project_name="demo",
+        feature="feat_missing_dod",
+        agent_cmd="echo run",
+        repo="owner/repo",
+        base_dir=tmp_path,
+    )
+    created = store.create_task(spec)
+    coding = store.update_task(created.id, state=TaskState.CODING)
+    (tmp_path / "demo" / "feat_missing_dod").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
+    updated = handle_coding_completion(store, coding)
+    assert updated.state == TaskState.FAILED
+    assert "DoD validation failed" in (updated.last_error or "")
 
 
 def test_handle_pr_cycle_fails_when_pr_number_missing(tmp_path: Path) -> None:

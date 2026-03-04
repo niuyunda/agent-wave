@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from concurrent.futures import Future
 from pathlib import Path
 
@@ -12,6 +13,17 @@ from agvv.runtime.models import TaskSpec, TaskState
 from agvv.runtime.store import TaskStore
 from agvv.shared.errors import AgvvError
 from agvv.shared.pr import PrStatus
+
+
+def _write_default_dod_result(feature_dir: Path) -> None:
+    (feature_dir / ".agvv").mkdir(parents=True, exist_ok=True)
+    payload = {
+        "criteria": [
+            {"item": "Relevant tests/checks pass for changed scope.", "status": "pass", "evidence": "ok"},
+            {"item": "Changed files and verification results are summarized.", "status": "pass", "evidence": "ok"},
+        ]
+    }
+    (feature_dir / ".agvv" / "dod_result.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
 def test_daemon_run_once_promotes_coding_to_pr_open(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -26,7 +38,9 @@ def test_daemon_run_once_promotes_coding_to_pr_open(monkeypatch: pytest.MonkeyPa
     )
     created = store.create_task(spec)
     store.update_task(created.id, state=TaskState.CODING, started_at=created.created_at)
-    (tmp_path / "demo" / "feat_daemon").mkdir(parents=True, exist_ok=True)
+    feature_dir = tmp_path / "demo" / "feat_daemon"
+    feature_dir.mkdir(parents=True, exist_ok=True)
+    _write_default_dod_result(feature_dir)
 
     monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
     monkeypatch.setattr(
