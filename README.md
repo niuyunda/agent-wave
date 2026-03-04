@@ -253,6 +253,27 @@ GitHub Actions workflow runs:
 - tests on Python 3.10/3.11/3.12 with coverage,
 - package build after lint+test pass.
 
+## Release to PyPI
+
+Publishing is automated via GitHub Actions on version tags.
+
+1. Bump version in `pyproject.toml`.
+2. Commit and push the change.
+3. Create and push a tag like `v0.1.1`.
+
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+The `Publish to PyPI` workflow (`.github/workflows/publish.yml`) builds with `uv build` and publishes to PyPI using GitHub OIDC trusted publishing.
+
+Before the first release, configure a PyPI Trusted Publisher for this repository and workflow:
+
+- owner/repo: this repository
+- workflow file: `.github/workflows/publish.yml`
+- environment (recommended): `pypi`
+
 ## Package Metadata
 
 - package name: `agent-wave`
