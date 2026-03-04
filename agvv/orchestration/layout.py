@@ -88,6 +88,59 @@ def _default_branch(repo_dir: Path) -> str:
     return branches[0]
 
 
+def _is_bare_repo(path: Path) -> bool:
+    """Return whether ``path`` points to a bare git repository."""
+
+    if not path.exists() or not path.is_dir():
+        return False
+    if not run_git_success(["-C", str(path), "rev-parse", "--is-bare-repository"]):
+        return False
+    return run_git(["-C", str(path), "rev-parse", "--is-bare-repository"]).stdout.strip() == "true"
+
+
+def _resolve_adopt_source_repo(existing_repo: Path) -> Path:
+    """Resolve adopt source repository path from user-provided ``existing_repo``.
+
+    Supported inputs:
+    - non-bare repository root (contains ``.git`` marker)
+    - bare repository root itself
+    - directory whose first level contains exactly one ``*.git`` entry (bare repo)
+    """
+
+    if not existing_repo.exists() or not existing_repo.is_dir():
+        raise AgvvError(f"Project directory not found: {existing_repo}")
+
+    # Standard non-bare repo: .git directory/file under repository root.
+    if (existing_repo / ".git").exists():
+        return existing_repo
+
+    # Bare repo passed directly as --project-dir.
+    if _is_bare_repo(existing_repo):
+        return existing_repo
+
+    # Support users passing a parent directory that directly contains one *.git repo.
+    first_level_git_entries = sorted(
+        child for child in existing_repo.iterdir() if child.name.endswith(".git")
+    )
+    if not first_level_git_entries:
+        raise AgvvError(
+            f"{existing_repo} is not a git repository. "
+            "No '*.git' entry found in the first-level directory."
+        )
+    if len(first_level_git_entries) > 1:
+        candidates = ", ".join(entry.name for entry in first_level_git_entries)
+        raise AgvvError(
+            f"{existing_repo} has multiple '*.git' entries in the first-level directory: {candidates}. "
+            "Pass a specific repository path via --project-dir."
+        )
+    candidate = first_level_git_entries[0]
+    if not _is_bare_repo(candidate):
+        raise AgvvError(
+            f"Found first-level '*.git' entry at {candidate}, but it is not a bare git repository."
+        )
+    return candidate
+
+
 def init_project(project_name: str, base_dir: Path) -> LayoutPaths:
     """Initialize a project as bare repository plus ``main`` worktree."""
 
@@ -129,8 +182,7 @@ def adopt_project(existing_repo: Path, project_name: str, base_dir: Path) -> tup
     """
 
     _ensure_layout_name(project_name, "Project name")
-    if not (existing_repo / ".git").exists():
-        raise AgvvError(f"{existing_repo} is not a git repository.")
+    source_repo = _resolve_adopt_source_repo(existing_repo)
 
     paths = layout_paths(project_name, base_dir)
     paths.project_dir.mkdir(parents=True, exist_ok=True)
@@ -145,12 +197,12 @@ def adopt_project(existing_repo: Path, project_name: str, base_dir: Path) -> tup
     # remains valid. `--mirror` sets remote.origin.mirror=true, which makes
     # branch refspec pushes fail with:
     # "fatal: --mirror can't be combined with refspecs".
-    run_git(["clone", "--bare", str(existing_repo), str(paths.repo_dir)])
+    run_git(["clone", "--bare", str(source_repo), str(paths.repo_dir)])
 
     # If source repo has an upstream origin URL, preserve it so adopted tasks
     # push to the original remote instead of the local source path.
-    if run_git_success(["-C", str(existing_repo), "config", "--get", "remote.origin.url"]):
-        source_origin = run_git(["-C", str(existing_repo), "config", "--get", "remote.origin.url"]).stdout.strip()
+    if run_git_success(["-C", str(source_repo), "config", "--get", "remote.origin.url"]):
+        source_origin = run_git(["-C", str(source_repo), "config", "--get", "remote.origin.url"]).stdout.strip()
         if source_origin:
             run_git(["-C", str(paths.repo_dir), "remote", "set-url", "origin", source_origin])
 
