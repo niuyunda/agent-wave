@@ -64,4 +64,4 @@ def load_task_spec(path: Path) -> TaskSpec:
         raise AgvvError("Task spec must be an object.")
     _validate_identity_fields(payload)
     _validate_task_doc_policy(payload)
-    return TaskSpec.from_payload(payload)
+    return TaskSpec.from_payload(payload, spec_dir=path.parent)
