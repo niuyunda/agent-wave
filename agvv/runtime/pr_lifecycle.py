@@ -6,17 +6,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
-from agvv.runtime.adapters import resolve_orchestration_port
+from agvv.runtime.adapters import DEFAULT_ORCHESTRATION_PORT as port
 from agvv.runtime.models import TaskState
-from agvv.runtime.ports import OrchestrationPort
 from agvv.runtime.prompting import (
     detect_blocking_prompt,
-    agent_requires_tty,
-    build_launch_command,
     validate_dod_result,
-    write_launch_artifacts,
     write_output_summary,
 )
+from agvv.runtime.session_lifecycle import start_tmux_agent
 from agvv.runtime.store import TaskSnapshot, TaskStore, now_iso, parse_iso
 from agvv.runtime.task_helpers import feature_worktree_path, mark_failed, task_doc_text
 from agvv.shared.pr import PrStatus
@@ -35,13 +32,10 @@ def _coding_session_timed_out(task: TaskSnapshot) -> bool:
 def handle_coding_completion(
     store: TaskStore,
     task: TaskSnapshot,
-    *,
-    orchestration_port: OrchestrationPort | None = None,
 ) -> TaskSnapshot:
     """Move ``CODING`` task to ``PR_OPEN`` when coding session is done."""
 
-    port = resolve_orchestration_port(orchestration_port)
-    worktree = feature_worktree_path(task, orchestration_port=port)
+    worktree = feature_worktree_path(task)
 
     if port.tmux_session_exists(task.session):
         blocked_detection = detect_blocking_prompt(worktree=worktree)
@@ -125,12 +119,9 @@ def handle_pr_cycle(
     store: TaskStore,
     task: TaskSnapshot,
     cleanup_task_fn: CleanupTaskFn,
-    *,
-    orchestration_port: OrchestrationPort | None = None,
 ) -> TaskSnapshot:
     """Advance ``PR_OPEN`` task through review/merge/close/retry states."""
 
-    port = resolve_orchestration_port(orchestration_port)
 
     if task.pr_number is None:
         return mark_failed(store, task, "pr.check", "PR number missing for PR cycle.")
@@ -182,7 +173,7 @@ def handle_pr_cycle(
             f"Reached max retry cycles ({task.spec.max_retry_cycles}). Actionable comments: {len(feedback.actionable)}",
         )
 
-    worktree = feature_worktree_path(task, orchestration_port=port)
+    worktree = feature_worktree_path(task)
     if not worktree.exists():
         return mark_failed(store, task, "pr.retry", f"Worktree missing: {worktree}")
 
@@ -191,8 +182,7 @@ def handle_pr_cycle(
             worktree=worktree,
             task_id=task.id,
             pr_number=task.pr_number,
-            actionable=feedback.actionable,
-            skipped=feedback.skipped,
+            feedback=feedback,
         )
     except Exception as exc:
         return mark_failed(
@@ -209,24 +199,9 @@ def handle_pr_cycle(
         return store.update_task(task.id, state=TaskState.CODING)
 
     try:
-        artifacts = write_launch_artifacts(worktree=worktree, spec=task.spec)
-        launch_command = build_launch_command(
-            spec=task.spec,
-            prompt_path=artifacts["prompt_path"],
-            output_log_path=artifacts["output_log_path"],
+        artifacts = start_tmux_agent(
+            store, task, worktree, event_step_prefix="pr.retry"
         )
-        port.tmux_new_session(task.session, worktree, launch_command)
-        if agent_requires_tty(task.spec):
-            try:
-                port.tmux_pipe_pane(task.session, artifacts["output_log_path"])
-            except Exception as exc:
-                store.add_event(
-                    task.id,
-                    "warning",
-                    "pr.retry.log_capture",
-                    f"Failed to enable tmux pane log capture: {exc}",
-                    {"session": task.session, "output_log_path": str(artifacts["output_log_path"])},
-                )
     except Exception as exc:
         return mark_failed(store, task, "pr.retry", f"Failed to relaunch coding session: {exc}")
 

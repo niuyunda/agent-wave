@@ -1,29 +1,39 @@
-"""Default runtime adapters for orchestration ports."""
+"""Orchestration adapter: injectable wrapper for testability.
+
+All runtime modules reference ``DEFAULT_ORCHESTRATION_PORT`` rather than
+importing ``agvv.orchestration`` directly, so tests can monkeypatch individual
+methods without replacing the entire module.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Sequence
 
-import agvv.orchestration as orchestration
-from agvv.orchestration.models import PrFeedbackSummary
-from agvv.runtime.ports import LayoutPathsView, OrchestrationPort, PrCheckResultView, PrFeedbackSummaryView
+import agvv.orchestration as _orch
+from agvv.orchestration.models import LayoutPaths, PrCheckResult, PrFeedbackSummary
 
 
-class DefaultOrchestrationPort:
-    """Port adapter that delegates runtime requests to orchestration API."""
+class OrchestrationPort:
+    """Thin delegating wrapper around the orchestration package."""
 
-    def init_project(self, project_name: str, base_dir: Path) -> LayoutPathsView:
-        """Initialize managed project layout for a new project."""
-        return orchestration.init_project(project_name, base_dir)
+    def layout_paths(
+        self,
+        project_name: str,
+        base_dir: Path,
+        feature: str | None = None,
+    ) -> LayoutPaths:
+        return _orch.layout_paths(project_name, base_dir, feature)
 
-    def adopt_project(self, existing_repo: Path, project_name: str, base_dir: Path) -> tuple[LayoutPathsView, str]:
-        """Adopt an existing repository into the managed project layout."""
-        return orchestration.adopt_project(existing_repo, project_name, base_dir)
+    def init_project(self, project_name: str, base_dir: Path) -> LayoutPaths:
+        return _orch.init_project(project_name, base_dir)
 
-    def layout_paths(self, project_name: str, base_dir: Path, *, feature: str | None = None) -> LayoutPathsView:
-        """Return computed project layout paths for runtime operations."""
-        return orchestration.layout_paths(project_name, base_dir, feature=feature)
+    def adopt_project(
+        self,
+        existing_repo: Path,
+        project_name: str,
+        base_dir: Path,
+    ) -> tuple[LayoutPaths, str]:
+        return _orch.adopt_project(existing_repo, project_name, base_dir)
 
     def start_feature(
         self,
@@ -35,11 +45,10 @@ class DefaultOrchestrationPort:
         agent: str | None,
         task_id: str | None,
         ticket: str | None,
-        params: dict[str, str],
+        params: dict,
         create_dirs: list[str],
-    ) -> LayoutPathsView:
-        """Initialize feature workspace and return resulting layout paths."""
-        return orchestration.start_feature(
+    ) -> LayoutPaths:
+        return _orch.start_feature(
             project_name=project_name,
             feature=feature,
             base_dir=base_dir,
@@ -51,9 +60,14 @@ class DefaultOrchestrationPort:
             create_dirs=create_dirs,
         )
 
-    def cleanup_feature(self, project_name: str, feature: str, base_dir: Path, delete_branch: bool) -> LayoutPathsView:
-        """Cleanup feature resources in standard mode."""
-        return orchestration.cleanup_feature(project_name, feature, base_dir, delete_branch=delete_branch)
+    def cleanup_feature(
+        self,
+        project_name: str,
+        feature: str,
+        base_dir: Path,
+        delete_branch: bool,
+    ) -> None:
+        _orch.cleanup_feature(project_name, feature, base_dir, delete_branch)
 
     def cleanup_feature_force(
         self,
@@ -61,100 +75,38 @@ class DefaultOrchestrationPort:
         feature: str,
         base_dir: Path,
         delete_branch: bool,
-    ) -> LayoutPathsView:
-        """Cleanup feature resources even if normal cleanup fails."""
-        return orchestration.cleanup_feature_force(project_name, feature, base_dir, delete_branch=delete_branch)
+    ) -> None:
+        _orch.cleanup_feature_force(project_name, feature, base_dir, delete_branch)
 
     def tmux_session_exists(self, session: str) -> bool:
-        """Check whether a tmux session currently exists."""
-        return orchestration.tmux_session_exists(session)
+        return _orch.tmux_session_exists(session)
 
     def tmux_kill_session(self, session: str) -> None:
-        """Terminate a tmux session by name."""
-        orchestration.tmux_kill_session(session)
+        _orch.tmux_kill_session(session)
 
     def tmux_new_session(self, session: str, cwd: Path, command: str) -> None:
-        """Create a detached tmux session and run a command."""
-        orchestration.tmux_new_session(session, cwd, command)
+        _orch.tmux_new_session(session, cwd, command)
 
-    def tmux_pipe_pane(self, session: str, output_log_path: Path) -> None:
-        """Capture tmux pane output without breaking interactive TTY."""
-        orchestration.tmux_pipe_pane(session, output_log_path)
+    def tmux_pipe_pane(self, session: str, output_path: Path) -> None:
+        _orch.tmux_pipe_pane(session, output_path)
 
-    def commit_and_push_branch(
-        self,
-        *,
-        worktree: Path,
-        feature: str,
-        base_branch: str,
-        remote: str,
-        commit_message: str,
-    ) -> None:
-        """Commit branch changes and push feature branch to remote."""
-        orchestration.commit_and_push_branch(
-            worktree=worktree,
-            feature=feature,
-            base_branch=base_branch,
-            remote=remote,
-            commit_message=commit_message,
-        )
+    def commit_and_push_branch(self, **kwargs) -> None:
+        _orch.commit_and_push_branch(**kwargs)
 
-    def git_remote_exists(self, *, worktree: Path, remote: str) -> bool:
-        """Check whether a git remote exists in the target repository/worktree."""
-        return orchestration.git_remote_exists(worktree=worktree, remote=remote)
+    def git_remote_exists(self, **kwargs) -> bool:
+        return _orch.git_remote_exists(**kwargs)
 
-    def ensure_pr_number_for_branch(
-        self,
-        *,
-        repo: str,
-        feature: str,
-        pr_base: str,
-        title: str,
-        body: str,
-        worktree: Path,
-        pr_number: int | None = None,
-    ) -> int:
-        """Return existing PR number or create/update PR for the branch."""
-        return orchestration.ensure_pr_number_for_branch(
-            repo=repo,
-            feature=feature,
-            pr_base=pr_base,
-            title=title,
-            body=body,
-            worktree=worktree,
-            pr_number=pr_number,
-        )
+    def ensure_pr_number_for_branch(self, **kwargs) -> int:
+        return _orch.ensure_pr_number_for_branch(**kwargs)
 
-    def check_pr_status(self, repo: str, pr_number: int) -> PrCheckResultView:
-        """Fetch merged/open/closed status for a PR."""
-        return orchestration.check_pr_status(repo, pr_number)
+    def check_pr_status(self, repo: str, pr_number: int) -> PrCheckResult:
+        return _orch.check_pr_status(repo, pr_number)
 
-    def summarize_pr_feedback(self, repo: str, pr_number: int) -> PrFeedbackSummaryView:
-        """Collect actionable and skipped PR feedback comments."""
-        return orchestration.summarize_pr_feedback(repo, pr_number)
+    def summarize_pr_feedback(self, repo: str, pr_number: int) -> PrFeedbackSummary:
+        return _orch.summarize_pr_feedback(repo, pr_number)
 
-    def write_pr_feedback_file(
-        self,
-        *,
-        worktree: Path,
-        task_id: str,
-        pr_number: int,
-        actionable: Sequence[str],
-        skipped: Sequence[str],
-    ) -> Path:
-        """Persist PR feedback details to a task-scoped markdown file."""
-        return orchestration.write_pr_feedback_file(
-            worktree=worktree,
-            task_id=task_id,
-            pr_number=pr_number,
-            feedback=PrFeedbackSummary(actionable=tuple(actionable), skipped=tuple(skipped)),
-        )
+    def write_pr_feedback_file(self, **kwargs) -> Path:
+        return _orch.write_pr_feedback_file(**kwargs)
 
 
-DEFAULT_ORCHESTRATION_PORT: OrchestrationPort = DefaultOrchestrationPort()
-
-
-def resolve_orchestration_port(port: OrchestrationPort | None = None) -> OrchestrationPort:
-    """Resolve explicit orchestration port override or use default adapter."""
-
-    return DEFAULT_ORCHESTRATION_PORT if port is None else port
+DEFAULT_ORCHESTRATION_PORT: OrchestrationPort = OrchestrationPort()

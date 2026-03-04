@@ -16,7 +16,11 @@ from agvv.runtime.models import ACTIVE_STATES, TaskSpec, TaskState
 
 _TASK_DB_ENV_VAR = "AGVV_DB_PATH"
 _DEFAULT_TASK_DB_PATH = Path("~/.agvv/tasks.db")
-_UNSET = object()
+class _Missing:
+    """Sentinel type for optional update_task fields (distinct from None)."""
+
+
+_MISSING = _Missing()
 
 
 def now_iso() -> str:
@@ -219,11 +223,11 @@ class TaskStore:
         task_id: str,
         *,
         state: TaskState | None = None,
-        pr_number: int | None | object = _UNSET,
-        repair_cycles: int | object = _UNSET,
-        last_error: str | None | object = _UNSET,
-        started_at: str | None | object = _UNSET,
-        finished_at: str | None | object = _UNSET,
+        pr_number: int | None | _Missing = _MISSING,
+        repair_cycles: int | _Missing = _MISSING,
+        last_error: str | None | _Missing = _MISSING,
+        started_at: str | None | _Missing = _MISSING,
+        finished_at: str | None | _Missing = _MISSING,
     ) -> TaskSnapshot:
         """Update selected task fields and return the latest snapshot."""
 
@@ -234,19 +238,19 @@ class TaskStore:
         if state is not None:
             set_clauses.append("state = ?")
             params.append(state.value)
-        if pr_number is not _UNSET:
+        if not isinstance(pr_number, _Missing):
             set_clauses.append("pr_number = ?")
             params.append(pr_number)
-        if repair_cycles is not _UNSET:
+        if not isinstance(repair_cycles, _Missing):
             set_clauses.append("repair_cycles = ?")
             params.append(repair_cycles)
-        if last_error is not _UNSET:
+        if not isinstance(last_error, _Missing):
             set_clauses.append("last_error = ?")
             params.append(last_error)
-        if started_at is not _UNSET:
+        if not isinstance(started_at, _Missing):
             set_clauses.append("started_at = ?")
             params.append(started_at)
-        if finished_at is not _UNSET:
+        if not isinstance(finished_at, _Missing):
             set_clauses.append("finished_at = ?")
             params.append(finished_at)
 
@@ -339,7 +343,7 @@ class TaskStore:
         """Convert a raw SQLite row into ``TaskSnapshot``."""
 
         raw_spec = json.loads(str(row["spec_json"]))
-        spec = TaskSpec.from_payload(raw_spec)
+        spec = TaskSpec.from_db_payload(raw_spec)
         pr_number = row["pr_number"]
         return TaskSnapshot(
             id=str(row["id"]),

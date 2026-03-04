@@ -9,41 +9,37 @@ from pathlib import Path
 from typing import Callable
 from uuid import uuid4
 
-from agvv.runtime.adapters import resolve_orchestration_port
 from agvv.runtime.models import TERMINAL_STATES, TaskState
-from agvv.runtime.ports import OrchestrationPort
 from agvv.runtime.pr_lifecycle import handle_coding_completion, handle_pr_cycle
 from agvv.runtime.session_lifecycle import launch_coding_session
 from agvv.runtime.store import TaskSnapshot, TaskStore
 from agvv.runtime.task_helpers import mark_failed
-from agvv.runtime.usecases.cleanup import cleanup_task
+from agvv.runtime.core import cleanup_task
 from agvv.shared.errors import AgvvError
 
-StateHandler = Callable[[TaskStore, TaskSnapshot, OrchestrationPort], TaskSnapshot]
+StateHandler = Callable[[TaskStore, TaskSnapshot], TaskSnapshot]
 _LOGGER = logging.getLogger(__name__)
 
 
-def _handle_pending(store: TaskStore, task: TaskSnapshot, orchestration_port: OrchestrationPort) -> TaskSnapshot:
+def _handle_pending(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
     """Launch a fresh coding session for pending tasks."""
-    return launch_coding_session(store, task, fresh_setup=True, orchestration_port=orchestration_port)
+    return launch_coding_session(store, task, fresh_setup=True)
 
 
-def _handle_coding(store: TaskStore, task: TaskSnapshot, orchestration_port: OrchestrationPort) -> TaskSnapshot:
+def _handle_coding(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
     """Evaluate coding-session completion and transition state if needed."""
-    return handle_coding_completion(store, task, orchestration_port=orchestration_port)
+    return handle_coding_completion(store, task)
 
 
-def _handle_pr_open(store: TaskStore, task: TaskSnapshot, orchestration_port: OrchestrationPort) -> TaskSnapshot:
+def _handle_pr_open(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
     """Run PR lifecycle checks and reconcile feedback or merge outcomes."""
-    def _cleanup_with_port(task_id: str, db_path: Path | None, force: bool = False) -> TaskSnapshot:
-        """Bind cleanup use case to the resolved orchestration port."""
-        return cleanup_task(task_id, db_path, force=force, orchestration_port=orchestration_port)
+    def _cleanup_without_port(task_id: str, db_path: Path | None, force: bool = False) -> TaskSnapshot:
+        return cleanup_task(task_id, db_path, force=force)
 
     return handle_pr_cycle(
         store,
         task,
-        cleanup_task_fn=_cleanup_with_port,
-        orchestration_port=orchestration_port,
+        cleanup_task_fn=_cleanup_without_port,
     )
 
 
@@ -54,9 +50,8 @@ _STATE_HANDLERS: dict[TaskState, StateHandler] = {
 }
 
 
-def _reconcile_task(task_id: str, store: TaskStore, orchestration_port: OrchestrationPort, *, lock_owner: str) -> TaskSnapshot:
+def _reconcile_task(task_id: str, store: TaskStore, *, lock_owner: str) -> TaskSnapshot:
     """Reconcile one task by dispatching to current-state handler."""
-
     task = store.get_task(task_id)
     if task.state in TERMINAL_STATES:
         return task
@@ -70,16 +65,15 @@ def _reconcile_task(task_id: str, store: TaskStore, orchestration_port: Orchestr
         handler = _STATE_HANDLERS.get(task.state)
         if handler is None:
             return task
-        return handler(store, task, orchestration_port)
+        return handler(store, task)
     finally:
         store.release_reconcile_lock(task_id, owner_id=lock_owner)
 
 
-def _reconcile_task_safe(task_id: str, store: TaskStore, orchestration_port: OrchestrationPort, *, lock_owner: str) -> TaskSnapshot:
+def _reconcile_task_safe(task_id: str, store: TaskStore, *, lock_owner: str) -> TaskSnapshot:
     """Reconcile one task and convert unexpected failures into task failure state."""
-
     try:
-        return _reconcile_task(task_id, store, orchestration_port, lock_owner=lock_owner)
+        return _reconcile_task(task_id, store, lock_owner=lock_owner)
     except Exception as exc:
         _LOGGER.exception("Unexpected reconcile failure for task %s", task_id)
         task = store.get_task(task_id)
@@ -89,42 +83,35 @@ def _reconcile_task_safe(task_id: str, store: TaskStore, orchestration_port: Orc
 def reconcile_task(
     task_id: str,
     db_path: Path | None = None,
-    *,
-    orchestration_port: OrchestrationPort | None = None,
 ) -> TaskSnapshot:
     """Reconcile one task by dispatching to current-state handler."""
-
     store = TaskStore(db_path)
-    port = resolve_orchestration_port(orchestration_port)
-    return _reconcile_task_safe(task_id, store, port, lock_owner=f"reconcile-{uuid4()}")
+    return _reconcile_task_safe(task_id, store, lock_owner=f"reconcile-{uuid4()}")
 
 
 def daemon_run_once(
     db_path: Path | None = None,
     *,
     max_workers: int = 1,
-    orchestration_port: OrchestrationPort | None = None,
 ) -> list[TaskSnapshot]:
     """Reconcile all active tasks once."""
-
     if max_workers <= 0:
         raise AgvvError("max_workers must be > 0")
 
     store = TaskStore(db_path)
-    port = resolve_orchestration_port(orchestration_port)
     active = store.list_active_tasks()
     if not active:
         return []
     if max_workers == 1 or len(active) == 1:
         lock_owner = f"daemon-{uuid4()}"
-        return [_reconcile_task_safe(task.id, store, port, lock_owner=lock_owner) for task in active]
+        return [_reconcile_task_safe(task.id, store, lock_owner=lock_owner) for task in active]
 
     indexed_tasks = list(enumerate(active))
     results: list[TaskSnapshot | None] = [None] * len(indexed_tasks)
     lock_owner = f"daemon-{uuid4()}"
     with ThreadPoolExecutor(max_workers=min(max_workers, len(indexed_tasks))) as executor:
         future_to_index = {
-            executor.submit(_reconcile_task_safe, task.id, store, port, lock_owner=lock_owner): index
+            executor.submit(_reconcile_task_safe, task.id, store, lock_owner=lock_owner): index
             for index, task in indexed_tasks
         }
         for future in as_completed(future_to_index):
@@ -140,10 +127,8 @@ def daemon_run_loop(
     max_loops: int | None = None,
     *,
     max_workers: int = 1,
-    orchestration_port: OrchestrationPort | None = None,
 ) -> int:
-    """Run reconcile loop until interrupted or reaching ``max_loops``."""
-
+    """Run reconcile loop until interrupted or reaching max_loops."""
     if interval_seconds <= 0:
         raise AgvvError("interval_seconds must be > 0")
     if max_loops is not None and max_loops < 0:
@@ -152,9 +137,8 @@ def daemon_run_loop(
         return 0
 
     loops = 0
-    port = resolve_orchestration_port(orchestration_port)
     while True:
-        daemon_run_once(db_path, max_workers=max_workers, orchestration_port=port)
+        daemon_run_once(db_path, max_workers=max_workers)
         loops += 1
         if max_loops is not None and loops >= max_loops:
             return loops
