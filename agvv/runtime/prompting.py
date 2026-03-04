@@ -8,6 +8,14 @@ from pathlib import Path
 
 from agvv.runtime.models import TaskSpec, build_agent_command
 
+_TTY_AGENTS = {"codex", "claude_code"}
+
+
+def agent_requires_tty(spec: TaskSpec) -> bool:
+    """Return whether the configured agent should run in an interactive TTY."""
+
+    return (spec.agent or "").strip() in _TTY_AGENTS
+
 
 def _effective_acceptance_criteria(spec: TaskSpec) -> list[str]:
     """Return explicit criteria or a stable default fallback."""
@@ -34,11 +42,11 @@ def _task_doc_text(spec: TaskSpec) -> str:
 def _requirements_text(spec: TaskSpec) -> str:
     """Resolve primary requirement text for prompt construction."""
 
-    if spec.requirements:
-        return spec.requirements.strip()
     task_doc = _task_doc_text(spec)
     if task_doc:
         return task_doc
+    if spec.requirements:
+        return spec.requirements.strip()
     return f"Complete task {spec.task_id} for branch {spec.feature}."
 
 
@@ -106,16 +114,22 @@ def build_launch_command(*, spec: TaskSpec, prompt_path: Path, output_log_path: 
 
     agent_cmd = spec.agent_cmd.strip()
     prompt_arg = f'"$(cat {shlex.quote(str(prompt_path))})"'
-    log_redirect = f"2>&1 | tee -a {shlex.quote(str(output_log_path))}"
     default_cmd = build_agent_command(
         provider=spec.agent or "codex",
         model=spec.agent_model,
         extra_args=list(spec.agent_extra_args or []),
     )
-    if (spec.agent or "").strip() in {"codex", "claude_code"} and agent_cmd == default_cmd:
-        script = f"{agent_cmd} {prompt_arg} {log_redirect}"
+    if agent_requires_tty(spec):
+        if agent_cmd == default_cmd:
+            script = f"{agent_cmd} {prompt_arg}"
+        else:
+            script = agent_cmd
     else:
-        script = f"{agent_cmd} {log_redirect}"
+        log_redirect = f"2>&1 | tee -a {shlex.quote(str(output_log_path))}"
+        if agent_cmd == default_cmd:
+            script = f"{agent_cmd} {prompt_arg} {log_redirect}"
+        else:
+            script = f"{agent_cmd} {log_redirect}"
     return f"bash -lc {shlex.quote(script)}"
 
 

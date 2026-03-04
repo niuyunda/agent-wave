@@ -17,7 +17,7 @@ from agvv.orchestration.pr_workflow import (
     write_pr_feedback_file,
     wait_pr_status,
 )
-from agvv.orchestration.tmux_ops import tmux_kill_session, tmux_new_session, tmux_session_exists
+from agvv.orchestration.tmux_ops import tmux_kill_session, tmux_new_session, tmux_pipe_pane, tmux_session_exists
 from agvv.shared.errors import AgvvError
 
 __all__ = [
@@ -36,6 +36,7 @@ __all__ = [
     "tmux_session_exists",
     "tmux_kill_session",
     "tmux_new_session",
+    "tmux_pipe_pane",
     "commit_and_push_branch",
     "git_remote_exists",
     "ensure_pr_number_for_branch",

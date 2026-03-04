@@ -77,6 +77,10 @@ class DefaultOrchestrationPort:
         """Create a detached tmux session and run a command."""
         orchestration.tmux_new_session(session, cwd, command)
 
+    def tmux_pipe_pane(self, session: str, output_log_path: Path) -> None:
+        """Capture tmux pane output without breaking interactive TTY."""
+        orchestration.tmux_pipe_pane(session, output_log_path)
+
     def commit_and_push_branch(
         self,
         *,

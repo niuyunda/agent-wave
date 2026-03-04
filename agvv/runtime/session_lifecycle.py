@@ -5,7 +5,7 @@ from __future__ import annotations
 from agvv.runtime.adapters import resolve_orchestration_port
 from agvv.runtime.models import TaskState
 from agvv.runtime.ports import OrchestrationPort
-from agvv.runtime.prompting import build_launch_command, write_launch_artifacts
+from agvv.runtime.prompting import agent_requires_tty, build_launch_command, write_launch_artifacts
 from agvv.runtime.store import TaskSnapshot, TaskStore, now_iso
 from agvv.runtime.task_helpers import feature_worktree_path, mark_failed
 from agvv.shared.errors import AgvvError
@@ -51,6 +51,17 @@ def launch_coding_session(
             output_log_path=artifacts["output_log_path"],
         )
         port.tmux_new_session(task.session, worktree, launch_command)
+        if agent_requires_tty(task.spec):
+            try:
+                port.tmux_pipe_pane(task.session, artifacts["output_log_path"])
+            except Exception as exc:
+                store.add_event(
+                    task.id,
+                    "warning",
+                    "task.launch.log_capture",
+                    f"Failed to enable tmux pane log capture: {exc}",
+                    {"session": task.session, "output_log_path": str(artifacts["output_log_path"])},
+                )
     except Exception as exc:
         return mark_failed(store, task, "task.launch", f"Failed to launch coding session: {exc}")
 

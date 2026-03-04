@@ -77,6 +77,9 @@ class OrchestrationPort(Protocol):
     def tmux_new_session(self, session: str, cwd: Path, command: str) -> None:
         """Create a detached tmux session and execute a command."""
 
+    def tmux_pipe_pane(self, session: str, output_log_path: Path) -> None:
+        """Pipe tmux pane output to file while keeping TTY semantics."""
+
     def commit_and_push_branch(
         self,
         *,

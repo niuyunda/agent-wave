@@ -26,21 +26,14 @@ uv run agvv --help
 
 ## 快速开始
 
-### 1）写 `task.json`（只写需求）
+### 1）写 `task.json`（只放核心元信息）
 
 ```json
 {
   "project_name": "demo",
   "feature": "feat_demo",
   "repo": "owner/repo",
-  "requirements": "实现 demo 功能",
-  "constraints": [
-    "不修改公开 API"
-  ],
-  "acceptance_criteria": [
-    "单元测试通过",
-    "变更文件与验证结果有总结"
-  ],
+  "task_doc": "./task.md",
   "create_dirs": ["src", "tests"],
   "pr_title": "[agvv] feat_demo"
 }
@@ -85,12 +78,12 @@ agvv daemon run [--db-path ./tasks.db] [--once] [--interval-seconds 30] [--max-l
 - `feature`
 - `repo`
 
+必填：
+
+- `task_doc`（强制为 Markdown `.md`；把详细 requirements / constraints / acceptance criteria 都写在这里）
+
 推荐：
 
-- `requirements`
-- `constraints`
-- `acceptance_criteria`
-- `task_doc`（当 `requirements` 或 `pr_body` 缺失时兜底）
 - `pr_title`、`pr_body`、`pr_base`
 - `branch_remote`（默认 `origin`）
 
@@ -105,6 +98,9 @@ agvv daemon run [--db-path ./tasks.db] [--once] [--interval-seconds 30] [--max-l
 
 说明：
 
+- `task.json` 保持精简，只放任务标识和流程元信息。
+- 具体开发要求请写在 `task_doc`，不要放到 `requirements` / `constraints` 等字段。
+- `task_doc` 是必填项，且必须以 `.md` 结尾。
 - `acceptance_criteria` 若填写，必须为 2-5 条。
 - 不填写时，运行时会注入默认 2 条。
 - `base_dir` 由运行时推导：

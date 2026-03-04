@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from agvv.orchestration import AgvvError, tmux_new_session
-from agvv.orchestration.tmux_ops import tmux_kill_session, tmux_session_exists
+from agvv.orchestration.tmux_ops import tmux_kill_session, tmux_pipe_pane, tmux_session_exists
 
 
 def test_tmux_new_session_uses_tmux_cwd_and_preserves_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -62,3 +62,38 @@ def test_tmux_kill_session_invokes_runner_when_session_present() -> None:
         session_exists=lambda _session: True,
     )
     assert calls == [["tmux", "kill-session", "-t", "sess-live"]]
+
+
+def test_tmux_pipe_pane_appends_to_log_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_run(cmd: list[str], cwd: Path | None = None):
+        captured["cmd"] = cmd
+        captured["cwd"] = cwd
+        return type("R", (), {"stdout": ""})()
+
+    monkeypatch.setattr("agvv.orchestration.tmux_ops._run", _fake_run)
+    tmux_pipe_pane(
+        session="sess-pipe",
+        output_log_path=tmp_path / "logs" / "agent_output.log",
+        session_exists=lambda _session: True,
+    )
+
+    assert captured["cwd"] is None
+    assert captured["cmd"] == [
+        "tmux",
+        "pipe-pane",
+        "-o",
+        "-t",
+        "sess-pipe",
+        f"cat >> {(tmp_path / 'logs' / 'agent_output.log').resolve()}",
+    ]
+
+
+def test_tmux_pipe_pane_requires_existing_session(tmp_path: Path) -> None:
+    with pytest.raises(AgvvError, match="tmux session not found"):
+        tmux_pipe_pane(
+            session="sess-missing",
+            output_log_path=tmp_path / "agent_output.log",
+            session_exists=lambda _session: False,
+        )

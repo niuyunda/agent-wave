@@ -26,21 +26,14 @@ uv run agvv --help
 
 ## Quick Start
 
-### 1) Write `task.json` (requirements only)
+### 1) Write `task.json` (core metadata only)
 
 ```json
 {
   "project_name": "demo",
   "feature": "feat_demo",
   "repo": "owner/repo",
-  "requirements": "Implement demo feature",
-  "constraints": [
-    "Do not change public API"
-  ],
-  "acceptance_criteria": [
-    "Unit tests pass",
-    "Changed files and verification are summarized"
-  ],
+  "task_doc": "./task.md",
   "create_dirs": ["src", "tests"],
   "pr_title": "[agvv] feat_demo"
 }
@@ -85,12 +78,12 @@ Required:
 - `feature`
 - `repo`
 
+Required:
+
+- `task_doc` (mandatory Markdown `.md`; put detailed requirements/constraints/acceptance criteria here)
+
 Recommended:
 
-- `requirements`
-- `constraints`
-- `acceptance_criteria`
-- `task_doc` (fallback for requirements/PR body)
 - `pr_title`, `pr_body`, `pr_base`
 - `branch_remote` (default: `origin`)
 
@@ -105,6 +98,9 @@ Ignored at runtime (do not rely on these in spec):
 
 Notes:
 
+- Keep `task.json` minimal (core identifiers and workflow metadata only).
+- Put detailed development instructions into `task_doc` instead of `requirements`/`constraints` fields.
+- `task_doc` is required and must end with `.md`.
 - `acceptance_criteria` must be 2-5 items when provided.
 - If omitted, runtime injects a stable default 2-item checklist.
 - `base_dir` is resolved at runtime:
