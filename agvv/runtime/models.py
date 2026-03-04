@@ -21,6 +21,13 @@ _AGENT_PROVIDER_ALIASES = {
 }
 
 
+def _generate_task_id(project_name: str, feature: str) -> str:
+    """Generate runtime task id from project and feature."""
+
+    stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S")
+    return f"{project_name}-{feature}-{stamp}"
+
+
 class TaskState(str, Enum):
     """Lifecycle states for the task state machine."""
 
@@ -100,6 +107,38 @@ def _coerce_agent_extra_args(value: Any, label: str) -> list[str]:
     return parsed
 
 
+def _coerce_string_list(value: Any, label: str) -> list[str]:
+    """Validate a string list field with non-empty normalized values."""
+
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise AgvvError(f"{label} must be a list.")
+    parsed: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise AgvvError(f"{label} must contain only strings.")
+        normalized = item.strip()
+        if not normalized:
+            raise AgvvError(f"{label} must not contain empty values.")
+        parsed.append(normalized)
+    return parsed
+
+
+def _normalize_acceptance_criteria(value: Any) -> list[str]:
+    """Normalize acceptance criteria to a bounded machine-readable checklist."""
+
+    parsed = _coerce_string_list(value, "Task spec field 'acceptance_criteria'")
+    if not parsed:
+        return [
+            "Relevant tests/checks pass for changed scope.",
+            "Changed files and verification results are summarized.",
+        ]
+    if len(parsed) < 2 or len(parsed) > 5:
+        raise AgvvError("Task spec field 'acceptance_criteria' must contain 2-5 items.")
+    return parsed
+
+
 def normalize_agent_provider(value: str | None) -> str:
     """Normalize provider aliases into canonical provider identifiers."""
 
@@ -147,6 +186,9 @@ class TaskSpec:
     agent_extra_args: list[str] | None = None
     ticket: str | None = None
     task_doc: Path | None = None
+    requirements: str | None = None
+    constraints: list[str] | None = None
+    acceptance_criteria: list[str] | None = None
     params: dict[str, str] | None = None
     create_dirs: list[str] | None = None
     pr_title: str | None = None
@@ -170,6 +212,8 @@ class TaskSpec:
         extra_args = list(self.agent_extra_args) if self.agent_extra_args is not None else []
         params = dict(self.params) if self.params is not None else {}
         create_dirs = list(self.create_dirs) if self.create_dirs is not None else []
+        constraints = list(self.constraints) if self.constraints is not None else []
+        acceptance_criteria = list(self.acceptance_criteria) if self.acceptance_criteria is not None else []
         return {
             "task_id": self.task_id,
             "project_name": self.project_name,
@@ -188,6 +232,9 @@ class TaskSpec:
             "session": self.session,
             "ticket": self.ticket,
             "task_doc": str(self.task_doc) if self.task_doc else None,
+            "requirements": self.requirements,
+            "constraints": constraints,
+            "acceptance_criteria": acceptance_criteria,
             "params": params,
             "create_dirs": create_dirs,
             "pr_title": self.pr_title,
@@ -213,15 +260,7 @@ class TaskSpec:
         if missing:
             raise AgvvError(f"Task spec missing required fields: {', '.join(missing)}")
 
-        raw_id = payload.get("task_id")
-        if raw_id is None:
-            stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S")
-            raw_id = f"{payload['project_name']}-{payload['feature']}-{stamp}"
-        task_id = str(raw_id)
-        if _TASK_ID_RE.fullmatch(task_id) is None:
-            raise AgvvError(
-                f"Invalid task_id '{task_id}'. Use only letters, numbers, underscores, and hyphens."
-            )
+        task_id = _generate_task_id(str(payload["project_name"]), str(payload["feature"]))
 
         params = payload.get("params") or {}
         if not isinstance(params, dict):
@@ -230,28 +269,16 @@ class TaskSpec:
         create_dirs = payload.get("create_dirs") or []
         if not isinstance(create_dirs, list):
             raise AgvvError("Task spec field 'create_dirs' must be a list.")
+        constraints = _coerce_string_list(payload.get("constraints"), "Task spec field 'constraints'")
+        acceptance_criteria = _normalize_acceptance_criteria(payload.get("acceptance_criteria"))
+        requirements = str(payload["requirements"]).strip() if payload.get("requirements") else None
 
-        raw_agent = payload.get("agent")
-        provider: str
-        model: str | None
-        extra_args: list[str]
-        if raw_agent is None or isinstance(raw_agent, str):
-            provider = normalize_agent_provider(raw_agent if isinstance(raw_agent, str) else "codex")
-            model = str(payload["agent_model"]) if payload.get("agent_model") else None
-            extra_args = _coerce_agent_extra_args(payload.get("agent_extra_args"), "Task spec field 'agent_extra_args'")
-        elif isinstance(raw_agent, dict):
-            provider = normalize_agent_provider(
-                str(raw_agent["provider"]) if raw_agent.get("provider") is not None else "codex"
-            )
-            model = str(raw_agent["model"]) if raw_agent.get("model") else None
-            extra_args = _coerce_agent_extra_args(raw_agent.get("extra_args"), "Task spec field 'agent.extra_args'")
-        else:
-            raise AgvvError("Task spec field 'agent' must be a string or an object.")
-
-        raw_agent_cmd = payload.get("agent_cmd")
-        agent_cmd = str(raw_agent_cmd).strip() if raw_agent_cmd is not None else ""
-        if not agent_cmd:
-            agent_cmd = build_agent_command(provider=provider, model=model, extra_args=extra_args)
+        # Runtime agent selection is controlled by CLI flags (`task run --agent`).
+        # Keep spec focused on development requirements and acceptance criteria.
+        provider = "codex"
+        model = None
+        extra_args: list[str] = []
+        agent_cmd = build_agent_command(provider=provider, model=model, extra_args=extra_args)
 
         task_doc = payload.get("task_doc")
         return cls(
@@ -261,13 +288,16 @@ class TaskSpec:
             agent_cmd=agent_cmd,
             repo=str(payload["repo"]),
             base_dir=Path(str(payload.get("base_dir") or Path.cwd())).expanduser().resolve(),
-            from_branch=str(payload.get("from_branch", "main")),
+            from_branch="main",
             session=(str(payload["session"]) if payload.get("session") else None),
             agent=provider,
             agent_model=model,
             agent_extra_args=extra_args,
             ticket=(str(payload["ticket"]) if payload.get("ticket") else None),
             task_doc=(Path(str(task_doc)).expanduser().resolve() if task_doc else None),
+            requirements=requirements,
+            constraints=constraints,
+            acceptance_criteria=acceptance_criteria,
             params={str(k): str(v) for k, v in params.items()},
             create_dirs=[str(item) for item in create_dirs],
             pr_title=(str(payload["pr_title"]) if payload.get("pr_title") else None),

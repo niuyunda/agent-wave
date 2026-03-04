@@ -42,7 +42,7 @@ agvv --help
 
 If you use this as a skill, make sure `agvv` is available in the environment where the agent runs.
 For local development from source, use `uv sync --dev` and run CLI commands as `uv run agvv ...`.
-Task specs are JSON only.
+Task specs are JSON only, and should focus on development requirements.
 
 ## 5-Minute Quick Start
 
@@ -52,17 +52,12 @@ Create `task.json`:
 
 ```json
 {
-  "task_id": "demo_task_1",
   "project_name": "demo",
   "feature": "feat_demo",
   "repo": "owner/repo",
-  "base_dir": "~/Code",
-  "from_branch": "main",
-  "agent": {
-    "provider": "codex",
-    "model": "gpt-5",
-    "extra_args": ["--approval-mode", "auto"]
-  },
+  "requirements": "Implement demo feature",
+  "constraints": ["Do not change public API"],
+  "acceptance_criteria": ["Relevant tests pass"],
   "create_dirs": ["src", "tests"],
   "pr_title": "[agvv] feat_demo",
   "pr_body": "Implement demo feature",
@@ -77,10 +72,10 @@ Create `task.json`:
 Before `task run`, configure push remote for the managed bare repository:
 
 ```bash
-git -C ~/Code/demo/repo.git remote add origin <repo-url>
+git -C ./demo/repo.git remote add origin <repo-url>
 ```
 
-Use the project path from your own `project_name` and `base_dir`.
+Use the project path from your own `project_name`.
 If your task uses a non-default remote name via `branch_remote`, configure that remote instead.
 
 ### 3) Start the task
@@ -121,6 +116,7 @@ Common use: start new work with optional temporary agent provider override.
 Behavior:
 - with `--project-dir`: auto-adopt existing local project before launch.
 - without `--project-dir`: auto-init a new managed project layout before launch.
+- runtime ignores `task_id`, `agent*`, `agent_cmd`, and `from_branch` from spec.
 
 ### `task status`
 
@@ -169,32 +165,55 @@ Required fields:
 - `project_name`
 - `feature`
 - `repo`
-- `base_dir`
 
 Very common fields:
 
-- `task_id`: custom ID (auto-generated if omitted)
-- `task_id` format: letters/numbers/`_`/`-` only
-- `base_dir`: where project/worktrees live (required)
-- `from_branch`: starting branch (default `main`)
-- `session`: tmux session name override (default `agvv-<task_id>`)
-- `agent`:
-  - `provider`: `codex` or `claude_code` (`claude` / `claude-code` also accepted)
-  - `model`: optional model name
-  - `extra_args`: optional list of args
-- `agent_cmd`: optional full command override (if omitted, generated from provider/model/extra_args)
+- `task_id`: optional; runtime always generates and ignores this value from spec
+- `base_dir`: optional; resolved automatically at runtime from CLI context
 - `ticket`: optional external issue key stored in task context
+- `requirements`: primary task requirement text (single source of truth for agent prompt)
+- `constraints`: optional list of hard constraints for implementation
+- `acceptance_criteria`: optional checklist used as task completion definition
 - `params`: optional key-value map for task context metadata
 - `create_dirs`: directories to pre-create in feature worktree
 - `pr_title` / `pr_body`: PR content
-- `task_doc`: file path used as PR body fallback
-- `pr_base`: PR target branch (default equals `from_branch`)
+- `task_doc`: optional requirement/description file path; used as fallback when `requirements` or `pr_body` is missing
+- `pr_base`: PR target branch (default `main`)
 - `branch_remote`: git remote for push (default `origin`)
 - `commit_message`: custom finalization commit message
 - `timeout_minutes`: timeout before task becomes `timed_out`
 - `max_retry_cycles`: max auto retry cycles for PR feedback
 - `auto_cleanup`: cleanup automatically after merge/close/timeout
 - `keep_branch_on_cleanup`: keep feature branch after cleanup
+
+DoD note:
+
+- `acceptance_criteria` is machine-readable and must contain 2-5 items when provided.
+- if omitted, runtime injects a stable default 2-item checklist.
+- before PR finalization, agent must write `.agvv/dod_result.json` and mark each criterion as passing.
+
+Ignored in spec at runtime:
+
+- `task_id`
+- `agent`
+- `agent_model`
+- `agent_extra_args`
+- `agent_cmd`
+- `from_branch`
+
+Task launch also writes lightweight execution artifacts in feature worktree:
+
+- `.agvv/input_snapshot.json`: resolved task inputs used for this run
+- `.agvv/rendered_prompt.md`: final prompt passed to coding agent
+- `.agvv/agent_output.log`: captured agent stdout/stderr
+- `.agvv/agent_output_summary.txt`: latest output tail summary (written before finalization)
+- `.agvv/dod_result.json`: agent-produced machine-readable DoD check result required for finalization
+
+`base_dir` runtime resolution:
+
+- with `--project-dir`: uses the parent directory of that path as `base_dir`
+- without `--project-dir`: uses current working directory as `base_dir` and auto-creates `<cwd>/<project_name>/...`
+- recommended practice: do not set `base_dir` in `task.json`
 
 ## Recommended Skill Workflow
 
@@ -228,6 +247,5 @@ When this project is used as a skill, a practical workflow is:
 - `tmux not found`: install `tmux` first.
 - `gh` command issues: run `gh auth login` and verify repo access.
 - `No git remote 'origin' configured`: configure remote first (for example, `git -C <managed-repo.git> remote add origin <repo-url>`), or set/use the remote from `branch_remote`.
-- `Task id already exists`: change `task_id` or reuse existing task.
 - `Feature worktree has uncommitted changes`: commit/stash or use `task cleanup --force`.
 - `Unsupported agent provider`: use `codex` or `claude_code`.

@@ -42,7 +42,7 @@ agvv --help
 
 如果你把它当作 skill 使用，请确保 Agent 的运行环境里可以直接调用 `agvv`。
 如果你在本仓库本地开发，请使用 `uv sync --dev`，并通过 `uv run agvv ...` 运行命令。
-任务规格文件仅支持 JSON。
+任务规格文件仅支持 JSON，且建议只描述开发需求本身。
 
 ## 5 分钟快速开始
 
@@ -52,17 +52,12 @@ agvv --help
 
 ```json
 {
-  "task_id": "demo_task_1",
   "project_name": "demo",
   "feature": "feat_demo",
   "repo": "owner/repo",
-  "base_dir": "~/Code",
-  "from_branch": "main",
-  "agent": {
-    "provider": "codex",
-    "model": "gpt-5",
-    "extra_args": ["--approval-mode", "auto"]
-  },
+  "requirements": "实现 demo 功能",
+  "constraints": ["不修改公开 API"],
+  "acceptance_criteria": ["相关测试通过"],
   "create_dirs": ["src", "tests"],
   "pr_title": "[agvv] feat_demo",
   "pr_body": "Implement demo feature",
@@ -77,10 +72,10 @@ agvv --help
 在执行 `task run` 前，请先为受管裸仓库配置推送远端：
 
 ```bash
-git -C ~/Code/demo/repo.git remote add origin <repo-url>
+git -C ./demo/repo.git remote add origin <repo-url>
 ```
 
-请按你的 `project_name` 和 `base_dir` 替换路径。
+请按你的 `project_name` 替换路径。
 如果你在 spec 中通过 `branch_remote` 使用了非默认远端名，请配置对应远端。
 
 ### 3）启动任务
@@ -121,6 +116,7 @@ agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--proje
 行为说明：
 - 传入 `--project-dir`：自动 adopt 现有本地项目；
 - 不传入 `--project-dir`：自动 init 新项目布局。
+- 运行时会忽略 spec 里的 `task_id`、`agent*`、`agent_cmd`、`from_branch`。
 
 ### `task status`
 
@@ -169,32 +165,55 @@ agvv daemon run [--db-path ./tasks.db] [--once] [--interval-seconds 30] [--max-l
 - `project_name`
 - `feature`
 - `repo`
-- `base_dir`
 
 高频字段：
 
-- `task_id`：自定义任务 ID（不填会自动生成）
-- `task_id` 格式：仅允许字母、数字、`_`、`-`
-- `base_dir`：项目/worktree 根目录（必填）
-- `from_branch`：起始分支（默认 `main`）
-- `session`：tmux session 名称覆盖（默认 `agvv-<task_id>`）
-- `agent`：
-  - `provider`：`codex` 或 `claude_code`（也接受 `claude` / `claude-code`）
-  - `model`：可选模型名
-  - `extra_args`：可选参数列表
-- `agent_cmd`：可选完整命令覆盖（不填则按 provider/model/extra_args 自动生成）
+- `task_id`：可写可不写；运行时会自动生成并忽略 spec 中该值
+- `base_dir`：可选；运行时会自动按 CLI 上下文决定（通常无需填写）
 - `ticket`：可选外部需求单号，会写入任务上下文
+- `requirements`：任务主需求文本（作为传给 Agent 的单一事实源）
+- `constraints`：可选约束列表（实现时必须满足）
+- `acceptance_criteria`：可选验收标准清单（完成定义）
 - `params`：可选键值参数，会写入任务上下文
 - `create_dirs`：预创建目录
 - `pr_title` / `pr_body`：PR 标题与描述
-- `task_doc`：可作为 PR 描述的文件路径
-- `pr_base`：PR 目标分支（默认与 `from_branch` 一致）
+- `task_doc`：可选需求/说明文档路径；当 `requirements` 或 `pr_body` 缺失时作为兜底
+- `pr_base`：PR 目标分支（默认 `main`）
 - `branch_remote`：推送使用的远程名（默认 `origin`）
 - `commit_message`：最终提交时的自定义 commit message
 - `timeout_minutes`：超时时间
 - `max_retry_cycles`：PR 反馈最大自动修复轮次
 - `auto_cleanup`：合并/关闭/超时后自动清理
 - `keep_branch_on_cleanup`：清理时保留分支
+
+DoD 说明：
+
+- `acceptance_criteria` 为可机读字段；若填写，必须是 2-5 条。
+- 若不填写，运行时会注入稳定的默认 2 条验收项。
+- PR finalize 前，Agent 必须写入 `.agvv/dod_result.json`，并将每条验收项标记为通过。
+
+运行时会忽略的 spec 字段：
+
+- `task_id`
+- `agent`
+- `agent_model`
+- `agent_extra_args`
+- `agent_cmd`
+- `from_branch`
+
+任务启动后，会在 feature worktree 写入最小审计文件：
+
+- `.agvv/input_snapshot.json`：本次运行使用的输入快照
+- `.agvv/rendered_prompt.md`：最终传给 Agent 的 prompt
+- `.agvv/agent_output.log`：Agent 标准输出/错误输出日志
+- `.agvv/agent_output_summary.txt`：收尾阶段输出摘要（finalize 前生成）
+- `.agvv/dod_result.json`：Agent 产出的 DoD 机读校验结果（finalize 必需）
+
+`base_dir` 的运行时规则：
+
+- 传入 `--project-dir`：使用该路径的父目录作为 `base_dir`
+- 不传 `--project-dir`：使用当前工作目录作为 `base_dir`，并自动创建 `<cwd>/<project_name>/...` 目录布局
+- 因此建议 `task.json` 中不填写 `base_dir`
 
 ## 推荐 Skill 使用流程
 
@@ -228,6 +247,5 @@ agvv daemon run [--db-path ./tasks.db] [--once] [--interval-seconds 30] [--max-l
 - `tmux not found`：先安装 `tmux`。
 - `gh` 相关报错：先执行 `gh auth login` 并确认仓库权限。
 - `No git remote 'origin' configured`：先配置远端（例如 `git -C <managed-repo.git> remote add origin <repo-url>`），或改用/配置 `branch_remote` 指定的远端。
-- `Task id already exists`：更换 `task_id` 或复用已有任务。
 - `Feature worktree has uncommitted changes`：先提交/暂存，或使用 `task cleanup --force`。
 - `Unsupported agent provider`：仅支持 `codex` 与 `claude_code`。

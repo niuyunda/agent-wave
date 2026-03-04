@@ -30,8 +30,6 @@ Use this skill when the task includes one or more of:
 
 Use only these commands:
 
-- `agvv project init`
-- `agvv project adopt`
 - `agvv task run`
 - `agvv task status`
 - `agvv task retry`
@@ -44,13 +42,11 @@ Do not use deprecated command groups such as `feature` or `orch`.
 
 ## Required Inputs
 
-Before execution, ensure there is a task spec file (`.json` or `.yaml`) with at least:
-YAML support requires PyYAML to be installed (for example `uv add pyyaml`); without it, `.yaml` specs can fail at runtime:
+Before execution, ensure there is a task spec file (`.json`) with at least:
 
 - `project_name`
 - `feature`
 - `repo`
-- `base_dir`
 
 Before `agvv task run`, ensure the managed project bare repo has the configured remote:
 
@@ -60,16 +56,11 @@ Before `agvv task run`, ensure the managed project bare repo has the configured 
 
 Recommended fields:
 
-- `task_id`
-- `task_id` should only include letters/numbers/`_`/`-`
-- `base_dir`
-- `from_branch`
-- `session`
-- `agent.provider` (`codex` or `claude_code`)
-- `agent.model`
-- `agent.extra_args`
-- `agent_cmd` (full command override when needed)
 - `ticket`
+- `requirements` (primary requirement text)
+- `constraints` (hard constraints list)
+- `acceptance_criteria` (machine-readable completion checklist; 2-5 items when provided)
+- `task_doc` (fallback requirement/PR-body document)
 - `params`
 - `create_dirs`
 - `pr_title`, `pr_body`
@@ -85,23 +76,24 @@ Recommended fields:
 3. Never run deprecated `agvv` subcommands.
 4. Retry only through `agvv task retry`.
 5. Clean up finished or abandoned tasks through `agvv task cleanup`.
-6. Prefer explicit `task_id` in automation.
-7. Always set explicit `base_dir`.
-8. Never run `agvv task run` without a configured push remote for the target project repo.
+6. Do not rely on spec-side runtime controls (`task_id`, `agent*`, `agent_cmd`, `from_branch`) because runtime ignores them.
+7. Never run `agvv task run` without a configured push remote for the target project repo.
+8. Ensure coding output includes `.agvv/dod_result.json` with pass statuses for all acceptance criteria before finalize.
 
 ## Execution Algorithm
 
 1. **Validate Inputs**
    - Confirm spec file exists and is readable.
    - Confirm required fields exist.
-   - Confirm project layout exists (`project init` or `project adopt` completed).
-   - Confirm remote exists in `<base_dir>/<project_name>/repo.git` (default `origin` or `branch_remote`).
+   - Resolve runtime base directory:
+   - with `--project-dir`: parent directory of the provided path
+   - without `--project-dir`: current working directory
    - Confirm remote exists in `<base_dir>/<project_name>/repo.git` (default `origin` or `branch_remote`).
 
 2. **Prepare Project (If Needed)**
-   - Initialize or adopt repository layout:
-   - `agvv project init <project_name> --base-dir <base_dir>` or
-   - `agvv project adopt <project_name> --existing-repo <path> --base-dir <base_dir>`
+   - Initialize or adopt repository layout via `task run`:
+   - with `--project-dir`: auto-adopt existing project
+   - without `--project-dir`: auto-init new layout under `<base_dir>/<project_name>`
    - Configure remote:
    - `git -C <base_dir>/<project_name>/repo.git remote add <remote> <repo-url>`
 
