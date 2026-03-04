@@ -37,7 +37,7 @@ def test_load_task_spec_json_success(tmp_path: Path) -> None:
     assert spec.agent_cmd == "codex"
 
 
-def test_load_task_spec_ignores_agent_fields_from_spec(tmp_path: Path) -> None:
+def test_load_task_spec_ignores_agent_provider_fields_from_spec(tmp_path: Path) -> None:
     spec_path = _write_spec(
         tmp_path / "task-agent.json",
         {
@@ -45,21 +45,38 @@ def test_load_task_spec_ignores_agent_fields_from_spec(tmp_path: Path) -> None:
             "feature": "feat_agent",
             "repo": "owner/repo",
             "base_dir": str(tmp_path),
+            # These runtime-controlled fields are intentionally ignored:
             "agent_cmd": "echo should-not-be-used",
-            "agent": {
-                "provider": "claude_code",
-                "model": "sonnet",
-                "extra_args": ["--approval-mode", "auto"],
-            },
+            "agent": {"provider": "claude_code", "model": "sonnet"},
             "agent_model": "gpt-5",
+            # agent_extra_args IS honored (carries codex flags, not provider choice):
             "agent_extra_args": ["--dangerously-skip-permissions"],
         },
     )
     spec = load_task_spec(spec_path)
     assert spec.agent == "codex"
     assert spec.agent_model is None
-    assert spec.agent_extra_args == []
-    assert spec.agent_cmd == "codex"
+    assert spec.agent_extra_args == ["--dangerously-skip-permissions"]
+    assert spec.agent_cmd == "codex --dangerously-skip-permissions"
+
+
+def test_load_task_spec_resolves_relative_task_doc_against_spec_dir(tmp_path: Path) -> None:
+    task_doc = tmp_path / "task.md"
+    task_doc.write_text("# Task\n", encoding="utf-8")
+    spec_path = tmp_path / "task.json"
+    spec_path.write_text(
+        json.dumps(
+            {
+                "project_name": "demo",
+                "feature": "feat_reldoc",
+                "repo": "owner/repo",
+                "task_doc": "./task.md",  # relative — must resolve to tmp_path/task.md
+            }
+        ),
+        encoding="utf-8",
+    )
+    spec = load_task_spec(spec_path)
+    assert spec.task_doc == task_doc.resolve()
 
 
 def test_load_task_spec_ignores_task_id_from_spec(tmp_path: Path) -> None:

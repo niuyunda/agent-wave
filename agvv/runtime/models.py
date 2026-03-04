@@ -139,8 +139,12 @@ def _normalize_acceptance_criteria(value: Any) -> list[str]:
     return parsed
 
 
-def _coerce_task_doc_path(value: Any) -> Path | None:
-    """Normalize optional task_doc path from payload data."""
+def _coerce_task_doc_path(value: Any, spec_dir: Path | None = None) -> Path | None:
+    """Normalize optional task_doc path from payload data.
+
+    Relative paths are resolved against ``spec_dir`` (the directory containing
+    the spec file) when provided, falling back to CWD otherwise.
+    """
 
     if value is None:
         return None
@@ -149,7 +153,10 @@ def _coerce_task_doc_path(value: Any) -> Path | None:
     normalized = value.strip()
     if not normalized:
         return None
-    return Path(normalized).expanduser().resolve()
+    p = Path(normalized).expanduser()
+    if not p.is_absolute() and spec_dir is not None:
+        return (spec_dir / p).resolve()
+    return p.resolve()
 
 
 def normalize_agent_provider(value: str | None) -> str:
@@ -264,8 +271,15 @@ class TaskSpec:
         }
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any]) -> TaskSpec:
-        """Build a validated ``TaskSpec`` from untyped JSON/YAML payload."""
+    def from_payload(cls, payload: dict[str, Any], *, spec_dir: Path | None = None) -> TaskSpec:
+        """Build a validated ``TaskSpec`` from untyped JSON payload.
+
+        Args:
+            payload: Parsed JSON object from the spec file.
+            spec_dir: Directory of the spec file, used to resolve relative
+                paths (e.g. ``task_doc``). When ``None``, relative paths fall
+                back to CWD resolution.
+        """
 
         if not isinstance(payload, dict):
             raise AgvvError("Task spec root must be an object.")
@@ -291,10 +305,10 @@ class TaskSpec:
         # Runtime agent selection is controlled by CLI flags (`task run --agent`).
         provider = "codex"
         model = None
-        extra_args: list[str] = []
+        extra_args: list[str] = _coerce_agent_extra_args(payload.get("agent_extra_args"), "Task spec field 'agent_extra_args'")
         agent_cmd = build_agent_command(provider=provider, model=model, extra_args=extra_args)
 
-        task_doc = _coerce_task_doc_path(payload.get("task_doc"))
+        task_doc = _coerce_task_doc_path(payload.get("task_doc"), spec_dir=spec_dir)
         return cls(
             task_id=task_id,
             project_name=str(payload["project_name"]),

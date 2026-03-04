@@ -130,22 +130,34 @@ def write_launch_artifacts(*, worktree: Path, spec: TaskSpec) -> dict[str, Path]
     }
 
 
+def _codex_has_sandbox_flag(extra_args: list[str]) -> bool:
+    """Return True if user already specified a sandbox flag in extra_args."""
+    return "-s" in extra_args or "--sandbox" in extra_args
+
+
 def build_launch_command(*, spec: TaskSpec, prompt_path: Path, output_log_path: Path) -> str:
     """Build wrapped agent command with prompt injection and output logging."""
 
     agent_cmd = spec.agent_cmd.strip()
     prompt_arg = f'"$(cat {shlex.quote(str(prompt_path))})"'
+    extra_args = list(spec.agent_extra_args or [])
     default_cmd = build_agent_command(
         provider=spec.agent or "codex",
         model=spec.agent_model,
-        extra_args=list(spec.agent_extra_args or []),
+        extra_args=extra_args,
     )
     if agent_requires_tty(spec):
         if agent_cmd == default_cmd:
             if spec.agent_non_interactive and (spec.agent or "codex") == "codex":
                 parts = shlex.split(agent_cmd)
                 if parts and parts[0] == "codex":
-                    non_interactive_cmd = shlex.join([parts[0], "exec", *parts[1:]])
+                    # Auto-inject workspace-write sandbox for unattended codex
+                    # sessions unless the user has already set a sandbox flag.
+                    if not _codex_has_sandbox_flag(extra_args):
+                        parts = [parts[0], "exec", "-s", "workspace-write", *parts[1:]]
+                    else:
+                        parts = [parts[0], "exec", *parts[1:]]
+                    non_interactive_cmd = shlex.join(parts)
                     script = f"{non_interactive_cmd} {prompt_arg}"
                 else:
                     script = f"{agent_cmd} {prompt_arg}"
