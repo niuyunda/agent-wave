@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
+from agvv.orchestration.models import LayoutPaths
 from agvv.runtime.models import TaskState
 from agvv.runtime.store import TaskSnapshot
 
@@ -63,3 +64,17 @@ class DaemonRunLoopFn(Protocol):
         max_workers: int = 1,
     ) -> int:
         """Run repeated reconcile loops and return number of completed iterations."""
+
+
+class InitProjectFn(Protocol):
+    """Typed callable for initializing project layout."""
+
+    def __call__(self, project_name: str, base_dir: Path) -> LayoutPaths:
+        """Initialize a project as bare repository plus ``main`` worktree."""
+
+
+class AdoptProjectFn(Protocol):
+    """Typed callable for adopting an existing repository."""
+
+    def __call__(self, existing_repo: Path, project_name: str, base_dir: Path) -> tuple[LayoutPaths, str]:
+        """Adopt existing repository into layout and return default branch."""

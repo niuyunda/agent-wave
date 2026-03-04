@@ -95,6 +95,26 @@ This is the core loop for the skill: it checks active tasks and advances their s
 
 ## Command Guide (User-Facing)
 
+### `project init`
+
+Initialize an Agent Wave project layout:
+
+```bash
+agvv project init --project-name demo [--base-dir ~/code]
+```
+
+Common use: create a managed bare repo + `main` worktree structure before running tasks.
+
+### `project adopt`
+
+Adopt an existing local git repository into Agent Wave layout:
+
+```bash
+agvv project adopt --project-name demo --repo /path/to/repo [--base-dir ~/code]
+```
+
+Common use: migrate an existing repository into Agent Wave-managed worktree layout.
+
 ### `task run`
 
 Create and launch one task from spec:

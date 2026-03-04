@@ -95,6 +95,26 @@ agvv daemon run --once
 
 ## 命令说明（面向使用者）
 
+### `project init`
+
+初始化 Agent Wave 项目布局：
+
+```bash
+agvv project init --project-name demo [--base-dir ~/code]
+```
+
+常见用途：在启动任务前创建受管的裸仓库 + `main` worktree 结构。
+
+### `project adopt`
+
+把已有本地 git 仓库接入 Agent Wave 布局：
+
+```bash
+agvv project adopt --project-name demo --repo /path/to/repo [--base-dir ~/code]
+```
+
+常见用途：把已有项目迁移为 Agent Wave 管理的 worktree 布局。
+
 ### `task run`
 
 根据 spec 创建并启动任务：
