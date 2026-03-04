@@ -100,11 +100,34 @@ def test_adopt_project_preserves_upstream_origin_and_allows_feature_push_e2e(tmp
     assert pushed.returncode == 0
 
 
+def test_adopt_project_supports_bare_repo_source(tmp_path: Path) -> None:
+    bare_source = tmp_path / "source-bare.git"
+    _git(["init", "--bare", str(bare_source)], cwd=tmp_path)
+    seed_repo = _create_existing_repo(tmp_path / "seed", branch="main")
+    _git(["remote", "add", "origin", str(bare_source)], cwd=seed_repo)
+    _git(["push", "-u", "origin", "main"], cwd=seed_repo)
+
+    paths, branch = adopt_project(bare_source, "adopted-from-bare", tmp_path)
+    assert branch == "main"
+    assert paths.repo_dir.exists()
+    assert paths.main_dir.exists()
+
+
 def test_adopt_project_fails_when_source_not_git_repo(tmp_path: Path) -> None:
     src = tmp_path / "not-a-repo"
     src.mkdir()
-    with pytest.raises(AgvvError):
+    with pytest.raises(AgvvError, match="No '\\*\\.git' entry found"):
         adopt_project(src, "adopted", tmp_path)
+
+
+def test_adopt_project_fails_when_first_level_has_multiple_git_entries(tmp_path: Path) -> None:
+    parent = tmp_path / "multiple-git-entries"
+    parent.mkdir()
+    _git(["init", "--bare", str(parent / "a.git")], cwd=tmp_path)
+    _git(["init", "--bare", str(parent / "b.git")], cwd=tmp_path)
+
+    with pytest.raises(AgvvError, match="multiple '\\*\\.git' entries"):
+        adopt_project(parent, "adopted", tmp_path)
 
 
 def test_adopt_project_fails_when_target_already_initialized(tmp_path: Path) -> None:
