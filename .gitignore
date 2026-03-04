@@ -14,6 +14,7 @@ __pycache__/
 .coverage.*
 htmlcov/
 coverage.xml
+.tmp/
 
 # Build artifacts
 build/

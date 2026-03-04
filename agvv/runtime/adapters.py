@@ -87,6 +87,10 @@ class DefaultOrchestrationPort:
             commit_message=commit_message,
         )
 
+    def git_remote_exists(self, *, worktree: Path, remote: str) -> bool:
+        """Check whether a git remote exists in the target repository/worktree."""
+        return orchestration.git_remote_exists(worktree=worktree, remote=remote)
+
     def ensure_pr_number_for_branch(
         self,
         *,

@@ -11,6 +11,7 @@ from agvv.runtime.ports import OrchestrationPort
 from agvv.runtime.session_lifecycle import launch_coding_session
 from agvv.runtime.spec import load_task_spec
 from agvv.runtime.store import TaskSnapshot, TaskStore
+from agvv.shared.errors import AgvvError
 
 
 def _apply_agent_overrides(
@@ -43,6 +44,20 @@ def run_task_from_spec(
 
     spec = load_task_spec(spec_path)
     spec = _apply_agent_overrides(spec, agent_provider=agent_provider, agent_model=agent_model)
+    port = resolve_orchestration_port(orchestration_port)
+    layout = port.layout_paths(spec.project_name, spec.base_dir)
+    if not layout.repo_dir.exists():
+        raise AgvvError(
+            f"Project repository is not initialized at {layout.repo_dir}. "
+            f"Run `agvv project init {spec.project_name} --base-dir {spec.base_dir}` "
+            "or `agvv project adopt ...` first, then configure remote before running tasks."
+        )
+    if not port.git_remote_exists(worktree=layout.repo_dir, remote=spec.branch_remote):
+        raise AgvvError(
+            f"No git remote '{spec.branch_remote}' configured for project '{spec.project_name}'. "
+            f"Configure it with `git -C {layout.repo_dir} remote add {spec.branch_remote} <url>` "
+            "before running tasks."
+        )
 
     store = TaskStore(db_path)
     task = store.create_task(spec)
@@ -50,5 +65,5 @@ def run_task_from_spec(
         store,
         task,
         fresh_setup=True,
-        orchestration_port=resolve_orchestration_port(orchestration_port),
+        orchestration_port=port,
     )

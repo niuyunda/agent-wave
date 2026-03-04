@@ -1,6 +1,6 @@
 """Public orchestration API surface."""
 
-from agvv.orchestration.git_ops import commit_and_push_branch
+from agvv.orchestration.git_ops import commit_and_push_branch, git_remote_exists
 from agvv.orchestration.layout import adopt_project, cleanup_feature, cleanup_feature_force, init_project, layout_paths, start_feature
 from agvv.orchestration.models import (
     LayoutPaths,
@@ -37,6 +37,7 @@ __all__ = [
     "tmux_kill_session",
     "tmux_new_session",
     "commit_and_push_branch",
+    "git_remote_exists",
     "ensure_pr_number_for_branch",
     "check_pr_status",
     "wait_pr_status",

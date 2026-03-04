@@ -52,6 +52,12 @@ YAML support requires PyYAML to be installed (for example `uv add pyyaml`); with
 - `repo`
 - `base_dir`
 
+Before `agvv task run`, ensure the managed project bare repo has the configured remote:
+
+- default remote name: `origin`
+- custom remote: `branch_remote` from spec
+- setup example: `git -C <base_dir>/<project_name>/repo.git remote add <remote> <repo-url>`
+
 Recommended fields:
 
 - `task_id`
@@ -81,32 +87,42 @@ Recommended fields:
 5. Clean up finished or abandoned tasks through `agvv task cleanup`.
 6. Prefer explicit `task_id` in automation.
 7. Always set explicit `base_dir`.
+8. Never run `agvv task run` without a configured push remote for the target project repo.
 
 ## Execution Algorithm
 
 1. **Validate Inputs**
    - Confirm spec file exists and is readable.
    - Confirm required fields exist.
+   - Confirm project layout exists (`project init` or `project adopt` completed).
+   - Verify remote exists in `<base_dir>/<project_name>/repo.git` (default `origin` or `branch_remote`).
 
-2. **Start Task**
+2. **Prepare Project (If Needed)**
+   - Initialize or adopt repository layout:
+   - `agvv project init <project_name> --base-dir <base_dir>` or
+   - `agvv project adopt <project_name> --existing-repo <path> --base-dir <base_dir>`
+   - Configure remote:
+   - `git -C <base_dir>/<project_name>/repo.git remote add <remote> <repo-url>`
+
+3. **Start Task**
    - Run:
    - `agvv task run --spec <spec_path> [--db-path <db_path>] [--agent <provider>] [--model <model>]`
 
-3. **Observe Status**
+4. **Observe Status**
    - Run:
    - `agvv task status [--db-path <db_path>] [--task-id <task_id>] [--state <state>]`
 
-4. **Reconcile State**
+5. **Reconcile State**
    - Single-pass automation default:
    - `agvv daemon run --once [--db-path <db_path>] [--max-workers <n>]`
    - Loop mode only when explicitly required:
    - `agvv daemon run --interval-seconds <sec> [--max-loops <n>]`
 
-5. **Retry If Recoverable**
+6. **Retry If Recoverable**
    - Run:
    - `agvv task retry --task-id <task_id> [--db-path <db_path>] [--session <session>]`
 
-6. **Cleanup**
+7. **Cleanup**
    - Normal:
    - `agvv task cleanup --task-id <task_id> [--db-path <db_path>]`
    - Force (only when necessary):
@@ -115,6 +131,7 @@ Recommended fields:
 ## Failure Handling Policy
 
 - If command fails due to invalid spec: fix spec and retry `task run`.
+- If command fails with `No git remote '<name>' configured`: configure remote in managed `repo.git`, then re-run `task run`.
 - If task is non-recoverable: do not force retry logic; report and stop.
 - If cleanup fails because of local changes: prefer normal resolution, use `--force` only when requested or operationally required.
 - If `gh`/`tmux` is unavailable: report dependency issue clearly.

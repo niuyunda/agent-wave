@@ -10,6 +10,7 @@ from agvv.orchestration import (
     check_pr_status,
     commit_and_push_branch,
     ensure_pr_number_for_branch,
+    git_remote_exists,
     recommend_pr_next_action,
     summarize_pr_feedback,
     wait_pr_status,
@@ -24,6 +25,8 @@ def test_commit_and_push_branch_commits_when_worktree_dirty(monkeypatch: pytest.
 
     def _fake_run_git(args: list[str], cwd: Path | None = None):
         calls.append(args)
+        if args[:2] == ["remote", "get-url"]:
+            return type("R", (), {"stdout": "git@example.com:owner/repo.git\n"})()
         if args == ["status", "--porcelain"]:
             return type("R", (), {"stdout": " M README.md\n"})()
         if args[:2] == ["rev-list", "--count"]:
@@ -38,13 +41,15 @@ def test_commit_and_push_branch_commits_when_worktree_dirty(monkeypatch: pytest.
         remote="origin",
         commit_message="feat: update readme",
     )
-    assert ["add", "-A"] in calls
+    assert ["add", "-A", "--", ".", ":(exclude).agvv/**"] in calls
     assert ["commit", "-m", "feat: update readme"] in calls
     assert ["push", "-u", "origin", "feat-1"] in calls
 
 
 def test_commit_and_push_branch_fails_when_not_ahead(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     def _fake_run_git(args: list[str], cwd: Path | None = None):
+        if args[:2] == ["remote", "get-url"]:
+            return type("R", (), {"stdout": "git@example.com:owner/repo.git\n"})()
         if args == ["status", "--porcelain"]:
             return type("R", (), {"stdout": ""})()
         if args[:2] == ["rev-list", "--count"]:
@@ -60,6 +65,71 @@ def test_commit_and_push_branch_fails_when_not_ahead(monkeypatch: pytest.MonkeyP
             remote="origin",
             commit_message="feat: update readme",
         )
+
+
+def test_commit_and_push_branch_fails_when_remote_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def _fake_run_git(args: list[str], cwd: Path | None = None):
+        calls.append(args)
+        if args[:2] == ["remote", "get-url"]:
+            raise AgvvError("Command failed: git remote get-url origin")
+        return type("R", (), {"stdout": ""})()
+
+    monkeypatch.setattr("agvv.orchestration.git_ops._run_git", _fake_run_git)
+    with pytest.raises(AgvvError, match="No git remote 'origin' configured"):
+        commit_and_push_branch(
+            worktree=tmp_path,
+            feature="feat-1",
+            base_branch="main",
+            remote="origin",
+            commit_message="feat: update readme",
+        )
+    assert calls == [["remote", "get-url", "origin"]]
+
+
+def test_commit_and_push_branch_ignores_agvv_internal_changes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def _fake_run_git(args: list[str], cwd: Path | None = None):
+        calls.append(args)
+        if args[:2] == ["remote", "get-url"]:
+            return type("R", (), {"stdout": "git@example.com:owner/repo.git\n"})()
+        if args == ["status", "--porcelain"]:
+            return type("R", (), {"stdout": "?? .agvv/context.json\n M .agvv/feedback.txt\n"})()
+        if args[:2] == ["rev-list", "--count"]:
+            return type("R", (), {"stdout": "0\n"})()
+        return type("R", (), {"stdout": ""})()
+
+    monkeypatch.setattr("agvv.orchestration.git_ops._run_git", _fake_run_git)
+    with pytest.raises(AgvvError, match="produced no commits ahead of base branch"):
+        commit_and_push_branch(
+            worktree=tmp_path,
+            feature="feat-1",
+            base_branch="main",
+            remote="origin",
+            commit_message="feat: update readme",
+        )
+    assert ["add", "-A", "--", ".", ":(exclude).agvv/**"] not in calls
+    assert ["commit", "-m", "feat: update readme"] not in calls
+    assert ["push", "-u", "origin", "feat-1"] not in calls
+
+
+def test_git_remote_exists_true(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def _fake_run_git(args: list[str], cwd: Path | None = None):
+        assert args == ["remote", "get-url", "origin"]
+        return type("R", (), {"stdout": "git@example.com:owner/repo.git\n"})()
+
+    monkeypatch.setattr("agvv.orchestration.git_ops._run_git", _fake_run_git)
+    assert git_remote_exists(worktree=tmp_path, remote="origin") is True
+
+
+def test_git_remote_exists_false_when_lookup_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def _fake_run_git(args: list[str], cwd: Path | None = None):
+        raise AgvvError("Command failed: git remote get-url origin")
+
+    monkeypatch.setattr("agvv.orchestration.git_ops._run_git", _fake_run_git)
+    assert git_remote_exists(worktree=tmp_path, remote="origin") is False
 
 
 def test_ensure_pr_number_for_branch_falls_back_when_create_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

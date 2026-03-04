@@ -31,6 +31,7 @@ For each task, Agent Wave will:
 - `tmux`
 - `gh` (GitHub CLI, authenticated)
 - `uv`
+- A configured git remote for the managed project repo (default remote name: `origin`)
 
 ## Install And Check
 
@@ -41,10 +42,7 @@ agvv --help
 
 If you use this as a skill, make sure `agvv` is available in the environment where the agent runs.
 For local development from source, use `uv sync --dev` and run CLI commands as `uv run agvv ...`.
-If you want to use YAML task specs, install PyYAML using the flow that matches your setup:
-
-- Tool-installed `agvv`: reinstall with dependency included, e.g. `uv tool install --with pyyaml agvv` (or `uv tool install -w pyyaml agvv`).
-- Source checkout: add it to the project environment with `uv add pyyaml`.
+Task specs are JSON only.
 
 ## 5-Minute Quick Start
 
@@ -74,21 +72,34 @@ Create `task.json`:
 }
 ```
 
-### 2) Start the task
+### 2) Configure git remote (required)
+
+Before `task run`, configure push remote for the managed bare repository:
+
+```bash
+git -C ~/Code/demo/repo.git remote add origin <repo-url>
+```
+
+Use the project path from your own `project_name` and `base_dir`.
+If your task uses a non-default remote name via `branch_remote`, configure that remote instead.
+
+### 3) Start the task
 
 ```bash
 agvv task run --spec ./task.json
 ```
 
 Expected output includes task id, state, and tmux session name.
+You must initialize/adopt project layout and configure remote before running tasks.
+`agvv task run` does not auto-configure push remotes.
 
-### 3) Check status
+### 4) Check status
 
 ```bash
 agvv task status
 ```
 
-### 4) Reconcile once (daemon single pass)
+### 5) Reconcile once (daemon single pass)
 
 ```bash
 agvv daemon run --once
@@ -98,36 +109,16 @@ This is the core loop for the skill: it checks active tasks and advances their s
 
 ## Command Guide (User-Facing)
 
-### `project init`
-
-Initialize an Agent Wave project layout:
-
-```bash
-agvv project init --project-name demo [--base-dir ~/code]
-```
-
-Common use: create a managed bare repo + `main` worktree structure before running tasks.
-If missing at task launch time, `agvv task run` auto-runs this initialization process.
-
-### `project adopt`
-
-Adopt an existing local git repository into Agent Wave layout:
-
-```bash
-agvv project adopt --project-name demo --repo /path/to/repo [--base-dir ~/code]
-```
-
-Common use: migrate an existing repository into Agent Wave-managed worktree layout.
-
 ### `task run`
 
-Create and launch one task from spec:
+Create and launch one task from JSON spec:
 
 ```bash
 agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--model gpt-5]
 ```
 
 Common use: start new work with optional temporary agent/model override.
+Important: this command fails fast if the project layout is missing or the project remote is not configured.
 
 ### `task status`
 
@@ -234,6 +225,7 @@ When this project is used as a skill, a practical workflow is:
 
 - `tmux not found`: install `tmux` first.
 - `gh` command issues: run `gh auth login` and verify repo access.
+- `No git remote 'origin' configured`: configure remote first (for example, `git -C <managed-repo.git> remote add origin <repo-url>`), or set/use the remote from `branch_remote`.
 - `Task id already exists`: change `task_id` or reuse existing task.
 - `Feature worktree has uncommitted changes`: commit/stash or use `task cleanup --force`.
 - `Unsupported agent provider`: use `codex` or `claude_code`.

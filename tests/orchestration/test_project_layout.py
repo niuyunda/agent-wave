@@ -227,6 +227,32 @@ def test_start_feature_fails_when_feature_worktree_path_exists(tmp_path: Path) -
         )
 
 
+def test_init_project_layout_requires_remote_before_push(tmp_path: Path) -> None:
+    init_project("demo", tmp_path)
+    paths = start_feature(
+        project_name="demo",
+        feature="feat-no-remote",
+        base_dir=tmp_path,
+        from_branch="main",
+        agent=None,
+        task_id=None,
+        ticket=None,
+        params={},
+        create_dirs=[],
+    )
+    assert paths.feature_dir is not None
+    (paths.feature_dir / "note.txt").write_text("hello\n", encoding="utf-8")
+
+    with pytest.raises(AgvvError, match="No git remote 'origin' configured"):
+        commit_and_push_branch(
+            worktree=paths.feature_dir,
+            feature="feat-no-remote",
+            base_branch="main",
+            remote="origin",
+            commit_message="feat: add note",
+        )
+
+
 def test_cleanup_feature_deletes_branch_by_default(tmp_path: Path) -> None:
     init_project("demo", tmp_path)
     start_feature(
