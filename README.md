@@ -107,6 +107,7 @@ agvv project init --project-name demo [--base-dir ~/code]
 ```
 
 Common use: create a managed bare repo + `main` worktree structure before running tasks.
+If missing at task launch time, `agvv task run` auto-runs this initialization process.
 
 ### `project adopt`
 
@@ -175,12 +176,13 @@ Required fields:
 - `project_name`
 - `feature`
 - `repo`
+- `base_dir`
 
 Very common fields:
 
 - `task_id`: custom ID (auto-generated if omitted)
 - `task_id` format: letters/numbers/`_`/`-` only
-- `base_dir`: where project/worktrees live (default `~/code`)
+- `base_dir`: where project/worktrees live (required)
 - `from_branch`: starting branch (default `main`)
 - `session`: tmux session name override (default `agvv-<task_id>`)
 - `agent`:

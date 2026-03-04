@@ -164,19 +164,21 @@ def test_start_feature_fails_on_reserved_name(tmp_path: Path) -> None:
         )
 
 
-def test_start_feature_fails_when_project_not_initialized(tmp_path: Path) -> None:
-    with pytest.raises(AgvvError):
-        start_feature(
-            project_name="missing",
-            feature="feat-1",
-            base_dir=tmp_path,
-            from_branch="main",
-            agent=None,
-            task_id=None,
-            ticket=None,
-            params={},
-            create_dirs=[],
-        )
+def test_start_feature_auto_initializes_project_when_missing(tmp_path: Path) -> None:
+    paths = start_feature(
+        project_name="missing",
+        feature="feat-1",
+        base_dir=tmp_path,
+        from_branch="main",
+        agent=None,
+        task_id=None,
+        ticket=None,
+        params={},
+        create_dirs=[],
+    )
+    assert paths.repo_dir.exists()
+    assert paths.main_dir.exists()
+    assert paths.feature_dir is not None and paths.feature_dir.exists()
 
 
 def test_start_feature_reuses_existing_branch_after_cleanup_keep_branch(tmp_path: Path) -> None:

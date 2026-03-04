@@ -50,6 +50,7 @@ YAML support requires PyYAML to be installed (for example `uv add pyyaml`); with
 - `project_name`
 - `feature`
 - `repo`
+- `base_dir`
 
 Recommended fields:
 
@@ -79,7 +80,7 @@ Recommended fields:
 4. Retry only through `agvv task retry`.
 5. Clean up finished or abandoned tasks through `agvv task cleanup`.
 6. Prefer explicit `task_id` in automation.
-7. Use explicit `base_dir` in automation contexts.
+7. Always set explicit `base_dir`.
 
 ## Execution Algorithm
 
