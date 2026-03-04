@@ -32,13 +32,11 @@ def test_cli_task_run_invokes_tasking(monkeypatch: pytest.MonkeyPatch, tmp_path:
         db_path: Path | None,
         *,
         agent_provider: str | None = None,
-        agent_model: str | None = None,
         project_dir: Path | None = None,
     ):
         captured["spec_path"] = str(spec_path)
         captured["db_path"] = str(db_path)
         captured["agent_provider"] = agent_provider
-        captured["agent_model"] = agent_model
         captured["project_dir"] = str(project_dir) if project_dir is not None else None
         return _FakeTask(id="task-1", state=TaskState.CODING, project_name="demo", feature="feat-a", session="sess-1")
 
@@ -50,7 +48,6 @@ def test_cli_task_run_invokes_tasking(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert "Task started: task-1" in result.stdout
     assert str(spec.resolve()) == captured["spec_path"]
     assert captured["agent_provider"] is None
-    assert captured["agent_model"] is None
     assert captured["project_dir"] is None
 
 
@@ -70,11 +67,9 @@ def test_cli_task_run_forwards_agent_overrides(monkeypatch: pytest.MonkeyPatch, 
         db_path: Path | None,
         *,
         agent_provider: str | None = None,
-        agent_model: str | None = None,
         project_dir: Path | None = None,
     ):
         captured["agent_provider"] = agent_provider
-        captured["agent_model"] = agent_model
         captured["project_dir"] = str(project_dir) if project_dir is not None else None
         return _FakeTask(id="task-2", state=TaskState.CODING, project_name="demo", feature="feat-b", session="sess-2")
 
@@ -92,14 +87,11 @@ def test_cli_task_run_forwards_agent_overrides(monkeypatch: pytest.MonkeyPatch, 
             str(tmp_path / "tasks.db"),
             "--agent",
             "codex",
-            "--model",
-            "gpt-5",
         ],
     )
     assert result.exit_code == 0
     assert "Task started: task-2" in result.stdout
     assert captured["agent_provider"] == "codex"
-    assert captured["agent_model"] == "gpt-5"
     assert captured["project_dir"] is None
 
 
@@ -119,7 +111,6 @@ def test_cli_task_run_forwards_project_dir(monkeypatch: pytest.MonkeyPatch, tmp_
         db_path: Path | None,
         *,
         agent_provider: str | None = None,
-        agent_model: str | None = None,
         project_dir: Path | None = None,
     ):
         captured["project_dir"] = str(project_dir) if project_dir is not None else None

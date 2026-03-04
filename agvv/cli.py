@@ -37,7 +37,6 @@ def task_run(
     spec: Annotated[str, typer.Option("--spec", help="Path to task spec JSON.")],
     db_path: Annotated[str | None, typer.Option("--db-path", help="Path to SQLite task DB.")] = None,
     agent: Annotated[str | None, typer.Option("--agent", help="Override agent provider.")] = None,
-    model: Annotated[str | None, typer.Option("--model", help="Override agent model.")] = None,
     project_dir: Annotated[
         str | None,
         typer.Option(
@@ -53,7 +52,6 @@ def task_run(
             spec=spec,
             db_path=db_path,
             agent=agent,
-            model=model,
             project_dir=project_dir,
             run_task_from_spec=run_task_from_spec,
             resolve_optional_path=resolve_optional_path,

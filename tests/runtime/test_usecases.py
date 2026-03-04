@@ -105,12 +105,11 @@ def test_run_task_from_spec_applies_agent_overrides(monkeypatch: pytest.MonkeyPa
         spec_path=spec_path,
         db_path=tmp_path / "tasks.db",
         agent_provider="codex",
-        agent_model="gpt-5",
     )
     assert task.state == TaskState.CODING
-    assert launched == ["codex --model gpt-5"]
+    assert launched == ["codex"]
     assert task.spec.agent == "codex"
-    assert task.spec.agent_model == "gpt-5"
+    assert task.spec.agent_model is None
 
 
 def test_run_task_from_spec_rejects_invalid_agent_override(tmp_path: Path) -> None:
