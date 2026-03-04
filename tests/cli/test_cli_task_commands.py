@@ -33,11 +33,13 @@ def test_cli_task_run_invokes_tasking(monkeypatch: pytest.MonkeyPatch, tmp_path:
         *,
         agent_provider: str | None = None,
         agent_model: str | None = None,
+        project_dir: Path | None = None,
     ):
         captured["spec_path"] = str(spec_path)
         captured["db_path"] = str(db_path)
         captured["agent_provider"] = agent_provider
         captured["agent_model"] = agent_model
+        captured["project_dir"] = str(project_dir) if project_dir is not None else None
         return _FakeTask(id="task-1", state=TaskState.CODING, project_name="demo", feature="feat-a", session="sess-1")
 
     monkeypatch.setattr("agvv.cli.run_task_from_spec", _fake_run_task_from_spec)
@@ -49,6 +51,7 @@ def test_cli_task_run_invokes_tasking(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert str(spec.resolve()) == captured["spec_path"]
     assert captured["agent_provider"] is None
     assert captured["agent_model"] is None
+    assert captured["project_dir"] is None
 
 
 def test_cli_task_run_forwards_agent_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -68,9 +71,11 @@ def test_cli_task_run_forwards_agent_overrides(monkeypatch: pytest.MonkeyPatch, 
         *,
         agent_provider: str | None = None,
         agent_model: str | None = None,
+        project_dir: Path | None = None,
     ):
         captured["agent_provider"] = agent_provider
         captured["agent_model"] = agent_model
+        captured["project_dir"] = str(project_dir) if project_dir is not None else None
         return _FakeTask(id="task-2", state=TaskState.CODING, project_name="demo", feature="feat-b", session="sess-2")
 
     monkeypatch.setattr("agvv.cli.run_task_from_spec", _fake_run_task_from_spec)
@@ -95,6 +100,50 @@ def test_cli_task_run_forwards_agent_overrides(monkeypatch: pytest.MonkeyPatch, 
     assert "Task started: task-2" in result.stdout
     assert captured["agent_provider"] == "codex"
     assert captured["agent_model"] == "gpt-5"
+    assert captured["project_dir"] is None
+
+
+def test_cli_task_run_forwards_project_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    @dataclass
+    class _FakeTask:
+        id: str
+        state: TaskState
+        project_name: str
+        feature: str
+        session: str
+
+    captured: dict[str, str | None] = {}
+
+    def _fake_run_task_from_spec(
+        spec_path: Path,
+        db_path: Path | None,
+        *,
+        agent_provider: str | None = None,
+        agent_model: str | None = None,
+        project_dir: Path | None = None,
+    ):
+        captured["project_dir"] = str(project_dir) if project_dir is not None else None
+        return _FakeTask(id="task-3", state=TaskState.CODING, project_name="demo", feature="feat-c", session="sess-3")
+
+    monkeypatch.setattr("agvv.cli.run_task_from_spec", _fake_run_task_from_spec)
+    spec = tmp_path / "task.json"
+    spec.write_text("{}", encoding="utf-8")
+    project_dir = tmp_path / "repo"
+    project_dir.mkdir()
+
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "run",
+            "--spec",
+            str(spec),
+            "--project-dir",
+            str(project_dir),
+        ],
+    )
+    assert result.exit_code == 0
+    assert captured["project_dir"] == str(project_dir.resolve())
 
 
 def test_cli_task_status_no_tasks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

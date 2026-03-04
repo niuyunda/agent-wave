@@ -86,12 +86,12 @@ If your task uses a non-default remote name via `branch_remote`, configure that 
 ### 3) Start the task
 
 ```bash
-agvv task run --spec ./task.json
+agvv task run --spec ./task.json [--project-dir /path/to/existing/repo]
 ```
 
 Expected output includes task id, state, and tmux session name.
-You must initialize/adopt project layout and configure remote before running tasks.
-`agvv task run` does not auto-configure push remotes.
+If `--project-dir` is provided, Agent Wave auto-adopts that existing local project.
+If omitted, Agent Wave auto-initializes a new managed project layout.
 
 ### 4) Check status
 
@@ -114,11 +114,13 @@ This is the core loop for the skill: it checks active tasks and advances their s
 Create and launch one task from JSON spec:
 
 ```bash
-agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--model gpt-5]
+agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--model gpt-5] [--project-dir /path/to/repo]
 ```
 
 Common use: start new work with optional temporary agent/model override.
-Important: this command fails fast if the project layout is missing or the project remote is not configured.
+Behavior:
+- with `--project-dir`: auto-adopt existing local project before launch.
+- without `--project-dir`: auto-init a new managed project layout before launch.
 
 ### `task status`
 

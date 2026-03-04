@@ -85,24 +85,14 @@ def test_load_task_spec_rejects_non_object_payload(tmp_path: Path) -> None:
         load_task_spec(spec_path)
 
 
-def test_load_task_spec_rejects_invalid_json_without_yaml_support(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_load_task_spec_rejects_invalid_json(tmp_path: Path) -> None:
     spec_path = tmp_path / "task-invalid-json.txt"
     spec_path.write_text("::: invalid :::", encoding="utf-8")
-    real_import = __import__
-
-    def _fake_import(name, *args, **kwargs):
-        if name == "yaml":
-            raise ImportError("yaml unavailable")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr("builtins.__import__", _fake_import)
-    with pytest.raises(AgvvError, match="Install PyYAML"):
+    with pytest.raises(AgvvError, match="not valid JSON"):
         load_task_spec(spec_path)
 
 
-def test_load_task_spec_requires_base_dir(tmp_path: Path) -> None:
+def test_load_task_spec_defaults_base_dir_to_cwd(tmp_path: Path) -> None:
     spec_path = _write_spec(
         tmp_path / "task-missing-base-dir.json",
         {
@@ -112,5 +102,5 @@ def test_load_task_spec_requires_base_dir(tmp_path: Path) -> None:
             "repo": "owner/repo",
         },
     )
-    with pytest.raises(AgvvError, match="Task spec missing required fields: base_dir"):
-        load_task_spec(spec_path)
+    spec = load_task_spec(spec_path)
+    assert spec.base_dir == Path.cwd().resolve()

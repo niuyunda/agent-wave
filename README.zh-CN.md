@@ -72,7 +72,18 @@ agvv --help
 }
 ```
 
-### 2）启动任务
+### 2）配置 git 远端（必需）
+
+在执行 `task run` 前，请先为受管裸仓库配置推送远端：
+
+```bash
+git -C ~/Code/demo/repo.git remote add origin <repo-url>
+```
+
+请按你的 `project_name` 和 `base_dir` 替换路径。
+如果你在 spec 中通过 `branch_remote` 使用了非默认远端名，请配置对应远端。
+
+### 3）启动任务
 
 ```bash
 agvv task run --spec ./task.json [--project-dir /path/to/existing/repo]
@@ -82,13 +93,13 @@ agvv task run --spec ./task.json [--project-dir /path/to/existing/repo]
 如果传入 `--project-dir`，会自动按已有项目执行 adopt。
 如果不传入，会自动初始化新项目布局（init）后再启动任务。
 
-### 3）查看状态
+### 4）查看状态
 
 ```bash
 agvv task status
 ```
 
-### 4）执行一次调度
+### 5）执行一次调度
 
 ```bash
 agvv daemon run --once

@@ -32,6 +32,12 @@ class PrFeedbackSummaryView(Protocol):
 class OrchestrationPort(Protocol):
     """Runtime boundary for orchestration operations."""
 
+    def init_project(self, project_name: str, base_dir: Path) -> LayoutPathsView:
+        """Initialize managed project layout for a new project."""
+
+    def adopt_project(self, existing_repo: Path, project_name: str, base_dir: Path) -> tuple[LayoutPathsView, str]:
+        """Adopt an existing repository into the managed project layout."""
+
     def layout_paths(self, project_name: str, base_dir: Path, *, feature: str | None = None) -> LayoutPathsView:
         """Compute canonical filesystem layout paths for a project."""
 

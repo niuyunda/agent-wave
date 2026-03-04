@@ -38,6 +38,7 @@ def run_task_from_spec(
     *,
     agent_provider: str | None = None,
     agent_model: str | None = None,
+    project_dir: Path | None = None,
     orchestration_port: OrchestrationPort | None = None,
 ) -> TaskSnapshot:
     """Create task from spec and start coding session."""
@@ -45,18 +46,23 @@ def run_task_from_spec(
     spec = load_task_spec(spec_path)
     spec = _apply_agent_overrides(spec, agent_provider=agent_provider, agent_model=agent_model)
     port = resolve_orchestration_port(orchestration_port)
+
+    if project_dir is not None:
+        source_repo = project_dir.expanduser().resolve()
+        if not source_repo.exists():
+            raise AgvvError(f"Project directory not found: {source_repo}")
+        layout = port.layout_paths(spec.project_name, spec.base_dir)
+        if not layout.repo_dir.exists() or not layout.main_dir.exists():
+            port.adopt_project(existing_repo=source_repo, project_name=spec.project_name, base_dir=spec.base_dir)
+    else:
+        layout = port.layout_paths(spec.project_name, spec.base_dir)
+        if not layout.repo_dir.exists() or not layout.main_dir.exists():
+            port.init_project(project_name=spec.project_name, base_dir=spec.base_dir)
     layout = port.layout_paths(spec.project_name, spec.base_dir)
     if not layout.repo_dir.exists():
         raise AgvvError(
             f"Project repository is not initialized at {layout.repo_dir}. "
-            f"Run `agvv project init {spec.project_name} --base-dir {spec.base_dir}` "
-            "or `agvv project adopt ...` first, then configure remote before running tasks."
-        )
-    if not port.git_remote_exists(worktree=layout.repo_dir, remote=spec.branch_remote):
-        raise AgvvError(
-            f"No git remote '{spec.branch_remote}' configured for project '{spec.project_name}'. "
-            f"Configure it with `git -C {layout.repo_dir} remote add {spec.branch_remote} <url>` "
-            "before running tasks."
+            "Automatic project setup failed during task startup."
         )
 
     store = TaskStore(db_path)
