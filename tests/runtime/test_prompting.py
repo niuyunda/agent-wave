@@ -9,6 +9,7 @@ from agvv.runtime.prompting import build_launch_command
 
 
 def test_build_launch_command_uses_codex_exec_in_non_interactive_mode(tmp_path: Path) -> None:
+    prompt_path = tmp_path / "rendered_prompt.md"
     spec = TaskSpec(
         task_id="task_prompt",
         project_name="demo",
@@ -21,7 +22,10 @@ def test_build_launch_command_uses_codex_exec_in_non_interactive_mode(tmp_path: 
     )
     command = build_launch_command(
         spec=spec,
-        prompt_path=tmp_path / "rendered_prompt.md",
+        prompt_path=prompt_path,
         output_log_path=tmp_path / "agent_output.log",
     )
+    assert command.startswith("bash -lc ")
     assert "codex exec" in command
+    assert "-s workspace-write" in command
+    assert str(prompt_path) in command

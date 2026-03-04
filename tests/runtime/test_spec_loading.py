@@ -128,14 +128,27 @@ def test_load_task_spec_defaults_base_dir_to_cwd(tmp_path: Path) -> None:
     assert spec.base_dir == Path.cwd().resolve()
 
 
-def test_load_task_spec_forces_from_branch_main(tmp_path: Path) -> None:
+def test_load_task_spec_honors_user_specified_from_branch(tmp_path: Path) -> None:
     spec_path = _write_spec(
-        tmp_path / "task-force-main.json",
+        tmp_path / "task-from-branch.json",
         {
             "project_name": "demo",
             "feature": "feat_branch",
             "repo": "owner/repo",
             "from_branch": "release",
+        },
+    )
+    spec = load_task_spec(spec_path)
+    assert spec.from_branch == "release"
+
+
+def test_load_task_spec_defaults_from_branch_to_main_when_absent(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path / "task-no-branch.json",
+        {
+            "project_name": "demo",
+            "feature": "feat_default_branch",
+            "repo": "owner/repo",
         },
     )
     spec = load_task_spec(spec_path)
@@ -203,8 +216,8 @@ def test_from_payload_resets_runtime_controlled_fields(tmp_path: Path) -> None:
 
     # agent is always reset to codex
     assert spec.agent == "codex", f"expected agent='codex', got {spec.agent!r}"
-    # from_branch is always reset to main
-    assert spec.from_branch == "main", f"expected from_branch='main', got {spec.from_branch!r}"
+    # from_branch is preserved when the user specifies one
+    assert spec.from_branch == "release", f"expected from_branch='release', got {spec.from_branch!r}"
     # task_id is regenerated (different from the supplied custom id)
     assert spec.task_id != "custom-id-must-not-survive"
     assert spec.task_id.startswith("demo-feat_rt-")

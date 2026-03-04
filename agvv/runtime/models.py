@@ -191,7 +191,8 @@ class TaskSpec(BaseModel):
         payload["agent_model"] = None
         payload.pop("task_id", None)
         payload.pop("agent_cmd", None)
-        payload["from_branch"] = "main"
+        if not payload.get("from_branch"):
+            payload["from_branch"] = "main"
 
         if not payload.get("task_doc") and not payload.get("requirements"):
             raise AgvvError("Spec must include 'task_doc' (a Markdown file) or 'requirements' (a string).")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -147,6 +148,62 @@ def test_daemon_run_once_uses_parallel_path_when_multiple_workers(monkeypatch: p
     assert observed_max_workers == [2]
     assert sorted(submitted) == ["parallel_a", "parallel_b"]
     assert sorted(item.id for item in results) == ["parallel_a", "parallel_b"]
+
+
+def test_daemon_run_once_marks_timed_out_when_session_exceeds_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    spec = TaskSpec(
+        task_id="task_timeout",
+        project_name="demo",
+        feature="feat_timeout",
+        agent_cmd="echo run",
+        base_dir=tmp_path,
+        requirements="do something",
+    )
+    created = store.create_task(spec)
+    past = (datetime.now(tz=timezone.utc) - timedelta(minutes=spec.timeout_minutes + 1)).isoformat()
+    store.update_task(created.id, state=TaskState.RUNNING, started_at=past)
+
+    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: True)
+    monkeypatch.setattr("agvv.orchestration.tmux_kill_session", lambda _session: None)
+
+    results = daemon_run_once(tmp_path / "tasks.db")
+    assert len(results) == 1
+    updated = store.get_task("task_timeout")
+    assert updated.state == TaskState.TIMED_OUT
+    assert updated.last_error == "session_timeout"
+
+
+def test_daemon_run_once_marks_timed_out_even_when_kill_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    spec = TaskSpec(
+        task_id="task_kill_fail",
+        project_name="demo",
+        feature="feat_kill_fail",
+        agent_cmd="echo run",
+        base_dir=tmp_path,
+        requirements="do something",
+    )
+    created = store.create_task(spec)
+    past = (datetime.now(tz=timezone.utc) - timedelta(minutes=spec.timeout_minutes + 1)).isoformat()
+    store.update_task(created.id, state=TaskState.RUNNING, started_at=past)
+
+    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: True)
+    monkeypatch.setattr(
+        "agvv.orchestration.tmux_kill_session",
+        lambda _session: (_ for _ in ()).throw(RuntimeError("kill failed")),
+    )
+
+    results = daemon_run_once(tmp_path / "tasks.db")
+    assert len(results) == 1
+    updated = store.get_task("task_kill_fail")
+    # Task must still reach TIMED_OUT despite the kill error
+    assert updated.state == TaskState.TIMED_OUT
+    assert updated.last_error == "session_timeout"
 
 
 def test_reconcile_task_returns_terminal_state_unchanged(tmp_path: Path) -> None:

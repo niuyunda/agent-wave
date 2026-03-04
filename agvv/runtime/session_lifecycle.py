@@ -94,7 +94,7 @@ def launch_coding_session(
     return store.update_task(
         task.id,
         state=TaskState.RUNNING,
-        started_at=(task.started_at or now_iso()),
+        started_at=now_iso(),
         finished_at=None,
         last_error=None,
     )
