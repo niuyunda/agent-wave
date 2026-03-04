@@ -35,11 +35,13 @@ For each task, Agent Wave will:
 ## Install And Check
 
 ```bash
-uv sync --dev
-uv run agvv --help
+uv tool install agvv
+agvv --help
 ```
 
 If you use this as a skill, make sure `agvv` is available in the environment where the agent runs.
+For local development from source, use `uv sync --dev` and run CLI commands as `uv run agvv ...`.
+If you want to use YAML task specs, install PyYAML first (for example: `uv add pyyaml`).
 
 ## 5-Minute Quick Start
 
@@ -72,7 +74,7 @@ Create `task.json`:
 ### 2) Start the task
 
 ```bash
-uv run agvv task run --spec ./task.json
+agvv task run --spec ./task.json
 ```
 
 Expected output includes task id, state, and tmux session name.
@@ -80,13 +82,13 @@ Expected output includes task id, state, and tmux session name.
 ### 3) Check status
 
 ```bash
-uv run agvv task status
+agvv task status
 ```
 
 ### 4) Reconcile once (daemon single pass)
 
 ```bash
-uv run agvv daemon run --once
+agvv daemon run --once
 ```
 
 This is the core loop for the skill: it checks active tasks and advances their state.
@@ -154,15 +156,23 @@ Required fields:
 Very common fields:
 
 - `task_id`: custom ID (auto-generated if omitted)
+- `task_id` format: letters/numbers/`_`/`-` only
 - `base_dir`: where project/worktrees live (default `~/code`)
 - `from_branch`: starting branch (default `main`)
+- `session`: tmux session name override (default `agvv-<task_id>`)
 - `agent`:
-  - `provider`: `codex` or `claude_code`
+  - `provider`: `codex` or `claude_code` (`claude` / `claude-code` also accepted)
   - `model`: optional model name
   - `extra_args`: optional list of args
+- `agent_cmd`: optional full command override (if omitted, generated from provider/model/extra_args)
+- `ticket`: optional external issue key stored in task context
+- `params`: optional key-value map for task context metadata
 - `create_dirs`: directories to pre-create in feature worktree
 - `pr_title` / `pr_body`: PR content
 - `task_doc`: file path used as PR body fallback
+- `pr_base`: PR target branch (default equals `from_branch`)
+- `branch_remote`: git remote for push (default `origin`)
+- `commit_message`: custom finalization commit message
 - `timeout_minutes`: timeout before task becomes `timed_out`
 - `max_retry_cycles`: max auto retry cycles for PR feedback
 - `auto_cleanup`: cleanup automatically after merge/close/timeout

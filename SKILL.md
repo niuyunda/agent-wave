@@ -30,18 +30,20 @@ Use this skill when the task includes one or more of:
 
 Use only these commands:
 
-- `uv run agvv task run`
-- `uv run agvv task status`
-- `uv run agvv task retry`
-- `uv run agvv task cleanup`
-- `uv run agvv daemon run`
+- `agvv task run`
+- `agvv task status`
+- `agvv task retry`
+- `agvv task cleanup`
+- `agvv daemon run`
+
+If running from source checkout (not tool-installed), use the `uv run agvv ...` form.
 
 Do not use deprecated command groups such as `project`, `feature`, or `orch`.
 
 ## Required Inputs
 
 Before execution, ensure there is a task spec file (`.json` or `.yaml`) with at least:
-YAML support requires PyYAML to be installed (for example `uv add pyyaml` or `pip install pyyaml`); without it, `.yaml` specs can fail at runtime:
+YAML support requires PyYAML to be installed (for example `uv add pyyaml`); without it, `.yaml` specs can fail at runtime:
 
 - `project_name`
 - `feature`
@@ -50,13 +52,20 @@ YAML support requires PyYAML to be installed (for example `uv add pyyaml` or `pi
 Recommended fields:
 
 - `task_id`
+- `task_id` should only include letters/numbers/`_`/`-`
 - `base_dir`
 - `from_branch`
+- `session`
 - `agent.provider` (`codex` or `claude_code`)
 - `agent.model`
 - `agent.extra_args`
+- `agent_cmd` (full command override when needed)
+- `ticket`
+- `params`
 - `create_dirs`
 - `pr_title`, `pr_body`
+- `pr_base`, `branch_remote`
+- `commit_message`
 - `timeout_minutes`, `max_retry_cycles`
 - `auto_cleanup`, `keep_branch_on_cleanup`
 
@@ -78,27 +87,27 @@ Recommended fields:
 
 2. **Start Task**
    - Run:
-   - `uv run agvv task run --spec <spec_path> [--db-path <db_path>] [--agent <provider>] [--model <model>]`
+   - `agvv task run --spec <spec_path> [--db-path <db_path>] [--agent <provider>] [--model <model>]`
 
 3. **Observe Status**
    - Run:
-   - `uv run agvv task status [--db-path <db_path>] [--task-id <task_id>] [--state <state>]`
+   - `agvv task status [--db-path <db_path>] [--task-id <task_id>] [--state <state>]`
 
 4. **Reconcile State**
    - Single-pass automation default:
-   - `uv run agvv daemon run --once [--db-path <db_path>] [--max-workers <n>]`
+   - `agvv daemon run --once [--db-path <db_path>] [--max-workers <n>]`
    - Loop mode only when explicitly required:
-   - `uv run agvv daemon run --interval-seconds <sec> [--max-loops <n>]`
+   - `agvv daemon run --interval-seconds <sec> [--max-loops <n>]`
 
 5. **Retry If Recoverable**
    - Run:
-   - `uv run agvv task retry --task-id <task_id> [--db-path <db_path>] [--session <session>]`
+   - `agvv task retry --task-id <task_id> [--db-path <db_path>] [--session <session>]`
 
 6. **Cleanup**
    - Normal:
-   - `uv run agvv task cleanup --task-id <task_id> [--db-path <db_path>]`
+   - `agvv task cleanup --task-id <task_id> [--db-path <db_path>]`
    - Force (only when necessary):
-   - `uv run agvv task cleanup --task-id <task_id> [--db-path <db_path>] --force`
+   - `agvv task cleanup --task-id <task_id> [--db-path <db_path>] --force`
 
 ## Failure Handling Policy
 
@@ -119,9 +128,9 @@ When using this skill, the agent response should include:
 ## Minimal Reference
 
 ```bash
-uv run agvv task run --spec ./task.json
-uv run agvv task status --task-id <task_id>
-uv run agvv daemon run --once
-uv run agvv task retry --task-id <task_id>
-uv run agvv task cleanup --task-id <task_id>
+agvv task run --spec ./task.json
+agvv task status --task-id <task_id>
+agvv daemon run --once
+agvv task retry --task-id <task_id>
+agvv task cleanup --task-id <task_id>
 ```
