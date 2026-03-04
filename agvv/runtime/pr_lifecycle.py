@@ -10,6 +10,7 @@ from agvv.runtime.adapters import resolve_orchestration_port
 from agvv.runtime.models import TaskState
 from agvv.runtime.ports import OrchestrationPort
 from agvv.runtime.prompting import (
+    detect_blocking_prompt,
     agent_requires_tty,
     build_launch_command,
     validate_dod_result,
@@ -23,6 +24,14 @@ from agvv.shared.pr import PrStatus
 CleanupTaskFn = Callable[[str, Path | None, bool], TaskSnapshot]
 
 
+def _coding_session_timed_out(task: TaskSnapshot) -> bool:
+    """Return whether coding session runtime exceeded configured timeout."""
+
+    since = parse_iso(task.started_at or task.created_at)
+    elapsed = datetime.now(tz=timezone.utc) - since
+    return elapsed > timedelta(minutes=task.spec.timeout_minutes)
+
+
 def handle_coding_completion(
     store: TaskStore,
     task: TaskSnapshot,
@@ -32,11 +41,46 @@ def handle_coding_completion(
     """Move ``CODING`` task to ``PR_OPEN`` when coding session is done."""
 
     port = resolve_orchestration_port(orchestration_port)
+    worktree = feature_worktree_path(task, orchestration_port=port)
 
     if port.tmux_session_exists(task.session):
+        blocked_detection = detect_blocking_prompt(worktree=worktree)
+        if blocked_detection is not None:
+            reason_code, reason_label = blocked_detection
+            message = (
+                "Coding session appears blocked by interactive prompt "
+                f"({reason_label}). Retry with forced session restart after fixing agent configuration."
+            )
+            store.add_event(
+                task.id,
+                "error",
+                "coding.blocked",
+                message,
+                {"session": task.session, "reason_code": reason_code, "reason": reason_label},
+            )
+            return store.update_task(task.id, state=TaskState.BLOCKED, last_error=message, finished_at=now_iso())
+        if _coding_session_timed_out(task):
+            message = f"Coding session exceeded timeout ({task.spec.timeout_minutes} minutes)."
+            store.add_event(
+                task.id,
+                "error",
+                "coding.timeout",
+                message,
+                {"session": task.session, "timeout_minutes": task.spec.timeout_minutes},
+            )
+            try:
+                port.tmux_kill_session(task.session)
+            except Exception as exc:
+                store.add_event(
+                    task.id,
+                    "warning",
+                    "coding.timeout.kill_session",
+                    f"Failed to terminate timed-out tmux session: {exc}",
+                    {"session": task.session},
+                )
+            return store.update_task(task.id, state=TaskState.TIMED_OUT, last_error="coding_timeout", finished_at=now_iso())
         return task
 
-    worktree = feature_worktree_path(task, orchestration_port=port)
     if not worktree.exists():
         return mark_failed(store, task, "coding.verify", f"Worktree missing: {worktree}")
     summary_path = write_output_summary(worktree=worktree)

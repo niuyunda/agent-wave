@@ -324,6 +324,82 @@ def test_retry_task_relaunches_when_session_missing(monkeypatch: pytest.MonkeyPa
     assert retried.finished_at is None
 
 
+def test_retry_task_force_restart_kills_existing_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    spec = TaskSpec(
+        task_id="task_retry_force",
+        project_name="demo",
+        feature="feat_retry_force",
+        agent_cmd="echo run",
+        repo="owner/repo",
+        base_dir=tmp_path,
+        session="sess-force",
+    )
+    created = store.create_task(spec)
+    store.update_task(created.id, state=TaskState.CODING, started_at="2026-03-03T00:00:00+00:00")
+    (tmp_path / "demo" / "feat_retry_force").mkdir(parents=True, exist_ok=True)
+
+    called: dict[str, bool] = {"killed": False}
+    session_live: dict[str, bool] = {"value": True}
+    monkeypatch.setattr(
+        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists",
+        lambda _session: session_live["value"],
+    )
+    monkeypatch.setattr(
+        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_kill_session",
+        lambda _session: (called.__setitem__("killed", True), session_live.__setitem__("value", False)),
+    )
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.start_feature", lambda **kwargs: None)
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_new_session", lambda _s, _c, _m: None)
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_pipe_pane", lambda _s, _p: None)
+
+    retried = retry_task(task_id="task_retry_force", db_path=tmp_path / "tasks.db", force_restart=True)
+    assert called["killed"] is True
+    assert retried.state == TaskState.CODING
+    assert retried.finished_at is None
+
+
+def test_retry_task_force_restart_kills_session_for_blocked_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    spec = TaskSpec(
+        task_id="task_retry_force_blocked",
+        project_name="demo",
+        feature="feat_retry_force_blocked",
+        agent_cmd="echo run",
+        repo="owner/repo",
+        base_dir=tmp_path,
+        session="sess-force-blocked",
+    )
+    created = store.create_task(spec)
+    store.update_task(created.id, state=TaskState.BLOCKED, last_error="blocked-by-prompt")
+    (tmp_path / "demo" / "feat_retry_force_blocked").mkdir(parents=True, exist_ok=True)
+
+    called: dict[str, bool] = {"killed": False}
+    session_live: dict[str, bool] = {"value": True}
+    monkeypatch.setattr(
+        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists",
+        lambda _session: session_live["value"],
+    )
+    monkeypatch.setattr(
+        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_kill_session",
+        lambda _session: (called.__setitem__("killed", True), session_live.__setitem__("value", False)),
+    )
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.start_feature", lambda **kwargs: None)
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_new_session", lambda _s, _c, _m: None)
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_pipe_pane", lambda _s, _p: None)
+
+    retried = retry_task(
+        task_id="task_retry_force_blocked",
+        db_path=tmp_path / "tasks.db",
+        force_restart=True,
+    )
+    assert called["killed"] is True
+    assert retried.state == TaskState.CODING
+    assert retried.finished_at is None
+
+
 def test_retry_task_rejects_non_recoverable_state(tmp_path: Path) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
@@ -358,6 +434,28 @@ def test_cleanup_task_marks_cleaned(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     )
     cleaned = cleanup_task("task_clean", db_path=tmp_path / "tasks.db")
     assert cleaned.state == TaskState.CLEANED
+
+
+def test_cleanup_task_preserves_last_error_for_history(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    spec = TaskSpec(
+        task_id="task_clean_error",
+        project_name="demo",
+        feature="feat_clean_error",
+        agent_cmd="echo run",
+        repo="owner/repo",
+        base_dir=tmp_path,
+    )
+    created = store.create_task(spec)
+    store.update_task(created.id, state=TaskState.BLOCKED, last_error="blocked by prompt")
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.cleanup_feature",
+        lambda project_name, feature, base_dir, delete_branch: None,
+    )
+    cleaned = cleanup_task("task_clean_error", db_path=tmp_path / "tasks.db")
+    assert cleaned.state == TaskState.CLEANED
+    assert cleaned.last_error == "blocked by prompt"
 
 
 @pytest.mark.parametrize(("keep_branch", "expect_branch_delete"), [(True, False), (False, True)])

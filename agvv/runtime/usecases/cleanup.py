@@ -48,4 +48,5 @@ def cleanup_task(
         return mark_failed(store, task, "task.cleanup", f"Cleanup failed: {exc}")
 
     store.add_event(task.id, "info", "task.cleanup", "Task resources cleaned")
-    return store.update_task(task.id, state=TaskState.CLEANED, finished_at=now_iso(), last_error=None)
+    # Preserve last_error for postmortem visibility even after cleanup succeeds.
+    return store.update_task(task.id, state=TaskState.CLEANED, finished_at=now_iso())

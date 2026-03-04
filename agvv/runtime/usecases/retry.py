@@ -18,6 +18,7 @@ def retry_task(
     db_path: Path | None = None,
     session: str | None = None,
     *,
+    force_restart: bool = False,
     orchestration_port: OrchestrationPort | None = None,
 ) -> TaskSnapshot:
     """Retry task from recoverable states and relaunch coding session."""
@@ -29,8 +30,18 @@ def retry_task(
 
     if task.state not in RECOVERABLE_RETRY_STATES:
         raise AgvvError(f"Cannot retry task in state: {task.state.value}")
-    if task.state == TaskState.CODING and port.tmux_session_exists(task.session):
+    session_exists = port.tmux_session_exists(task.session)
+    if session_exists and not force_restart:
         raise AgvvError(f"Task is already running in session: {task.session}")
+    if session_exists and force_restart:
+        port.tmux_kill_session(task.session)
+        store.add_event(
+            task.id,
+            "warning",
+            "task.retry.force_restart",
+            "Killed existing tmux session before retry relaunch.",
+            {"session": task.session, "state": task.state.value},
+        )
 
     if session and session != task.session:
         store.add_event(task.id, "info", "task.retry", "Session override requested", {"session": session})
