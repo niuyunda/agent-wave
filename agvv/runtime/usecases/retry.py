@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agvv.runtime.adapters import resolve_orchestration_port
-from agvv.runtime.models import RECOVERABLE_RETRY_STATES, TaskState
+from agvv.runtime.models import RECOVERABLE_RETRY_STATES
 from agvv.runtime.ports import OrchestrationPort
 from agvv.runtime.session_lifecycle import launch_coding_session
 from agvv.runtime.store import TaskSnapshot, TaskStore
