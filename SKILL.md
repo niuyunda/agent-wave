@@ -107,7 +107,7 @@ Recommended fields:
 
 3. **Start Task**
    - Run:
-   - `agvv task run --spec <spec_path> [--db-path <db_path>] [--agent <provider>] [--model <model>]`
+   - `agvv task run --spec <spec_path> [--db-path <db_path>] [--agent <provider>]`
 
 4. **Observe Status**
    - Run:

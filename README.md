@@ -114,10 +114,10 @@ This is the core loop for the skill: it checks active tasks and advances their s
 Create and launch one task from JSON spec:
 
 ```bash
-agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--model gpt-5] [--project-dir /path/to/repo]
+agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--project-dir /path/to/repo]
 ```
 
-Common use: start new work with optional temporary agent/model override.
+Common use: start new work with optional temporary agent provider override.
 Behavior:
 - with `--project-dir`: auto-adopt existing local project before launch.
 - without `--project-dir`: auto-init a new managed project layout before launch.

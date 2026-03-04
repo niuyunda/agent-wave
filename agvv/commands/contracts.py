@@ -19,7 +19,6 @@ class RunTaskFromSpecFn(Protocol):
         db_path: Path | None = None,
         *,
         agent_provider: str | None = None,
-        agent_model: str | None = None,
         project_dir: Path | None = None,
     ) -> TaskSnapshot:
         """Create a task from a spec file and launch its coding session."""

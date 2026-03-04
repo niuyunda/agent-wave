@@ -15,7 +15,6 @@ def execute_task_run(
     spec: str,
     db_path: str | None,
     agent: str | None,
-    model: str | None,
     project_dir: str | None,
     run_task_from_spec: RunTaskFromSpecFn,
     resolve_optional_path: Callable[[str | None], Path | None],
@@ -26,7 +25,6 @@ def execute_task_run(
         spec_path=Path(spec).expanduser().resolve(),
         db_path=resolve_optional_path(db_path),
         agent_provider=agent,
-        agent_model=model,
         project_dir=resolve_optional_path(project_dir),
     )
     return (

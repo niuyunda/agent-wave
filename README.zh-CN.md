@@ -114,10 +114,10 @@ agvv daemon run --once
 根据 JSON spec 创建并启动任务：
 
 ```bash
-agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--model gpt-5] [--project-dir /path/to/repo]
+agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--project-dir /path/to/repo]
 ```
 
-常见用途：启动新任务，也可以临时覆盖 agent/model。
+常见用途：启动新任务，也可以临时覆盖 agent provider。
 行为说明：
 - 传入 `--project-dir`：自动 adopt 现有本地项目；
 - 不传入 `--project-dir`：自动 init 新项目布局。
