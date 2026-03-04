@@ -40,7 +40,7 @@ def test_cli_task_run_invokes_tasking(monkeypatch: pytest.MonkeyPatch, tmp_path:
         captured["agent_provider"] = agent_provider
         captured["agent_non_interactive"] = str(agent_non_interactive)
         captured["project_dir"] = str(project_dir) if project_dir is not None else None
-        return _FakeTask(id="task-1", state=TaskState.CODING, project_name="demo", feature="feat-a", session="sess-1")
+        return _FakeTask(id="task-1", state=TaskState.RUNNING, project_name="demo", feature="feat-a", session="sess-1")
 
     monkeypatch.setattr("agvv.cli.run_task_from_spec", _fake_run_task_from_spec)
     spec = tmp_path / "task.json"
@@ -76,7 +76,7 @@ def test_cli_task_run_forwards_agent_overrides(monkeypatch: pytest.MonkeyPatch, 
         captured["agent_provider"] = agent_provider
         captured["agent_non_interactive"] = str(agent_non_interactive)
         captured["project_dir"] = str(project_dir) if project_dir is not None else None
-        return _FakeTask(id="task-2", state=TaskState.CODING, project_name="demo", feature="feat-b", session="sess-2")
+        return _FakeTask(id="task-2", state=TaskState.RUNNING, project_name="demo", feature="feat-b", session="sess-2")
 
     monkeypatch.setattr("agvv.cli.run_task_from_spec", _fake_run_task_from_spec)
     spec = tmp_path / "task.json"
@@ -122,7 +122,7 @@ def test_cli_task_run_forwards_project_dir(monkeypatch: pytest.MonkeyPatch, tmp_
     ):
         captured["agent_non_interactive"] = str(agent_non_interactive)
         captured["project_dir"] = str(project_dir) if project_dir is not None else None
-        return _FakeTask(id="task-3", state=TaskState.CODING, project_name="demo", feature="feat-c", session="sess-3")
+        return _FakeTask(id="task-3", state=TaskState.RUNNING, project_name="demo", feature="feat-c", session="sess-3")
 
     monkeypatch.setattr("agvv.cli.run_task_from_spec", _fake_run_task_from_spec)
     spec = tmp_path / "task.json"
@@ -166,7 +166,7 @@ def test_cli_task_run_can_disable_non_interactive(monkeypatch: pytest.MonkeyPatc
         project_dir: Path | None = None,
     ):
         captured["agent_non_interactive"] = str(agent_non_interactive)
-        return _FakeTask(id="task-4", state=TaskState.CODING, project_name="demo", feature="feat-d", session="sess-4")
+        return _FakeTask(id="task-4", state=TaskState.RUNNING, project_name="demo", feature="feat-d", session="sess-4")
 
     monkeypatch.setattr("agvv.cli.run_task_from_spec", _fake_run_task_from_spec)
     spec = tmp_path / "task.json"
@@ -191,8 +191,6 @@ def test_cli_task_status_filters_by_task_id(monkeypatch: pytest.MonkeyPatch, tmp
         project_name: str
         feature: str
         session: str
-        pr_number: int | None
-        repair_cycles: int
         last_error: str | None
         updated_at: str
 
@@ -201,12 +199,10 @@ def test_cli_task_status_filters_by_task_id(monkeypatch: pytest.MonkeyPatch, tmp
         lambda db_path, state=None: [
             _FakeTask(
                 id="t1",
-                state=TaskState.CODING,
+                state=TaskState.RUNNING,
                 project_name="demo",
                 feature="feat-a",
                 session="s1",
-                pr_number=None,
-                repair_cycles=0,
                 last_error=None,
                 updated_at="2026-03-03T00:00:00+00:00",
             ),
@@ -216,8 +212,6 @@ def test_cli_task_status_filters_by_task_id(monkeypatch: pytest.MonkeyPatch, tmp
                 project_name="demo",
                 feature="feat-b",
                 session="s2",
-                pr_number=7,
-                repair_cycles=2,
                 last_error="boom",
                 updated_at="2026-03-03T00:00:01+00:00",
             ),
@@ -239,7 +233,7 @@ def test_cli_task_retry_invokes_tasking(monkeypatch: pytest.MonkeyPatch, tmp_pat
     monkeypatch.setattr(
         "agvv.cli.retry_task",
         lambda task_id, db_path, session, force_restart=False: _FakeTask(
-            id=task_id, state=TaskState.CODING, session=session or "sess-1"
+            id=task_id, state=TaskState.RUNNING, session=session or "sess-1"
         ),
     )
     result = runner.invoke(app, ["task", "retry", "--task-id", "task-1", "--db-path", str(tmp_path / "tasks.db")])

@@ -80,7 +80,6 @@ def test_adopt_project_preserves_upstream_origin_and_allows_feature_push_e2e(tmp
         task_id=None,
         ticket=None,
         params={},
-        create_dirs=[],
     )
     assert paths.feature_dir is not None
     (paths.feature_dir / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
@@ -158,12 +157,9 @@ def test_start_feature_creates_worktree_metadata_and_dirs(tmp_path: Path) -> Non
         task_id="task-1",
         ticket="PROJ-1",
         params={"lang": "python"},
-        create_dirs=["src", "tests/unit"],
     )
     assert paths.feature_dir is not None
     assert paths.feature_dir.exists()
-    assert (paths.feature_dir / "src").exists()
-    assert (paths.feature_dir / "tests" / "unit").exists()
     metadata = json.loads((paths.feature_dir / ".agvv" / "context.json").read_text(encoding="utf-8"))
     assert metadata["agent"] == "codex"
     assert metadata["task_id"] == "task-1"
@@ -183,7 +179,6 @@ def test_start_feature_fails_on_reserved_name(tmp_path: Path) -> None:
             task_id=None,
             ticket=None,
             params={},
-            create_dirs=[],
         )
 
 
@@ -197,7 +192,6 @@ def test_start_feature_auto_initializes_project_when_missing(tmp_path: Path) -> 
         task_id=None,
         ticket=None,
         params={},
-        create_dirs=[],
     )
     assert paths.repo_dir.exists()
     assert paths.main_dir.exists()
@@ -215,7 +209,6 @@ def test_start_feature_reuses_existing_branch_after_cleanup_keep_branch(tmp_path
         task_id=None,
         ticket=None,
         params={},
-        create_dirs=[],
     )
     assert first.feature_dir is not None and first.feature_dir.exists()
     cleanup_feature("demo", "feat-reuse", tmp_path, delete_branch=False)
@@ -228,7 +221,6 @@ def test_start_feature_reuses_existing_branch_after_cleanup_keep_branch(tmp_path
         task_id=None,
         ticket=None,
         params={},
-        create_dirs=[],
     )
     assert second.feature_dir is not None and second.feature_dir.exists()
 
@@ -246,7 +238,6 @@ def test_start_feature_fails_when_feature_worktree_path_exists(tmp_path: Path) -
             task_id=None,
             ticket=None,
             params={},
-            create_dirs=[],
         )
 
 
@@ -261,7 +252,6 @@ def test_init_project_layout_requires_remote_before_push(tmp_path: Path) -> None
         task_id=None,
         ticket=None,
         params={},
-        create_dirs=[],
     )
     assert paths.feature_dir is not None
     (paths.feature_dir / "note.txt").write_text("hello\n", encoding="utf-8")
@@ -287,7 +277,6 @@ def test_cleanup_feature_deletes_branch_by_default(tmp_path: Path) -> None:
         task_id=None,
         ticket=None,
         params={},
-        create_dirs=[],
     )
     paths = cleanup_feature("demo", "feat-clean", tmp_path, delete_branch=True)
     assert paths.feature_dir is not None
@@ -311,7 +300,6 @@ def test_cleanup_feature_deletes_branch_when_worktree_already_missing(tmp_path: 
         task_id=None,
         ticket=None,
         params={},
-        create_dirs=[],
     )
     assert paths.feature_dir is not None
     repo = tmp_path / "demo" / "repo.git"
@@ -346,7 +334,6 @@ def test_cleanup_feature_fails_when_untracked_files_exist(tmp_path: Path) -> Non
         task_id=None,
         ticket=None,
         params={},
-        create_dirs=[],
     )
     assert paths.feature_dir is not None
     (paths.feature_dir / "scratch.txt").write_text("draft\n", encoding="utf-8")

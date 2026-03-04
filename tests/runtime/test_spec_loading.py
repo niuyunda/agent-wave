@@ -153,27 +153,11 @@ def test_load_task_spec_parses_requirement_contract_fields(tmp_path: Path) -> No
             "base_dir": str(tmp_path),
             "requirements": "Implement API endpoint for health check.",
             "constraints": ["Do not change existing API schema.", "Use stdlib only."],
-            "acceptance_criteria": ["`GET /health` returns 200", "Unit tests pass"],
         },
     )
     spec = load_task_spec(spec_path)
     assert spec.requirements == "Implement API endpoint for health check."
     assert spec.constraints == ["Do not change existing API schema.", "Use stdlib only."]
-    assert spec.acceptance_criteria == ["`GET /health` returns 200", "Unit tests pass"]
-
-
-def test_load_task_spec_rejects_invalid_acceptance_criteria_length(tmp_path: Path) -> None:
-    spec_path = _write_spec(
-        tmp_path / "task-invalid-dod.json",
-        {
-            "project_name": "demo",
-            "feature": "feat_bad_dod",
-            "repo": "owner/repo",
-            "acceptance_criteria": ["only one"],
-        },
-    )
-    with pytest.raises(AgvvError, match="acceptance_criteria"):
-        load_task_spec(spec_path)
 
 
 def test_load_task_spec_rejects_feature_with_spaces(tmp_path: Path) -> None:
@@ -255,18 +239,7 @@ def test_from_db_payload_preserves_stored_values_and_recomputes_agent_cmd(tmp_pa
         "ticket": None,
         "requirements": None,
         "constraints": [],
-        "acceptance_criteria": [],
-        "params": {},
-        "create_dirs": [],
-        "pr_title": None,
-        "pr_body": None,
-        "pr_base": "main",
-        "branch_remote": "origin",
-        "max_retry_cycles": 3,
         "timeout_minutes": 240,
-        "auto_cleanup": False,
-        "keep_branch_on_cleanup": False,
-        "commit_message": "chore: apply agent changes",
     }
 
     spec = TaskSpec.from_db_payload(db_payload)
