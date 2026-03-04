@@ -134,6 +134,63 @@ def test_handle_coding_completion_fails_when_dod_result_missing(
     assert "DoD validation failed" in (updated.last_error or "")
 
 
+def test_handle_coding_completion_marks_blocked_when_trust_prompt_detected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    spec = TaskSpec(
+        task_id="task_blocked_prompt",
+        project_name="demo",
+        feature="feat_blocked_prompt",
+        agent_cmd="echo run",
+        repo="owner/repo",
+        base_dir=tmp_path,
+    )
+    created = store.create_task(spec)
+    coding = store.update_task(created.id, state=TaskState.CODING, started_at="2026-03-03T00:00:00+00:00")
+    feature_dir = tmp_path / "demo" / "feat_blocked_prompt"
+    (feature_dir / ".agvv").mkdir(parents=True, exist_ok=True)
+    (feature_dir / ".agvv" / "agent_output.log").write_text(
+        "Do you trust the contents of this directory?\nPress enter to continue\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: True)
+
+    updated = handle_coding_completion(store, coding)
+    assert updated.state == TaskState.BLOCKED
+    assert "interactive prompt" in (updated.last_error or "")
+
+
+def test_handle_coding_completion_marks_timed_out_and_kills_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    spec = TaskSpec(
+        task_id="task_coding_timeout",
+        project_name="demo",
+        feature="feat_coding_timeout",
+        agent_cmd="echo run",
+        repo="owner/repo",
+        base_dir=tmp_path,
+        timeout_minutes=1,
+    )
+    created = store.create_task(spec)
+    coding = store.update_task(created.id, state=TaskState.CODING, started_at="2000-01-01T00:00:00+00:00")
+    feature_dir = tmp_path / "demo" / "feat_coding_timeout"
+    (feature_dir / ".agvv").mkdir(parents=True, exist_ok=True)
+    killed: dict[str, bool] = {"value": False}
+    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: True)
+    monkeypatch.setattr(
+        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_kill_session",
+        lambda _session: killed.__setitem__("value", True),
+    )
+
+    updated = handle_coding_completion(store, coding)
+    assert killed["value"] is True
+    assert updated.state == TaskState.TIMED_OUT
+    assert updated.last_error == "coding_timeout"
+
+
 def test_handle_pr_cycle_fails_when_pr_number_missing(tmp_path: Path) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(

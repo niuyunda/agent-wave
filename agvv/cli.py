@@ -37,6 +37,13 @@ def task_run(
     spec: Annotated[str, typer.Option("--spec", help="Path to task spec JSON.")],
     db_path: Annotated[str | None, typer.Option("--db-path", help="Path to SQLite task DB.")] = None,
     agent: Annotated[str | None, typer.Option("--agent", help="Override agent provider.")] = None,
+    agent_non_interactive: Annotated[
+        bool,
+        typer.Option(
+            "--agent-non-interactive/--agent-interactive",
+            help="Prefer non-interactive agent invocation when supported.",
+        ),
+    ] = True,
     project_dir: Annotated[
         str | None,
         typer.Option(
@@ -52,6 +59,7 @@ def task_run(
             spec=spec,
             db_path=db_path,
             agent=agent,
+            agent_non_interactive=agent_non_interactive,
             project_dir=project_dir,
             run_task_from_spec=run_task_from_spec,
             resolve_optional_path=resolve_optional_path,
@@ -91,6 +99,13 @@ def task_retry(
     task_id: Annotated[str, typer.Option("--task-id", help="Task id to retry.")],
     db_path: Annotated[str | None, typer.Option("--db-path", help="Path to SQLite task DB.")] = None,
     session: Annotated[str | None, typer.Option("--session", help="Override tmux session.")] = None,
+    force_restart: Annotated[
+        bool,
+        typer.Option(
+            "--force-restart",
+            help="Kill existing tmux session when task is currently coding, then relaunch.",
+        ),
+    ] = False,
 ) -> None:
     """Retry a task by launching a new coding session."""
 
@@ -99,6 +114,7 @@ def task_retry(
             task_id=task_id,
             db_path=db_path,
             session=session,
+            force_restart=force_restart,
             retry_task=retry_task,
             resolve_optional_path=resolve_optional_path,
         )

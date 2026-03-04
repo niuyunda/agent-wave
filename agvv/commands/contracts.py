@@ -19,6 +19,7 @@ class RunTaskFromSpecFn(Protocol):
         db_path: Path | None = None,
         *,
         agent_provider: str | None = None,
+        agent_non_interactive: bool | None = None,
         project_dir: Path | None = None,
     ) -> TaskSnapshot:
         """Create a task from a spec file and launch its coding session."""
@@ -34,7 +35,14 @@ class ListTaskStatusesFn(Protocol):
 class RetryTaskFn(Protocol):
     """Typed callable for retrying one task."""
 
-    def __call__(self, task_id: str, db_path: Path | None = None, session: str | None = None) -> TaskSnapshot:
+    def __call__(
+        self,
+        task_id: str,
+        db_path: Path | None = None,
+        session: str | None = None,
+        *,
+        force_restart: bool = False,
+    ) -> TaskSnapshot:
         """Retry a single task and optionally override the tmux session."""
 
 

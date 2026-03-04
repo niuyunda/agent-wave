@@ -63,9 +63,9 @@ agvv daemon run --once
 ## Common Commands
 
 ```bash
-agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--project-dir /path/to/repo]
+agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--agent-non-interactive/--agent-interactive] [--project-dir /path/to/repo]
 agvv task status [--db-path ./tasks.db] [--task-id <task_id>] [--state coding]
-agvv task retry --task-id <task_id> [--db-path ./tasks.db] [--session custom-session]
+agvv task retry --task-id <task_id> [--db-path ./tasks.db] [--session custom-session] [--force-restart]
 agvv task cleanup --task-id <task_id> [--db-path ./tasks.db] [--force]
 agvv daemon run [--db-path ./tasks.db] [--once] [--interval-seconds 30] [--max-loops 10] [--max-workers 1]
 ```

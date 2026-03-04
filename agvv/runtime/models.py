@@ -197,6 +197,7 @@ class TaskSpec:
     agent: str | None = "codex"
     agent_model: str | None = None
     agent_extra_args: list[str] | None = None
+    agent_non_interactive: bool = True
     ticket: str | None = None
     task_doc: Path | None = None
     requirements: str | None = None
@@ -239,6 +240,7 @@ class TaskSpec:
             },
             "agent_model": self.agent_model,
             "agent_extra_args": extra_args,
+            "agent_non_interactive": self.agent_non_interactive,
             "repo": self.repo,
             "base_dir": str(self.base_dir),
             "from_branch": self.from_branch,
@@ -305,6 +307,7 @@ class TaskSpec:
             agent=provider,
             agent_model=model,
             agent_extra_args=extra_args,
+            agent_non_interactive=_coerce_bool(payload.get("agent_non_interactive"), default=True),
             ticket=(str(payload["ticket"]) if payload.get("ticket") else None),
             task_doc=task_doc,
             requirements=requirements,

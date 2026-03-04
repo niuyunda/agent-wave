@@ -18,17 +18,26 @@ def _apply_agent_overrides(
     spec: TaskSpec,
     *,
     agent_provider: str | None = None,
+    agent_non_interactive: bool | None = None,
 ) -> TaskSpec:
     """Apply CLI ``--agent`` override to spec."""
 
-    if agent_provider is None:
+    if agent_provider is None and agent_non_interactive is None:
         return spec
 
     provider = normalize_agent_provider(agent_provider or spec.agent or "codex")
     model = spec.agent_model
     extra_args = list(spec.agent_extra_args or [])
     agent_cmd = build_agent_command(provider=provider, model=model, extra_args=extra_args)
-    return replace(spec, agent=provider, agent_model=model, agent_cmd=agent_cmd, agent_extra_args=extra_args)
+    non_interactive = spec.agent_non_interactive if agent_non_interactive is None else agent_non_interactive
+    return replace(
+        spec,
+        agent=provider,
+        agent_model=model,
+        agent_cmd=agent_cmd,
+        agent_extra_args=extra_args,
+        agent_non_interactive=non_interactive,
+    )
 
 
 def _resolve_runtime_base_dir(spec: TaskSpec, *, project_dir: Path | None) -> Path:
@@ -44,13 +53,18 @@ def run_task_from_spec(
     db_path: Path | None = None,
     *,
     agent_provider: str | None = None,
+    agent_non_interactive: bool | None = None,
     project_dir: Path | None = None,
     orchestration_port: OrchestrationPort | None = None,
 ) -> TaskSnapshot:
     """Create task from spec and start coding session."""
 
     spec = load_task_spec(spec_path)
-    spec = _apply_agent_overrides(spec, agent_provider=agent_provider)
+    spec = _apply_agent_overrides(
+        spec,
+        agent_provider=agent_provider,
+        agent_non_interactive=agent_non_interactive,
+    )
     resolved_base_dir = _resolve_runtime_base_dir(spec, project_dir=project_dir)
     spec = replace(spec, base_dir=resolved_base_dir)
     port = resolve_orchestration_port(orchestration_port)

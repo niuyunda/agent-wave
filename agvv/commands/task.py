@@ -15,6 +15,7 @@ def execute_task_run(
     spec: str,
     db_path: str | None,
     agent: str | None,
+    agent_non_interactive: bool | None,
     project_dir: str | None,
     run_task_from_spec: RunTaskFromSpecFn,
     resolve_optional_path: Callable[[str | None], Path | None],
@@ -25,6 +26,7 @@ def execute_task_run(
         spec_path=Path(spec).expanduser().resolve(),
         db_path=resolve_optional_path(db_path),
         agent_provider=agent,
+        agent_non_interactive=agent_non_interactive,
         project_dir=resolve_optional_path(project_dir),
     )
     return (
@@ -74,12 +76,18 @@ def execute_task_retry(
     task_id: str,
     db_path: str | None,
     session: str | None,
+    force_restart: bool,
     retry_task: RetryTaskFn,
     resolve_optional_path: Callable[[str | None], Path | None],
 ) -> str:
     """Retry one task and return one output line."""
 
-    task = retry_task(task_id=task_id, db_path=resolve_optional_path(db_path), session=session)
+    task = retry_task(
+        task_id=task_id,
+        db_path=resolve_optional_path(db_path),
+        session=session,
+        force_restart=force_restart,
+    )
     return f"Task retried: {task.id}\tstate={task.state.value}\tsession={task.session}"
 
 
