@@ -1,0 +1,32 @@
+---
+description: Enforce testing gates, uv usage, and worktree PR workflow
+alwaysApply: true
+---
+
+# Agent Workflow And Quality Gates
+
+## Testing Requirements
+
+- Every task must include tests where applicable:
+  - Unit tests for isolated logic.
+  - End-to-end tests for critical user flows.
+  - Regression tests for reproduced bugs.
+- Do not consider a task complete until required tests pass.
+- Add or update tests in the same change set as the implementation.
+
+## Docstring Coverage Gate
+
+- Maintain docstring coverage as a quality gate.
+- New or changed public functions, classes, and modules must include clear docstrings.
+- If the project has docstring coverage tooling, run it and keep the gate passing.
+
+## Package Manager Rules
+
+- Use `uv` for Python package and environment management.
+- Do not use `pip`, `pipenv`, `poetry`, or other Python package managers unless explicitly requested.
+
+## Commit And PR Workflow
+
+- For each task, create and use a git worktree for development.
+- Keep task changes isolated to that worktree branch.
+- When task implementation and validation are complete, create a pull request.
