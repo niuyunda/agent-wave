@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TypedDict
 
 from agvv.runtime.adapters import DEFAULT_ORCHESTRATION_PORT as port
 from agvv.runtime.models import TaskState
@@ -12,21 +13,29 @@ from agvv.runtime.task_helpers import feature_worktree_path, mark_failed
 from agvv.shared.errors import AgvvError
 
 
+class LaunchArtifacts(TypedDict):
+    """Paths to files written during agent session startup."""
+
+    prompt_path: Path
+    input_snapshot_path: Path
+    output_log_path: Path
+
+
 def start_tmux_agent(
     store: TaskStore,
     task: TaskSnapshot,
     worktree: Path,
     *,
     event_step_prefix: str = "task.launch",
-) -> dict[str, Path]:
+) -> LaunchArtifacts:
     """Start a tmux session running the coding agent and capture output.
 
     Creates the tmux session, injects the prompt, and sets up pane logging
-    when the agent requires a TTY.  Returns the artifact paths dict.
+    when the agent requires a TTY.  Returns typed artifact paths.
 
     Raises on hard failures so callers can handle errors consistently.
     """
-    artifacts = write_launch_artifacts(worktree=worktree, spec=task.spec)
+    artifacts: LaunchArtifacts = write_launch_artifacts(worktree=worktree, spec=task.spec)
     launch_command = build_launch_command(
         spec=task.spec,
         prompt_path=artifacts["prompt_path"],

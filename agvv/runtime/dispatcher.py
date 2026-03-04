@@ -33,14 +33,7 @@ def _handle_coding(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
 
 def _handle_pr_open(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
     """Run PR lifecycle checks and reconcile feedback or merge outcomes."""
-    def _cleanup_without_port(task_id: str, db_path: Path | None, force: bool = False) -> TaskSnapshot:
-        return cleanup_task(task_id, db_path, force=force)
-
-    return handle_pr_cycle(
-        store,
-        task,
-        cleanup_task_fn=_cleanup_without_port,
-    )
+    return handle_pr_cycle(store, task, cleanup_task_fn=cleanup_task)
 
 
 _STATE_HANDLERS: dict[TaskState, StateHandler] = {

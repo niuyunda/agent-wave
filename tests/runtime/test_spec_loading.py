@@ -187,3 +187,95 @@ def test_load_task_spec_rejects_feature_with_spaces(tmp_path: Path) -> None:
     )
     with pytest.raises(AgvvError, match="feature"):
         load_task_spec(spec_path)
+
+
+# ---------------------------------------------------------------------------
+# from_payload / from_db_payload round-trip semantics
+# ---------------------------------------------------------------------------
+
+def test_from_payload_resets_runtime_controlled_fields(tmp_path: Path) -> None:
+    """from_payload must reset agent, from_branch, task_id regardless of spec content.
+
+    Note: agent_extra_args is intentionally preserved — it carries agent flags
+    (not provider choice) and may legitimately appear in user spec files.
+    """
+    task_doc = tmp_path / "task.md"
+    task_doc.write_text("# Task\n", encoding="utf-8")
+
+    payload = {
+        "project_name": "demo",
+        "feature": "feat_rt",
+        "repo": "owner/repo",
+        "task_doc": str(task_doc),
+        # Runtime-controlled fields that must be reset:
+        "agent": "claude_code",
+        "from_branch": "release",
+        "task_id": "custom-id-must-not-survive",
+        # agent_extra_args is deliberately absent: verified separately below
+    }
+
+    from agvv.runtime.models import TaskSpec
+    spec = TaskSpec.from_payload(payload)
+
+    # agent is always reset to codex
+    assert spec.agent == "codex", f"expected agent='codex', got {spec.agent!r}"
+    # from_branch is always reset to main
+    assert spec.from_branch == "main", f"expected from_branch='main', got {spec.from_branch!r}"
+    # task_id is regenerated (different from the supplied custom id)
+    assert spec.task_id != "custom-id-must-not-survive"
+    assert spec.task_id.startswith("demo-feat_rt-")
+    # agent_cmd is recomputed from the reset provider with no extra args
+    assert spec.agent_cmd == "codex"
+
+
+def test_from_db_payload_preserves_stored_values_and_recomputes_agent_cmd(tmp_path: Path) -> None:
+    """from_db_payload must preserve stored provider/from_branch and recompute agent_cmd correctly."""
+    task_doc = tmp_path / "task.md"
+    task_doc.write_text("# Task\n", encoding="utf-8")
+
+    from agvv.runtime.models import TaskSpec
+
+    # Simulate what to_payload() stores in the DB for a claude_code task
+    db_payload = {
+        "task_id": "demo-feat_db-abc123",
+        "project_name": "demo",
+        "feature": "feat_db",
+        "repo": "owner/repo",
+        "task_doc": str(task_doc),
+        "from_branch": "release",
+        "agent_model": "claude-sonnet-4-5",
+        "agent_extra_args": [],
+        "agent_non_interactive": True,
+        "base_dir": str(tmp_path),
+        # to_payload() serialises agent as a nested dict:
+        "agent": {"provider": "claude_code", "model": "claude-sonnet-4-5", "extra_args": []},
+        # agent_cmd is intentionally present but must be dropped and recomputed:
+        "agent_cmd": "claude --stale-cached-value",
+        "session": "demo-feat_db",
+        "ticket": None,
+        "requirements": None,
+        "constraints": [],
+        "acceptance_criteria": [],
+        "params": {},
+        "create_dirs": [],
+        "pr_title": None,
+        "pr_body": None,
+        "pr_base": "main",
+        "branch_remote": "origin",
+        "max_retry_cycles": 3,
+        "timeout_minutes": 240,
+        "auto_cleanup": False,
+        "keep_branch_on_cleanup": False,
+        "commit_message": "chore: apply agent changes",
+    }
+
+    spec = TaskSpec.from_db_payload(db_payload)
+
+    # Stored values must be preserved
+    assert spec.task_id == "demo-feat_db-abc123"
+    assert spec.agent == "claude_code"
+    assert spec.from_branch == "release"
+    assert spec.agent_model == "claude-sonnet-4-5"
+    # agent_cmd is recomputed from the stored provider, not taken from the stale cached value
+    assert "claude" in spec.agent_cmd
+    assert "stale-cached-value" not in spec.agent_cmd
