@@ -2,7 +2,13 @@
 
 [中文文档 (README.zh-CN.md)](./README.zh-CN.md)
 
-`agvv` runs coding tasks in isolated git worktrees and tracks task state with SQLite.
+`agvv` runs coding tasks in isolated git worktrees and tracks task state safely with SQLite. It's designed to be a safe, concurrent execution environment for AI Agents like Codex or Claude.
+
+## Key Features
+
+1. **Total Isolation (`git worktree`)**: AI Agents write code in isolated feature worktrees. They will never pollute your main branch or current working directory.
+2. **Concurrent Background Execution (`tmux`)**: Tasks run completely in the background. You can close your terminal and check back later.
+3. **Resilient State Tracking (`sqlite3`)**: Prevents corrupted task states. Unlike JSON files, SQLite provides lock-safe concurrency and power-loss resilience, ensuring task history is never lost even if the daemon crashes.
 
 ## What You Need
 
@@ -28,18 +34,22 @@ uv run agvv --help
 
 ### 1) Write `task.json` (core metadata only)
 
+Keep this small. Put your actual prompt/requirements into `task_doc`.
+
 ```json
 {
   "project_name": "demo",
   "feature": "feat_demo",
   "repo": "owner/repo",
-  "task_doc": "./task.md",
-  "create_dirs": ["src", "tests"],
-  "pr_title": "[agvv] feat_demo"
+  "task_doc": "./task.md"
 }
 ```
 
-### 2) Start task
+### 2) Write `task.md`
+
+This is where you explain to the AI Agent what you want it to code.
+
+### 3) Start the task
 
 Existing local repo:
 
@@ -47,75 +57,33 @@ Existing local repo:
 agvv task run --spec ./task.json --project-dir /path/to/repo
 ```
 
-Create new managed project under current directory:
+Create new managed project under current directory (useful for greenfield projects):
 
 ```bash
 agvv task run --spec ./task.json
 ```
 
-### 3) Monitor and reconcile
+### 4) Monitor progress
+
+Check the status of your tasks:
 
 ```bash
 agvv task status
+```
+
+Run the background daemon to update statuses (mark tasks as DONE or TIMED_OUT):
+
+```bash
 agvv daemon run --once
 ```
 
-## Common Commands
+## Clean Up
+
+When a task is done, you can delete the isolated worktree safely:
 
 ```bash
-agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--agent-non-interactive/--agent-interactive] [--project-dir /path/to/repo]
-agvv task status [--db-path ./tasks.db] [--task-id <task_id>] [--state coding]
-agvv task retry --task-id <task_id> [--db-path ./tasks.db] [--session custom-session] [--force-restart]
-agvv task cleanup --task-id <task_id> [--db-path ./tasks.db] [--force]
-agvv daemon run [--db-path ./tasks.db] [--once] [--interval-seconds 30] [--max-loops 10] [--max-workers 1]
+agvv task cleanup --task-id <task_id>
 ```
-
-## `task.json` Rules
-
-Required:
-
-- `project_name`
-- `feature`
-- `repo`
-
-Required:
-
-- `task_doc` (mandatory Markdown `.md`; put detailed requirements/constraints/acceptance criteria here)
-
-Recommended:
-
-- `pr_title`, `pr_body`, `pr_base`
-- `branch_remote` (default: `origin`)
-
-Ignored at runtime (do not rely on these in spec):
-
-- `task_id`
-- `agent`
-- `agent_model`
-- `agent_extra_args`
-- `agent_cmd`
-- `from_branch`
-
-Notes:
-
-- Keep `task.json` minimal (core identifiers and workflow metadata only).
-- Put detailed development instructions into `task_doc` instead of `requirements`/`constraints` fields.
-- `task_doc` is required and must end with `.md`.
-- `acceptance_criteria` must be 2-5 items when provided.
-- If omitted, runtime injects a stable default 2-item checklist.
-- `base_dir` is resolved at runtime:
-  - with `--project-dir`: parent directory of that path
-  - without `--project-dir`: current working directory
-
-## Artifacts Written In Worktree
-
-`agvv` writes these files under `.agvv/`:
-
-- `input_snapshot.json`
-- `rendered_prompt.md`
-- `agent_output.log`
-- `agent_output_summary.txt`
-- `dod_result.json` (required before finalize)
 
 ## Troubleshooting
 

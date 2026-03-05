@@ -1,85 +1,60 @@
 ---
 name: agent-wave
-description: Agent execution skill for running coding tasks via `agvv` with isolated worktrees, tmux sessions, and runtime state reconciliation.
+description: Strict instructions for an Agent to execute coding tasks using the `agvv` CLI.
 ---
 
-# Agent Wave Skill
+# Agent Wave (`agvv`) Skill Instructions
 
-Use this skill when you need to run or maintain coding tasks with `agvv`.
+You are an AI Agent. When asked to use `agvv` to run a coding task, you MUST strictly follow this standard operating procedure. DO NOT deviate from these rules.
 
-## Commands
+## Allowed Commands
 
-Use only:
-
-- `agvv task run`
+You are ONLY permitted to use the following `agvv` commands:
+- `agvv task run --spec <path> [--project-dir <path>]`
 - `agvv task status`
-- `agvv task retry`
-- `agvv task cleanup`
-- `agvv daemon run`
+- `agvv task retry --task-id <id>`
+- `agvv task cleanup --task-id <id>`
+- `agvv daemon run --once`
 
-From source checkout, use `uv run agvv ...`.
+*(If running from source tree, prefix with `uv run`, eg: `uv run agvv task status`)*
 
-## Spec Contract (`task.json`)
+## `task.json` Creation Rules
 
-Required:
+When generating the `task.json` file for the user, you MUST adhere to the following schema:
 
-- `project_name`
-- `feature`
-- `repo`
+**REQUIRED Fields:**
+1. `project_name` (string): The slugified name of the project.
+2. `feature` (string): The branch name. **CRITICAL: MUST perfectly match regex `^[A-Za-z0-9_-]+$`.** Absolutely no spaces or punctuations. Example: `feat-login-api`.
+3. `repo` (string): The repository URL or owner/repo format.
+4. `task_doc` (string): Path to the Markdown file containing detailed instructions. **CRITICAL: MUST end with `.md`.**
 
-Naming constraints (critical):
+**Prohibited Fields in `task.json`:**
+DO NOT put detailed instructions, `requirements`, or `constraints` inside `task.json`. ALL complex text MUST go into the Markdown file referenced by `task_doc`.
 
-- `feature` is used as both branch/worktree directory name.
-- Use slug format only: letters, numbers, hyphens, underscores (`[A-Za-z0-9_-]+`).
-- Do **not** use spaces, natural-language sentences, slashes, or punctuation.
-- Good: `python-calculator-cli`, `fix_login_bug`, `feat_calc_v2`
-- Bad: `Create a Python calculator project`, `feature/calc`, `calc!`
+## Execution Protocol
 
-Recommended (core metadata only):
+Execute these steps IN EXACT ORDER:
 
-- `task_doc` (mandatory; must be a Markdown file path ending with `.md`)
-- `pr_title`, `pr_body`, `pr_base`
-- `branch_remote`
+### Step 1: Validate Setup
+Ensure the `task.json` and `<task_doc>.md` files exist on disk and meet all rules above. If `feature` contains spaces, you MUST fix it to be a slug before proceeding.
 
-Runtime ignores these spec fields:
+### Step 2: Run Task
+Execute the task generation.
+- **If operating on an existing repository:** `agvv task run --spec ./task.json --project-dir <path_to_existing_repo>`
+- **If creating a new project from scratch:** `agvv task run --spec ./task.json`
 
-- `task_id`
-- `agent`
-- `agent_model`
-- `agent_extra_args`
-- `agent_cmd`
-- `from_branch`
+### Step 3: Monitor State
+Run `agvv task status` to note the `task-id`.
+Because the task runs in a background tmux session, you MUST use the daemon to sync the state:
+- Execute `agvv daemon run --once` to poll the status.
+- Repeat `agvv task status` + `agvv daemon run --once` until the task state transitions from `RUNNING` to a terminal state (such as `DONE` or `TIMED_OUT`).
 
-Spec authoring policy:
+### Step 4: Handle Failure (If Applicable)
+If the task fails or times out:
+- Read the error from `agvv task status`.
+- Resolve the underlying issue (e.g. fix `task.json`).
+- Run `agvv task retry --task-id <task_id>`.
 
-- Keep `task.json` minimal: only core task identifiers/metadata.
-- Do not put detailed development instructions in `requirements`, `constraints`, or `acceptance_criteria` fields.
-- Put full task details in `task_doc` instead.
-- `task_doc` format is mandatory Markdown (`.md`) only; plain text or other formats are not allowed.
-
-## Runtime Rules
-
-- With `--project-dir`, runtime adopts that repo and uses its parent as `base_dir`.
-- Without `--project-dir`, runtime initializes a new project under current working directory.
-- Ensure remote exists in `<base_dir>/<project_name>/repo.git` before finalize/push.
-- DoD must exist at `.agvv/dod_result.json` and contain pass statuses for all acceptance criteria.
-
-## Minimal Procedure
-
-1. Validate `task.json` required fields and naming constraints.
-   - Especially verify `feature` uses slug format (`[A-Za-z0-9_-]+`).
-   - Ensure detailed task description is in `task_doc` (not in `requirements`/`constraints`).
-   - Reject spec if `task_doc` is missing or does not end with `.md`.
-2. Run `agvv task run --spec <spec_path> [--project-dir <repo>]`.
-3. Run `agvv task status`.
-4. Run `agvv daemon run --once`.
-5. If failed/review changes requested, run `agvv task retry --task-id <id>`.
-6. When done, run `agvv task cleanup --task-id <id> [--force]`.
-
-## Failure Policy
-
-- Invalid spec: fix spec and rerun `task run`.
-- Invalid `feature` name: convert to slug and rerun (example: `Create a Python calculator project` -> `python-calculator-project`).
-- Missing remote: configure remote in managed `repo.git`, then rerun.
-- Missing DoD result: relaunch coding/retry and regenerate `.agvv/dod_result.json`.
-- Never update DB rows manually.
+### Step 5: Cleanup
+Once the user confirms the task is completed and successful, you MUST clean up the worktree to free system resources:
+- Run `agvv task cleanup --task-id <task_id>`
