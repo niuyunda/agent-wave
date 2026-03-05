@@ -194,7 +194,9 @@ class TaskSpec(BaseModel):
         if not payload.get("from_branch"):
             payload["from_branch"] = "main"
 
-        if not payload.get("task_doc") and not payload.get("requirements"):
+        has_task_doc = bool(payload.get("task_doc"))
+        has_requirements = bool((payload.get("requirements") or "").strip())
+        if not has_task_doc and not has_requirements:
             raise AgvvError("Spec must include 'task_doc' (a Markdown file) or 'requirements' (a string).")
 
         try:

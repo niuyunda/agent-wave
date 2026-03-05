@@ -95,6 +95,16 @@ def test_load_task_spec_ignores_task_id_from_spec(tmp_path: Path) -> None:
     assert spec.task_id != "custom-id-should-be-ignored"
 
 
+def test_load_task_spec_rejects_whitespace_only_requirements(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task-blank-requirements.json"
+    spec_path.write_text(
+        '{"project_name":"demo","feature":"feat_blank","requirements":"   "}',
+        encoding="utf-8",
+    )
+    with pytest.raises(AgvvError, match="Spec must include"):
+        load_task_spec(spec_path)
+
+
 def test_load_task_spec_fails_when_file_missing(tmp_path: Path) -> None:
     with pytest.raises(AgvvError, match="Failed to read spec file"):
         load_task_spec(tmp_path / "missing-spec.json")
