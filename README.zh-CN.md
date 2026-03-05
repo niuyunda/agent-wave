@@ -2,7 +2,13 @@
 
 [English README](./README.md)
 
-`agvv` 用于把一个开发任务放到独立 git worktree 中执行，并用 SQLite 记录状态。
+`agvv` 是一个专为 AI Agent（如 Codex、Claude 等）设计的安全、并发执行环境。它通过底层的 `git worktree` 技术实现物理隔离，并使用 `SQLite` 实现并发安全的状态追踪。
+
+## 核心特性
+
+1. **绝对隔离 (`git worktree`)**：AI Agent 所有的代码生成和修改都会在一个专属的隐藏工作树中进行，绝对不会污染你的主分支或当前开发目录。
+2. **并发后台执行 (`tmux`)**：任务运行在隐藏的 tmux 会话中。你可以随时关闭终端，甚至同时拉起十几个 Agent 并发写不同的需求。
+3. **状态容灾 (`sqlite3`)**：所有任务状态都存在 SQLite 数据库中。与脆弱的 JSON 文件相比，SQLite 提供行级并发锁和掉电保护，哪怕服务异常退出任务记录也绝对不会丢失。
 
 ## 你需要准备
 
@@ -28,92 +34,55 @@ uv run agvv --help
 
 ### 1）写 `task.json`（只放核心元信息）
 
+保持此文件极简，具体的开发需求应该写在 Markdown 格式的文档里。
+
 ```json
 {
   "project_name": "demo",
   "feature": "feat_demo",
   "repo": "owner/repo",
-  "task_doc": "./task.md",
-  "create_dirs": ["src", "tests"],
-  "pr_title": "[agvv] feat_demo"
+  "task_doc": "./task.md"
 }
 ```
 
-### 2）启动任务
+### 2）写 `task.md`
 
-已有本地仓库：
+在这个 Markdown 文件里，用自然语言把你想让 AI 写的代码需求描述清楚。
+
+### 3）启动任务
+
+如果你想在现有的代码库上让 Agent 开发：
 
 ```bash
 agvv task run --spec ./task.json --project-dir /path/to/repo
 ```
 
-在当前目录新建受管项目：
+如果你想从零开始一个全新项目：
 
 ```bash
 agvv task run --spec ./task.json
 ```
 
-### 3）查看与推进
+### 4）查看与推进
+
+检查你当前提交的所有任务及其状态：
 
 ```bash
 agvv task status
+```
+
+运行后台守护进程（它会自动检查任务是否结束或超时，并流转状态）：
+
+```bash
 agvv daemon run --once
 ```
 
-## 常用命令
+## 清理任务
 
+任务完成后，你可以随时安全地删掉那个被隔离出来的工作区，不用担心影响你的主仓库：
 ```bash
-agvv task run --spec ./task.json [--db-path ./tasks.db] [--agent codex] [--agent-non-interactive/--agent-interactive] [--project-dir /path/to/repo]
-agvv task status [--db-path ./tasks.db] [--task-id <task_id>] [--state coding]
-agvv task retry --task-id <task_id> [--db-path ./tasks.db] [--session custom-session] [--force-restart]
-agvv task cleanup --task-id <task_id> [--db-path ./tasks.db] [--force]
-agvv daemon run [--db-path ./tasks.db] [--once] [--interval-seconds 30] [--max-loops 10] [--max-workers 1]
+agvv task cleanup --task-id <task_id>
 ```
-
-## `task.json` 规则
-
-必填：
-
-- `project_name`
-- `feature`
-- `repo`
-
-必填：
-
-- `task_doc`（强制为 Markdown `.md`；把详细 requirements / constraints / acceptance criteria 都写在这里）
-
-推荐：
-
-- `pr_title`、`pr_body`、`pr_base`
-- `branch_remote`（默认 `origin`）
-
-运行时会忽略（不要依赖）：
-
-- `task_id`
-- `agent`
-- `agent_model`
-- `agent_extra_args`
-- `agent_cmd`
-- `from_branch`
-
-说明：
-
-- `task.json` 保持精简，只放任务标识和流程元信息。
-- 具体开发要求请写在 `task_doc`，不要放到 `requirements` / `constraints` 等字段。
-- `task_doc` 是必填项，且必须以 `.md` 结尾。
-- `acceptance_criteria` 若填写，必须为 2-5 条。
-- 不填写时，运行时会注入默认 2 条。
-- `base_dir` 由运行时推导：
-  - 传 `--project-dir`：取其父目录
-  - 不传：取当前工作目录
-
-## 运行产物（在 worktree 的 `.agvv/` 下）
-
-- `input_snapshot.json`
-- `rendered_prompt.md`
-- `agent_output.log`
-- `agent_output_summary.txt`
-- `dod_result.json`（finalize 前必需）
 
 ## 常见问题
 
