@@ -32,8 +32,11 @@ def _write_spec(path: Path, payload: dict) -> Path:
             return "true" if value else "false"
         if value is None:
             return "null"
-        if isinstance(value, (int, float)):
+        if isinstance(value, int):
             return str(value)
+        if isinstance(value, float):
+            escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+            return f'"{escaped}"'
         text = str(value)
         if (
             text == ""

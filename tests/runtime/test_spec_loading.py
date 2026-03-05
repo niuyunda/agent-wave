@@ -220,6 +220,26 @@ def test_load_task_spec_rejects_invalid_yaml_mapping_line(tmp_path: Path) -> Non
         load_task_spec(spec_path)
 
 
+def test_load_task_spec_treats_comment_only_scalar_as_null(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task-comment-null.md"
+    spec_path.write_text(
+        "---\nproject_name: demo\nfeature: feat_comment_null\nrepo: # optional\n---\n\nTask body\n",
+        encoding="utf-8",
+    )
+    spec = load_task_spec(spec_path)
+    assert spec.repo is None
+
+
+def test_load_task_spec_rejects_unterminated_quoted_scalar(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task-unterminated-quote.md"
+    spec_path.write_text(
+        '---\nproject_name: demo\nfeature: "feat_bad\n---\n\nTask body\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(AgvvError, match="unterminated double-quoted scalar"):
+        load_task_spec(spec_path)
+
+
 def test_load_task_spec_defaults_base_dir_to_cwd(tmp_path: Path) -> None:
     spec_path = _write_task_md(
         tmp_path / "task-missing-base-dir.md",

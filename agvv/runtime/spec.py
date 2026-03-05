@@ -101,7 +101,7 @@ def _parse_scalar(value: str) -> Any:
     """Parse a YAML scalar value in the supported subset."""
     token = _strip_inline_comment(value).strip()
     if token == "":
-        return ""
+        return None
 
     lower = token.lower()
     if lower == "true":
@@ -114,12 +114,20 @@ def _parse_scalar(value: str) -> Any:
         return int(token)
     if token.startswith("[") and token.endswith("]"):
         return _parse_inline_list(token)
-    if token.startswith('"') and token.endswith('"'):
+    if token.startswith('"'):
+        if not token.endswith('"'):
+            raise AgvvError(
+                f"Invalid YAML scalar: unterminated double-quoted scalar {token!r}."
+            )
         try:
             return json.loads(token)
-        except json.JSONDecodeError:
-            return token[1:-1]
-    if token.startswith("'") and token.endswith("'"):
+        except json.JSONDecodeError as exc:
+            raise AgvvError(f"Invalid YAML scalar {token!r}: {exc.msg}.") from exc
+    if token.startswith("'"):
+        if not token.endswith("'"):
+            raise AgvvError(
+                f"Invalid YAML scalar: unterminated single-quoted scalar {token!r}."
+            )
         return token[1:-1].replace("''", "'")
     return token
 
