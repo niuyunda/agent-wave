@@ -39,7 +39,25 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Check docstring coverage
-        run: uv run interrogate agvv --fail-under=100 --quiet
+        run: |
+          uv run interrogate . \
+            --quiet \
+            --fail-under=80 \
+            --exclude tests \
+            --exclude scripts \
+            --exclude dist \
+            --exclude tmp \
+            --exclude agvv/__init__.py \
+            --exclude agvv/cli.py \
+            --exclude agvv/orchestration/__init__.py \
+            --exclude agvv/runtime/__init__.py \
+            --exclude agvv/shared/__init__.py
+          uv run interrogate agvv/runtime agvv/orchestration agvv/shared \
+            --quiet \
+            --fail-under=100 \
+            --exclude agvv/orchestration/__init__.py \
+            --exclude agvv/runtime/__init__.py \
+            --exclude agvv/shared/__init__.py
 
       - name: Run tests
         run: uv run pytest

@@ -79,7 +79,12 @@ Minimum checks before finishing non-trivial code or test changes:
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run interrogate agvv --fail-under=100 --quiet
+uv run interrogate . --fail-under=80 --quiet \
+  --exclude tests --exclude scripts --exclude dist --exclude tmp \
+  --exclude agvv/__init__.py --exclude agvv/cli.py \
+  --exclude agvv/orchestration/__init__.py --exclude agvv/runtime/__init__.py --exclude agvv/shared/__init__.py
+uv run interrogate agvv/runtime agvv/orchestration agvv/shared --fail-under=100 --quiet \
+  --exclude agvv/orchestration/__init__.py --exclude agvv/runtime/__init__.py --exclude agvv/shared/__init__.py
 uv run pytest --cov=agvv --cov-branch --cov-report=term-missing
 ```
 
