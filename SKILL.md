@@ -28,19 +28,19 @@ uv run agvv ...
 
 ## 2) Input Files You Must Prepare
 
-Create two files:
+Create one file:
 
-- `task.md`: full natural-language requirement
-- `task.json`: structured metadata
+- `task.md`: YAML front matter + Markdown requirement body
 
-### `task.json` minimum valid template
+### `task.md` minimum valid template
 
-```json
-{
-  "project_name": "demo",
-  "feature": "feat_demo",
-  "task_doc": "./task.md"
-}
+```md
+---
+project_name: demo
+feature: feat_demo
+---
+
+Implement the requested coding task.
 ```
 
 ### Validation rules (strict)
@@ -48,9 +48,10 @@ Create two files:
 - `project_name` must match: `^[A-Za-z0-9_-]+$`
 - `feature` must match: `^[A-Za-z0-9_-]+$`
 - `feature` cannot be `main` or `repo.git`
-- At least one of these must be present:
-  - `task_doc` (must end with `.md`)
-  - `requirements` (non-empty string)
+- `task.md` must start with YAML front matter delimited by `---`
+- Requirement text must be present:
+  - preferred: Markdown body (below front matter)
+  - fallback: `requirements` in front matter (non-empty string)
 
 ### Optional fields you can use
 
@@ -78,7 +79,7 @@ Create two files:
 3. Start task:
 
 ```bash
-agvv task run --spec ./task.json [--project-dir ...] [--agent codex|claude]
+agvv task run --spec ./task.md [--project-dir ...] [--agent codex|claude]
 ```
 
 4. Record the `task_id` from command output.
@@ -117,7 +118,7 @@ If cleanup is blocked by uncommitted changes in feature worktree, use `--force`.
 ## 4) Guardrails
 
 - For `feature` and `project_name`, do not use spaces, slashes, or punctuation except underscore (`_`) and hyphen (`-`).
-- Never use non-Markdown `task_doc` paths.
+- Do not use non-Markdown files as `--spec`; use `task.md`.
 - Do not rely on spec-level `agent` fields for provider selection.
 - Always run `daemon run --once`; without it, background state may not advance.
 - Do not manually delete managed worktrees; use `task cleanup`.

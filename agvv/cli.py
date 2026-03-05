@@ -62,7 +62,7 @@ def _parse_state(value: str | None) -> TaskState | None:
 
 @task_app.command("run")
 def task_run(
-    spec: Annotated[str, typer.Option("--spec", help="Path to task spec JSON.")],
+    spec: Annotated[str, typer.Option("--spec", help="Path to task.md spec file.")],
     db_path: Annotated[
         str | None, typer.Option("--db-path", help="Path to SQLite task DB.")
     ] = None,

@@ -97,7 +97,7 @@ class TaskSpec(BaseModel):
     agent_extra_args: list[str] = Field(default_factory=list)
     agent_non_interactive: bool = True
     ticket: str | None = None
-    task_doc: Path | None = None
+    task_doc: Path | None = None  # legacy compatibility for old DB payloads
     requirements: str | None = None
     constraints: list[str] = Field(default_factory=list)
     timeout_minutes: int = Field(default=240, ge=1)
@@ -208,7 +208,7 @@ class TaskSpec(BaseModel):
     def from_payload(
         cls, payload: dict[str, Any], *, spec_dir: Path | None = None
     ) -> TaskSpec:
-        """Build a validated TaskSpec from a user-authored spec JSON file."""
+        """Build a validated TaskSpec from a user-authored spec payload."""
         if not isinstance(payload, dict):
             raise AgvvError("Task spec root must be an object.")
         payload = payload.copy()
@@ -223,11 +223,12 @@ class TaskSpec(BaseModel):
         if not payload.get("from_branch"):
             payload["from_branch"] = "main"
 
-        has_task_doc = bool(payload.get("task_doc"))
         has_requirements = bool((payload.get("requirements") or "").strip())
-        if not has_task_doc and not has_requirements:
+        has_task_doc = bool(payload.get("task_doc"))
+        if not has_requirements and not has_task_doc:
             raise AgvvError(
-                "Spec must include 'task_doc' (a Markdown file) or 'requirements' (a string)."
+                "Spec must include non-empty requirements text "
+                "(from task.md Markdown body or 'requirements')."
             )
 
         try:

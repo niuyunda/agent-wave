@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -12,20 +11,59 @@ from agvv.runtime.spec import load_task_spec
 from agvv.shared.errors import AgvvError
 
 
-def _write_spec(path: Path, payload: dict) -> Path:
-    if "task_doc" not in payload:
-        task_doc_path = path.with_suffix(".md")
-        task_doc_path.write_text(
-            "# Task Doc\n\n- Test task details.\n", encoding="utf-8"
-        )
-        payload["task_doc"] = str(task_doc_path)
-    path.write_text(json.dumps(payload), encoding="utf-8")
+def _yaml_scalar(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    text = str(value)
+    if (
+        text == ""
+        or text != text.strip()
+        or ":" in text
+        or "#" in text
+        or text.startswith(("[", "{", "-", "!", "&", "*", "@", "`", '"', "'"))
+    ):
+        escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return text
+
+
+def _render_front_matter(payload: dict[str, object]) -> str:
+    lines: list[str] = []
+    for key, value in payload.items():
+        if isinstance(value, list):
+            if not value:
+                lines.append(f"{key}: []")
+            else:
+                lines.append(f"{key}:")
+                for item in value:
+                    lines.append(f"  - {_yaml_scalar(item)}")
+            continue
+        lines.append(f"{key}: {_yaml_scalar(value)}")
+    return "\n".join(lines)
+
+
+def _write_task_md(
+    path: Path, payload: dict[str, object], body: str | None = None
+) -> Path:
+    task_body = body if body is not None else "# Task Doc\n\n- Test task details.\n"
+    front_matter = _render_front_matter(payload)
+    content = f"---\n{front_matter}\n---\n"
+    if task_body:
+        content += f"\n{task_body.strip()}\n"
+    path.write_text(content, encoding="utf-8")
     return path
 
 
-def test_load_task_spec_json_success(tmp_path: Path) -> None:
-    spec_path = _write_spec(
-        tmp_path / "task.json",
+def test_load_task_spec_md_success(tmp_path: Path) -> None:
+    spec_path = _write_task_md(
+        tmp_path / "task.md",
         {
             "project_name": "demo",
             "feature": "feat_1",
@@ -38,11 +76,12 @@ def test_load_task_spec_json_success(tmp_path: Path) -> None:
     assert spec.base_dir == tmp_path.resolve()
     assert spec.timeout_minutes == 240
     assert spec.agent_cmd == "codex"
+    assert spec.requirements == "# Task Doc\n\n- Test task details."
 
 
 def test_load_task_spec_ignores_agent_provider_fields_from_spec(tmp_path: Path) -> None:
-    spec_path = _write_spec(
-        tmp_path / "task-agent.json",
+    spec_path = _write_task_md(
+        tmp_path / "task-agent.md",
         {
             "project_name": "demo",
             "feature": "feat_agent",
@@ -50,7 +89,7 @@ def test_load_task_spec_ignores_agent_provider_fields_from_spec(tmp_path: Path) 
             "base_dir": str(tmp_path),
             # These runtime-controlled fields are intentionally ignored:
             "agent_cmd": "echo should-not-be-used",
-            "agent": {"provider": "claude_code", "model": "sonnet"},
+            "agent": "claude_code",
             "agent_model": "gpt-5",
             # agent_extra_args IS honored (carries codex flags, not provider choice):
             "agent_extra_args": ["--dangerously-skip-permissions"],
@@ -63,30 +102,59 @@ def test_load_task_spec_ignores_agent_provider_fields_from_spec(tmp_path: Path) 
     assert spec.agent_cmd == "codex --dangerously-skip-permissions"
 
 
-def test_load_task_spec_resolves_relative_task_doc_against_spec_dir(
-    tmp_path: Path,
-) -> None:
-    task_doc = tmp_path / "task.md"
-    task_doc.write_text("# Task\n", encoding="utf-8")
-    spec_path = tmp_path / "task.json"
-    spec_path.write_text(
-        json.dumps(
-            {
-                "project_name": "demo",
-                "feature": "feat_reldoc",
-                "repo": "owner/repo",
-                "task_doc": "./task.md",  # relative — must resolve to tmp_path/task.md
-            }
-        ),
-        encoding="utf-8",
+def test_load_task_spec_prefers_markdown_body_as_requirements(tmp_path: Path) -> None:
+    spec_path = _write_task_md(
+        tmp_path / "task-prefer-body.md",
+        {
+            "project_name": "demo",
+            "feature": "feat_body",
+            "repo": "owner/repo",
+            "requirements": "front matter value that should be overridden",
+        },
+        body="# Goal\n\nUse body text.",
     )
     spec = load_task_spec(spec_path)
-    assert spec.task_doc == task_doc.resolve()
+    assert spec.requirements == "# Goal\n\nUse body text."
+
+
+def test_load_task_spec_honors_yaml_requirements_when_body_empty(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_task_md(
+        tmp_path / "task-front-req.md",
+        {
+            "project_name": "demo",
+            "feature": "feat_front_req",
+            "repo": "owner/repo",
+            "requirements": "Use front matter requirements.",
+        },
+        body="",
+    )
+    spec = load_task_spec(spec_path)
+    assert spec.requirements == "Use front matter requirements."
+
+
+def test_load_task_spec_supports_legacy_task_doc_field(tmp_path: Path) -> None:
+    legacy_doc = tmp_path / "legacy.md"
+    legacy_doc.write_text("# Legacy task\n", encoding="utf-8")
+    spec_path = _write_task_md(
+        tmp_path / "task-legacy.md",
+        {
+            "project_name": "demo",
+            "feature": "feat_legacy",
+            "repo": "owner/repo",
+            "task_doc": "./legacy.md",
+        },
+        body="",
+    )
+    spec = load_task_spec(spec_path)
+    assert spec.task_doc == legacy_doc.resolve()
+    assert spec.requirements is None
 
 
 def test_load_task_spec_ignores_task_id_from_spec(tmp_path: Path) -> None:
-    spec_path = _write_spec(
-        tmp_path / "task-ignore-id.json",
+    spec_path = _write_task_md(
+        tmp_path / "task-ignore-id.md",
         {
             "project_name": "demo",
             "feature": "feat_ignore_id",
@@ -100,38 +168,106 @@ def test_load_task_spec_ignores_task_id_from_spec(tmp_path: Path) -> None:
     assert spec.task_id != "custom-id-should-be-ignored"
 
 
-def test_load_task_spec_rejects_whitespace_only_requirements(tmp_path: Path) -> None:
-    spec_path = tmp_path / "task-blank-requirements.json"
-    spec_path.write_text(
-        '{"project_name":"demo","feature":"feat_blank","requirements":"   "}',
-        encoding="utf-8",
+def test_load_task_spec_rejects_blank_markdown_body_and_missing_requirements(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_task_md(
+        tmp_path / "task-blank.md",
+        {"project_name": "demo", "feature": "feat_blank"},
+        body="",
     )
-    with pytest.raises(AgvvError, match="Spec must include"):
+    with pytest.raises(AgvvError, match="requirements"):
         load_task_spec(spec_path)
 
 
 def test_load_task_spec_fails_when_file_missing(tmp_path: Path) -> None:
     with pytest.raises(AgvvError, match="Failed to read spec file"):
-        load_task_spec(tmp_path / "missing-spec.json")
+        load_task_spec(tmp_path / "missing-spec.md")
 
 
-def test_load_task_spec_rejects_non_object_payload(tmp_path: Path) -> None:
-    spec_path = tmp_path / "task-invalid-root.json"
-    spec_path.write_text('["not-an-object"]', encoding="utf-8")
-    with pytest.raises(AgvvError, match="Task spec must be an object"):
+def test_load_task_spec_rejects_non_markdown_spec_path(tmp_path: Path) -> None:
+    bad_path = tmp_path / "task.json"
+    bad_path.write_text("{}", encoding="utf-8")
+    with pytest.raises(AgvvError, match="Markdown"):
+        load_task_spec(bad_path)
+
+
+def test_load_task_spec_rejects_non_object_front_matter(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task.md"
+    spec_path.write_text("---\n[1, 2, 3]\n---\n\nTask body\n", encoding="utf-8")
+    with pytest.raises(AgvvError, match="object mapping"):
         load_task_spec(spec_path)
 
 
-def test_load_task_spec_rejects_invalid_json(tmp_path: Path) -> None:
-    spec_path = tmp_path / "task-invalid-json.txt"
-    spec_path.write_text("::: invalid :::", encoding="utf-8")
-    with pytest.raises(AgvvError, match="not valid JSON"):
+def test_load_task_spec_rejects_missing_front_matter_delimiters(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task.md"
+    spec_path.write_text("project_name: demo\nfeature: feat\n", encoding="utf-8")
+    with pytest.raises(AgvvError, match="start with YAML front matter"):
+        load_task_spec(spec_path)
+
+
+def test_load_task_spec_rejects_unclosed_front_matter(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task.md"
+    spec_path.write_text("---\nproject_name: demo\nfeature: feat\n", encoding="utf-8")
+    with pytest.raises(AgvvError, match="closing '---'"):
+        load_task_spec(spec_path)
+
+
+def test_load_task_spec_rejects_invalid_yaml_mapping_line(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task.md"
+    spec_path.write_text(
+        "---\nproject_name: demo\nfeature feat_bad\n---\n\nTask body\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(AgvvError, match="Invalid YAML"):
+        load_task_spec(spec_path)
+
+
+def test_load_task_spec_treats_comment_only_scalar_as_null(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task-comment-null.md"
+    spec_path.write_text(
+        "---\nproject_name: demo\nfeature: feat_comment_null\nrepo: # optional\n---\n\nTask body\n",
+        encoding="utf-8",
+    )
+    spec = load_task_spec(spec_path)
+    assert spec.repo is None
+
+
+def test_load_task_spec_strips_comment_after_apostrophe_plain_scalar(
+    tmp_path: Path,
+) -> None:
+    spec_path = tmp_path / "task-apostrophe-comment.md"
+    spec_path.write_text(
+        "---\nproject_name: demo\nfeature: feat_apostrophe_scalar\nrepo: owner/repo\nrequirements: don't stop # trailing comment\n---\n",
+        encoding="utf-8",
+    )
+    spec = load_task_spec(spec_path)
+    assert spec.requirements == "don't stop"
+
+
+def test_load_task_spec_parses_inline_list_item_with_apostrophe(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task-inline-list-apostrophe.md"
+    spec_path.write_text(
+        "---\nproject_name: demo\nfeature: feat_apostrophe_list\nrepo: owner/repo\nagent_extra_args: [don't, --trace] # trailing comment\nrequirements: execute task\n---\n",
+        encoding="utf-8",
+    )
+    spec = load_task_spec(spec_path)
+    assert spec.agent_extra_args == ["don't", "--trace"]
+
+
+def test_load_task_spec_rejects_unterminated_quoted_scalar(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task-unterminated-quote.md"
+    spec_path.write_text(
+        '---\nproject_name: demo\nfeature: "feat_bad\n---\n\nTask body\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(AgvvError, match="unterminated double-quoted scalar"):
         load_task_spec(spec_path)
 
 
 def test_load_task_spec_defaults_base_dir_to_cwd(tmp_path: Path) -> None:
-    spec_path = _write_spec(
-        tmp_path / "task-missing-base-dir.json",
+    spec_path = _write_task_md(
+        tmp_path / "task-missing-base-dir.md",
         {
             "task_id": "task_missing_base_dir",
             "project_name": "demo",
@@ -144,8 +280,8 @@ def test_load_task_spec_defaults_base_dir_to_cwd(tmp_path: Path) -> None:
 
 
 def test_load_task_spec_honors_user_specified_from_branch(tmp_path: Path) -> None:
-    spec_path = _write_spec(
-        tmp_path / "task-from-branch.json",
+    spec_path = _write_task_md(
+        tmp_path / "task-from-branch.md",
         {
             "project_name": "demo",
             "feature": "feat_branch",
@@ -160,8 +296,8 @@ def test_load_task_spec_honors_user_specified_from_branch(tmp_path: Path) -> Non
 def test_load_task_spec_defaults_from_branch_to_main_when_absent(
     tmp_path: Path,
 ) -> None:
-    spec_path = _write_spec(
-        tmp_path / "task-no-branch.json",
+    spec_path = _write_task_md(
+        tmp_path / "task-no-branch.md",
         {
             "project_name": "demo",
             "feature": "feat_default_branch",
@@ -173,17 +309,18 @@ def test_load_task_spec_defaults_from_branch_to_main_when_absent(
 
 
 def test_load_task_spec_parses_requirement_contract_fields(tmp_path: Path) -> None:
-    spec_path = _write_spec(
-        tmp_path / "task-contract.json",
+    spec_path = _write_task_md(
+        tmp_path / "task-contract.md",
         {
             "task_id": "task_contract",
             "project_name": "demo",
             "feature": "feat_contract",
             "repo": "owner/repo",
             "base_dir": str(tmp_path),
-            "requirements": "Implement API endpoint for health check.",
             "constraints": ["Do not change existing API schema.", "Use stdlib only."],
+            "timeout_minutes": 90,
         },
+        body="Implement API endpoint for health check.",
     )
     spec = load_task_spec(spec_path)
     assert spec.requirements == "Implement API endpoint for health check."
@@ -191,11 +328,12 @@ def test_load_task_spec_parses_requirement_contract_fields(tmp_path: Path) -> No
         "Do not change existing API schema.",
         "Use stdlib only.",
     ]
+    assert spec.timeout_minutes == 90
 
 
 def test_load_task_spec_rejects_feature_with_spaces(tmp_path: Path) -> None:
-    spec_path = _write_spec(
-        tmp_path / "task-invalid-feature.json",
+    spec_path = _write_task_md(
+        tmp_path / "task-invalid-feature.md",
         {
             "project_name": "demo",
             "feature": "bad feature",
@@ -214,7 +352,7 @@ def test_load_task_spec_rejects_feature_with_spaces(tmp_path: Path) -> None:
 def test_from_payload_resets_runtime_controlled_fields(tmp_path: Path) -> None:
     """from_payload must reset agent, from_branch, task_id regardless of spec content.
 
-    Note: agent_extra_args is intentionally preserved — it carries agent flags
+    Note: agent_extra_args is intentionally preserved - it carries agent flags
     (not provider choice) and may legitimately appear in user spec files.
     """
     task_doc = tmp_path / "task.md"
