@@ -28,6 +28,7 @@ _AGENT_PROVIDER_ALIASES = {
 
 
 def _generate_task_id(project_name: str, feature: str) -> str:
+    """Generate a timestamped task identifier for a project/feature pair."""
     stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S")
     return f"{project_name}-{feature}-{stamp}"
 
@@ -109,6 +110,7 @@ class TaskSpec(BaseModel):
     @field_validator("project_name", "feature", mode="before")
     @classmethod
     def check_non_empty(cls, v: Any) -> str:
+        """Validate that project/feature names are present and not reserved."""
         if v is None or str(v).strip() == "":
             raise ValueError("Must be a non-empty string")
         v_str = str(v).strip()
@@ -119,6 +121,7 @@ class TaskSpec(BaseModel):
     @field_validator("constraints", "agent_extra_args", mode="before")
     @classmethod
     def sanitize_string_list(cls, v: Any) -> list[str]:
+        """Normalize a scalar or list input into a non-empty string list."""
         if v is None:
             return []
         if isinstance(v, str):
@@ -136,6 +139,7 @@ class TaskSpec(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def prepare_data(cls, data: Any) -> Any:
+        """Normalize raw input fields before model parsing."""
         if not isinstance(data, dict):
             raise ValueError("Task spec must be an object.")
 
@@ -160,6 +164,7 @@ class TaskSpec(BaseModel):
 
     @model_validator(mode="after")
     def compute_fields(self) -> TaskSpec:
+        """Populate computed fields such as normalized agent and generated task id."""
         agent_provider = normalize_agent_provider(self.agent)
         object.__setattr__(self, "agent", agent_provider)
         if not self.task_id:

@@ -42,17 +42,20 @@ def _ensure_layout_name(value: str, label: str) -> None:
 
 
 def _ensure_feature_name(feature: str) -> None:
+    """Validate that the feature name is safe and not reserved by layout internals."""
     _ensure_layout_name(feature, "Feature branch name")
     if feature in {"main", "repo.git"}:
         raise AgvvError(f"Feature branch name '{feature}' is reserved in this layout.")
 
 
 def _write_json(path: Path, data: dict) -> None:
+    """Write JSON data with deterministic formatting and a trailing newline."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _default_branch(repo_dir: Path) -> str:
+    """Choose the default branch from a bare repo, preferring main/master."""
     branches_raw = run_git(
         ["-C", str(repo_dir), "for-each-ref", "--format=%(refname:short)", "refs/heads"]
     ).stdout
@@ -66,6 +69,7 @@ def _default_branch(repo_dir: Path) -> str:
 
 
 def _is_bare_repo(path: Path) -> bool:
+    """Return True when path is an accessible bare git repository."""
     if not path.exists() or not path.is_dir():
         return False
     if not run_git_success(["-C", str(path), "rev-parse", "--is-bare-repository"]):
@@ -292,6 +296,7 @@ def start_feature(
 def _feature_cleanup_paths(
     project_name: str, feature: str, base_dir: Path
 ) -> LayoutPaths:
+    """Resolve and validate layout paths needed for feature cleanup operations."""
     _ensure_layout_name(project_name, "Project name")
     _ensure_feature_name(feature)
     paths = layout_paths(project_name, base_dir, feature=feature)
@@ -305,6 +310,7 @@ def _feature_cleanup_paths(
 
 
 def _remove_feature_worktree(paths: LayoutPaths, *, allow_dirty: bool) -> None:
+    """Remove a feature worktree, optionally refusing when there are local changes."""
     if paths.feature_dir is None or not paths.feature_dir.exists():
         return
     if not allow_dirty:
@@ -347,6 +353,7 @@ def _remove_feature_worktree(paths: LayoutPaths, *, allow_dirty: bool) -> None:
 def _remove_feature_branch(
     paths: LayoutPaths, feature: str, *, delete_branch: bool
 ) -> None:
+    """Delete the feature branch in the bare repo when deletion is requested."""
     if not delete_branch:
         return
     if run_git_success(

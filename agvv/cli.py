@@ -32,15 +32,18 @@ app.add_typer(daemon_app, name="daemon")
 
 
 def _exit_error(exc: AgvvError) -> NoReturn:
+    """Print a domain error and exit the CLI with status 1."""
     typer.secho(str(exc), err=True, fg=typer.colors.RED)
     raise typer.Exit(code=1) from exc
 
 
 def _resolve_path(path: str | None) -> Path | None:
+    """Expand and resolve a user-supplied path string when present."""
     return Path(path).expanduser().resolve() if path else None
 
 
 def _parse_state(value: str | None) -> TaskState | None:
+    """Parse CLI state text into TaskState with a friendly validation error."""
     if value is None:
         return None
     try:

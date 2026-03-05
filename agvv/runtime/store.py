@@ -73,17 +73,20 @@ class TaskStore:
     """SQLite-backed runtime store."""
 
     def __init__(self, path: Path | None = None) -> None:
+        """Create a store bound to a resolved DB path and ensure schema exists."""
         self.path = resolve_task_db_path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
+        """Open a SQLite connection configured for dict-like row access."""
         conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
         return conn
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
+        """Yield a managed transactional connection that is always closed."""
         conn = self._connect()
         try:
             with conn:
@@ -92,6 +95,7 @@ class TaskStore:
             conn.close()
 
     def _init_schema(self) -> None:
+        """Create required tables and indexes when they do not yet exist."""
         with self._connection() as conn:
             conn.executescript(
                 """
@@ -181,6 +185,7 @@ class TaskStore:
         message: str,
         meta: dict[str, Any] | None = None,
     ) -> None:
+        """Insert a task event using an existing connection/transaction."""
         conn.execute(
             """
             INSERT INTO task_events (task_id, created_at, level, step, message, meta_json)
