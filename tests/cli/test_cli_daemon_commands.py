@@ -24,25 +24,47 @@ def test_cli_daemon_run_once(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
     monkeypatch.setattr(
         "agvv.cli.daemon_run_once",
-        lambda db_path, max_workers=1: [_FakeTask(id="task-1", state=TaskState.RUNNING, updated_at="2026-03-03T10:00:00+00:00")],
+        lambda db_path, max_workers=1: [
+            _FakeTask(
+                id="task-1",
+                state=TaskState.RUNNING,
+                updated_at="2026-03-03T10:00:00+00:00",
+            )
+        ],
     )
-    result = runner.invoke(app, ["daemon", "run", "--once", "--db-path", str(tmp_path / "tasks.db")])
+    result = runner.invoke(
+        app, ["daemon", "run", "--once", "--db-path", str(tmp_path / "tasks.db")]
+    )
     assert result.exit_code == 0
     assert "reconciled=1" in result.stdout
     assert "task-1" in result.stdout
 
 
 def test_cli_daemon_run_loop(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr("agvv.cli.daemon_run_loop", lambda db_path, interval_seconds, max_loops, max_workers=1: 3)
+    monkeypatch.setattr(
+        "agvv.cli.daemon_run_loop",
+        lambda db_path, interval_seconds, max_loops, max_workers=1: 3,
+    )
     result = runner.invoke(
         app,
-        ["daemon", "run", "--db-path", str(tmp_path / "tasks.db"), "--interval-seconds", "5", "--max-loops", "3"],
+        [
+            "daemon",
+            "run",
+            "--db-path",
+            str(tmp_path / "tasks.db"),
+            "--interval-seconds",
+            "5",
+            "--max-loops",
+            "3",
+        ],
     )
     assert result.exit_code == 0
     assert "loops=3" in result.stdout
 
 
-def test_cli_daemon_run_forwards_max_workers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_cli_daemon_run_forwards_max_workers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     captured: dict[str, int] = {}
 
     def _fake_loop(db_path, interval_seconds, max_loops, max_workers=1):
@@ -69,8 +91,15 @@ def test_cli_daemon_run_forwards_max_workers(monkeypatch: pytest.MonkeyPatch, tm
     assert captured["max_workers"] == 4
 
 
-def test_cli_daemon_run_handles_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr("agvv.cli.daemon_run_loop", lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()))
-    result = runner.invoke(app, ["daemon", "run", "--db-path", str(tmp_path / "tasks.db")])
+def test_cli_daemon_run_handles_keyboard_interrupt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "agvv.cli.daemon_run_loop",
+        lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    result = runner.invoke(
+        app, ["daemon", "run", "--db-path", str(tmp_path / "tasks.db")]
+    )
     assert result.exit_code == 130
     assert "daemon interrupted" in result.stdout

@@ -96,7 +96,9 @@ def _codex_has_sandbox_flag(extra_args: list[str]) -> bool:
     return "-s" in extra_args or "--sandbox" in extra_args
 
 
-def build_launch_command(*, spec: TaskSpec, prompt_path: Path, output_log_path: Path) -> str:
+def build_launch_command(
+    *, spec: TaskSpec, prompt_path: Path, output_log_path: Path
+) -> str:
     """Build wrapped agent command with prompt injection and output logging."""
     agent_cmd = spec.agent_cmd.strip()
     prompt_arg = f'"$(cat {shlex.quote(str(prompt_path))})"'

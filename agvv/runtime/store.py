@@ -73,17 +73,20 @@ class TaskStore:
     """SQLite-backed runtime store."""
 
     def __init__(self, path: Path | None = None) -> None:
+        """Create a store bound to a resolved DB path and ensure schema exists."""
         self.path = resolve_task_db_path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
+        """Open a SQLite connection configured for dict-like row access."""
         conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
         return conn
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
+        """Yield a managed transactional connection that is always closed."""
         conn = self._connect()
         try:
             with conn:
@@ -92,6 +95,7 @@ class TaskStore:
             conn.close()
 
     def _init_schema(self) -> None:
+        """Create required tables and indexes when they do not yet exist."""
         with self._connection() as conn:
             conn.executescript(
                 """
@@ -161,7 +165,11 @@ class TaskStore:
                     ),
                 )
                 self._add_event_conn(
-                    conn, spec.task_id, "info", "task.create", "Task created",
+                    conn,
+                    spec.task_id,
+                    "info",
+                    "task.create",
+                    "Task created",
                     {"state": TaskState.PENDING.value},
                 )
             except sqlite3.IntegrityError as exc:
@@ -177,12 +185,20 @@ class TaskStore:
         message: str,
         meta: dict[str, Any] | None = None,
     ) -> None:
+        """Insert a task event using an existing connection/transaction."""
         conn.execute(
             """
             INSERT INTO task_events (task_id, created_at, level, step, message, meta_json)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (task_id, now_iso(), level, step, message, json.dumps(meta or {}, sort_keys=True)),
+            (
+                task_id,
+                now_iso(),
+                level,
+                step,
+                message,
+                json.dumps(meta or {}, sort_keys=True),
+            ),
         )
 
     def add_event(
@@ -236,7 +252,9 @@ class TaskStore:
     def get_task(self, task_id: str) -> TaskSnapshot:
         """Fetch a task by id or raise when missing."""
         with self._connection() as conn:
-            row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
         if row is None:
             raise AgvvError(f"Task not found: {task_id}")
         return self._row_to_snapshot(row)
@@ -259,7 +277,8 @@ class TaskStore:
         states = tuple(state.value for state in ACTIVE_STATES)
         with self._connection() as conn:
             rows = conn.execute(
-                f"SELECT * FROM tasks WHERE state IN ({placeholders}) ORDER BY updated_at ASC", states
+                f"SELECT * FROM tasks WHERE state IN ({placeholders}) ORDER BY updated_at ASC",
+                states,
             ).fetchall()
         return [self._row_to_snapshot(row) for row in rows]
 
@@ -273,14 +292,20 @@ class TaskStore:
             )
         return self.get_task(task_id)
 
-    def try_acquire_reconcile_lock(self, task_id: str, *, owner_id: str, ttl_seconds: int = 300) -> bool:
+    def try_acquire_reconcile_lock(
+        self, task_id: str, *, owner_id: str, ttl_seconds: int = 300
+    ) -> bool:
         """Try to acquire a task reconcile lock for one owner."""
         if ttl_seconds <= 0:
             raise AgvvError("ttl_seconds must be > 0")
         acquired_at = now_iso()
-        expires_at = (datetime.now(tz=timezone.utc) + timedelta(seconds=ttl_seconds)).isoformat()
+        expires_at = (
+            datetime.now(tz=timezone.utc) + timedelta(seconds=ttl_seconds)
+        ).isoformat()
         with self._connection() as conn:
-            conn.execute("DELETE FROM task_reconcile_locks WHERE expires_at <= ?", (acquired_at,))
+            conn.execute(
+                "DELETE FROM task_reconcile_locks WHERE expires_at <= ?", (acquired_at,)
+            )
             try:
                 conn.execute(
                     """
@@ -320,10 +345,16 @@ class TaskStore:
             session=str(row["session"]),
             agent=(str(row["agent"]) if row["agent"] is not None else None),
             repo=repo,
-            last_error=(str(row["last_error"]) if row["last_error"] is not None else None),
+            last_error=(
+                str(row["last_error"]) if row["last_error"] is not None else None
+            ),
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
-            started_at=(str(row["started_at"]) if row["started_at"] is not None else None),
-            finished_at=(str(row["finished_at"]) if row["finished_at"] is not None else None),
+            started_at=(
+                str(row["started_at"]) if row["started_at"] is not None else None
+            ),
+            finished_at=(
+                str(row["finished_at"]) if row["finished_at"] is not None else None
+            ),
             spec=spec,
         )

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from agvv.runtime.models import TaskSpec, build_agent_command, normalize_agent_provider
 from agvv.runtime.spec import load_task_spec
 from agvv.shared.errors import AgvvError
 
@@ -14,7 +15,9 @@ from agvv.shared.errors import AgvvError
 def _write_spec(path: Path, payload: dict) -> Path:
     if "task_doc" not in payload:
         task_doc_path = path.with_suffix(".md")
-        task_doc_path.write_text("# Task Doc\n\n- Test task details.\n", encoding="utf-8")
+        task_doc_path.write_text(
+            "# Task Doc\n\n- Test task details.\n", encoding="utf-8"
+        )
         payload["task_doc"] = str(task_doc_path)
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
@@ -60,7 +63,9 @@ def test_load_task_spec_ignores_agent_provider_fields_from_spec(tmp_path: Path) 
     assert spec.agent_cmd == "codex --dangerously-skip-permissions"
 
 
-def test_load_task_spec_resolves_relative_task_doc_against_spec_dir(tmp_path: Path) -> None:
+def test_load_task_spec_resolves_relative_task_doc_against_spec_dir(
+    tmp_path: Path,
+) -> None:
     task_doc = tmp_path / "task.md"
     task_doc.write_text("# Task\n", encoding="utf-8")
     spec_path = tmp_path / "task.json"
@@ -152,7 +157,9 @@ def test_load_task_spec_honors_user_specified_from_branch(tmp_path: Path) -> Non
     assert spec.from_branch == "release"
 
 
-def test_load_task_spec_defaults_from_branch_to_main_when_absent(tmp_path: Path) -> None:
+def test_load_task_spec_defaults_from_branch_to_main_when_absent(
+    tmp_path: Path,
+) -> None:
     spec_path = _write_spec(
         tmp_path / "task-no-branch.json",
         {
@@ -180,7 +187,10 @@ def test_load_task_spec_parses_requirement_contract_fields(tmp_path: Path) -> No
     )
     spec = load_task_spec(spec_path)
     assert spec.requirements == "Implement API endpoint for health check."
-    assert spec.constraints == ["Do not change existing API schema.", "Use stdlib only."]
+    assert spec.constraints == [
+        "Do not change existing API schema.",
+        "Use stdlib only.",
+    ]
 
 
 def test_load_task_spec_rejects_feature_with_spaces(tmp_path: Path) -> None:
@@ -199,6 +209,7 @@ def test_load_task_spec_rejects_feature_with_spaces(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # from_payload / from_db_payload round-trip semantics
 # ---------------------------------------------------------------------------
+
 
 def test_from_payload_resets_runtime_controlled_fields(tmp_path: Path) -> None:
     """from_payload must reset agent, from_branch, task_id regardless of spec content.
@@ -221,13 +232,14 @@ def test_from_payload_resets_runtime_controlled_fields(tmp_path: Path) -> None:
         # agent_extra_args is deliberately absent: verified separately below
     }
 
-    from agvv.runtime.models import TaskSpec
     spec = TaskSpec.from_payload(payload)
 
     # agent is always reset to codex
     assert spec.agent == "codex", f"expected agent='codex', got {spec.agent!r}"
     # from_branch is preserved when the user specifies one
-    assert spec.from_branch == "release", f"expected from_branch='release', got {spec.from_branch!r}"
+    assert spec.from_branch == "release", (
+        f"expected from_branch='release', got {spec.from_branch!r}"
+    )
     # task_id is regenerated (different from the supplied custom id)
     assert spec.task_id != "custom-id-must-not-survive"
     assert spec.task_id.startswith("demo-feat_rt-")
@@ -235,12 +247,12 @@ def test_from_payload_resets_runtime_controlled_fields(tmp_path: Path) -> None:
     assert spec.agent_cmd == "codex"
 
 
-def test_from_db_payload_preserves_stored_values_and_recomputes_agent_cmd(tmp_path: Path) -> None:
+def test_from_db_payload_preserves_stored_values_and_recomputes_agent_cmd(
+    tmp_path: Path,
+) -> None:
     """from_db_payload must preserve stored provider/from_branch and recompute agent_cmd correctly."""
     task_doc = tmp_path / "task.md"
     task_doc.write_text("# Task\n", encoding="utf-8")
-
-    from agvv.runtime.models import TaskSpec
 
     # Simulate what to_payload() stores in the DB for a claude_code task
     db_payload = {
@@ -255,7 +267,11 @@ def test_from_db_payload_preserves_stored_values_and_recomputes_agent_cmd(tmp_pa
         "agent_non_interactive": True,
         "base_dir": str(tmp_path),
         # to_payload() serialises agent as a nested dict:
-        "agent": {"provider": "claude_code", "model": "claude-sonnet-4-5", "extra_args": []},
+        "agent": {
+            "provider": "claude_code",
+            "model": "claude-sonnet-4-5",
+            "extra_args": [],
+        },
         # agent_cmd is intentionally present but must be dropped and recomputed:
         "agent_cmd": "claude --stale-cached-value",
         "session": "demo-feat_db",
@@ -275,3 +291,75 @@ def test_from_db_payload_preserves_stored_values_and_recomputes_agent_cmd(tmp_pa
     # agent_cmd is recomputed from the stored provider, not taken from the stale cached value
     assert "claude" in spec.agent_cmd
     assert "stale-cached-value" not in spec.agent_cmd
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, "codex"),
+        ("", "codex"),
+        (" codex ", "codex"),
+        ("CLAUDE", "claude_code"),
+        ("claude-code", "claude_code"),
+        ("claude_code", "claude_code"),
+    ],
+)
+def test_normalize_agent_provider_aliases(raw: str | None, expected: str) -> None:
+    assert normalize_agent_provider(raw) == expected
+
+
+def test_normalize_agent_provider_rejects_unknown_value() -> None:
+    with pytest.raises(AgvvError, match="Unsupported agent provider"):
+        normalize_agent_provider("unknown-provider")
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "extra_args", "expected"),
+    [
+        ("codex", None, [], "codex"),
+        (
+            "codex",
+            "gpt-5",
+            ["--sandbox", "workspace-write"],
+            "codex --model gpt-5 --sandbox workspace-write",
+        ),
+        (
+            "claude_code",
+            None,
+            ["--print", "hello world"],
+            "claude --print 'hello world'",
+        ),
+    ],
+)
+def test_build_agent_command(
+    provider: str, model: str | None, extra_args: list[str], expected: str
+) -> None:
+    assert build_agent_command(provider, model, extra_args) == expected
+
+
+def test_build_agent_command_rejects_unknown_provider() -> None:
+    with pytest.raises(AgvvError, match="Unsupported agent provider"):
+        build_agent_command("unsupported", None, [])
+
+
+def test_taskspec_normalized_session_defaults_to_agvv_task_id() -> None:
+    spec = TaskSpec.from_payload(
+        {
+            "project_name": "demo",
+            "feature": "feat_default_session",
+            "requirements": "Implement feature.",
+        }
+    )
+    assert spec.normalized_session() == f"agvv-{spec.task_id}"
+
+
+def test_taskspec_normalized_session_preserves_explicit_session() -> None:
+    spec = TaskSpec.from_payload(
+        {
+            "project_name": "demo",
+            "feature": "feat_custom_session",
+            "requirements": "Implement feature.",
+            "session": "agvv-custom",
+        }
+    )
+    assert spec.normalized_session() == "agvv-custom"
