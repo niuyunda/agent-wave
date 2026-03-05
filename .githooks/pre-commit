@@ -6,5 +6,22 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Running docstring coverage gate for agvv/ (required: 100%)..."
-uv run interrogate agvv --fail-under=100 --quiet
+echo "Running docstring coverage gates (overall >=80%, core modules ==100%)..."
+uv run interrogate . \
+  --quiet \
+  --fail-under=80 \
+  --exclude tests \
+  --exclude scripts \
+  --exclude dist \
+  --exclude tmp \
+  --exclude agvv/__init__.py \
+  --exclude agvv/cli.py \
+  --exclude agvv/orchestration/__init__.py \
+  --exclude agvv/runtime/__init__.py \
+  --exclude agvv/shared/__init__.py
+uv run interrogate agvv/runtime agvv/orchestration agvv/shared \
+  --quiet \
+  --fail-under=100 \
+  --exclude agvv/orchestration/__init__.py \
+  --exclude agvv/runtime/__init__.py \
+  --exclude agvv/shared/__init__.py

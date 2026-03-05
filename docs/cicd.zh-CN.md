@@ -29,7 +29,7 @@ push 到以下分支：main、feat-*、fix-*、refactor-*、codex/*
 │  ─────────────────           ──────────────────────     │
 │  ruff check .                Python 3.10                │
 │  ruff format --check .       Python 3.12                │
-│  interrogate --fail-under=100│  pytest --cov=agvv       │
+│  interrogate 双门禁            │  pytest --cov=agvv       │
 └──────────────┬───────────────┴──────────────┬──────────┘
                │         都通过               │
                └──────────────┬───────────────┘
@@ -50,7 +50,18 @@ push 到以下分支：main、feat-*、fix-*、refactor-*、codex/*
 |------|----------|
 | `uv run ruff check .` | 代码风格和错误（linting） |
 | `uv run ruff format --check .` | 代码格式（不自动修复，只检查） |
-| `uv run interrogate agvv --fail-under=100 --quiet` | docstring 覆盖率必须达到 100% |
+| `interrogate` 双门禁（总体 80% + 核心 100%） | docstring 总体覆盖率至少 80%，生产核心模块保持 100% |
+
+CI 中使用的 docstring 命令：
+
+```bash
+uv run interrogate . --quiet --fail-under=80 \
+  --exclude tests --exclude scripts --exclude dist --exclude tmp \
+  --exclude agvv/__init__.py --exclude agvv/cli.py \
+  --exclude agvv/orchestration/__init__.py --exclude agvv/runtime/__init__.py --exclude agvv/shared/__init__.py
+uv run interrogate agvv/runtime agvv/orchestration agvv/shared --quiet --fail-under=100 \
+  --exclude agvv/orchestration/__init__.py --exclude agvv/runtime/__init__.py --exclude agvv/shared/__init__.py
+```
 
 > **为什么 docstring 在 CI 中检查？**
 > 项目通过 `.githooks/pre-commit` 在本地也有此检查，但 git hooks 是可选安装的。在 CI 中强制执行可确保所有合并到 main 的代码都满足要求。
@@ -104,7 +115,7 @@ verify job
 ─────────────────────────────────
 ruff check .
 ruff format --check .
-interrogate --fail-under=100 --quiet
+interrogate 双门禁（总体 80% + 核心 100%）
 pytest
          │
          │ 通过
@@ -252,7 +263,12 @@ git add -u && git commit -m "style: apply ruff format"
 查看缺失 docstring 的函数：
 
 ```bash
-uv run interrogate agvv --fail-under=100
+uv run interrogate . --fail-under=80 \
+  --exclude tests --exclude scripts --exclude dist --exclude tmp \
+  --exclude agvv/__init__.py --exclude agvv/cli.py \
+  --exclude agvv/orchestration/__init__.py --exclude agvv/runtime/__init__.py --exclude agvv/shared/__init__.py
+uv run interrogate agvv/runtime agvv/orchestration agvv/shared --fail-under=100 \
+  --exclude agvv/orchestration/__init__.py --exclude agvv/runtime/__init__.py --exclude agvv/shared/__init__.py
 ```
 
 为所有缺失的函数/类/模块补充 docstring。
@@ -278,7 +294,12 @@ git push origin :refs/tags/v0.1.2
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run interrogate agvv --fail-under=100 --quiet
+uv run interrogate . --quiet --fail-under=80 \
+  --exclude tests --exclude scripts --exclude dist --exclude tmp \
+  --exclude agvv/__init__.py --exclude agvv/cli.py \
+  --exclude agvv/orchestration/__init__.py --exclude agvv/runtime/__init__.py --exclude agvv/shared/__init__.py
+uv run interrogate agvv/runtime agvv/orchestration agvv/shared --quiet --fail-under=100 \
+  --exclude agvv/orchestration/__init__.py --exclude agvv/runtime/__init__.py --exclude agvv/shared/__init__.py
 uv run pytest --cov=agvv --cov-branch --cov-report=term-missing
 ```
 

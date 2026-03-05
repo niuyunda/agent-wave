@@ -29,7 +29,7 @@ manual trigger (workflow_dispatch)
 │  ─────────────────           ──────────────────────     │
 │  ruff check .                Python 3.10                │
 │  ruff format --check .       Python 3.12                │
-│  interrogate --fail-under=100│  pytest --cov=agvv       │
+│  interrogate dual-gate        │  pytest --cov=agvv       │
 └──────────────┬───────────────┴──────────────┬──────────┘
                │          both pass           │
                └──────────────┬───────────────┘
@@ -50,7 +50,18 @@ Runs on Python 3.12. All three checks must pass:
 |---------|---------------|
 | `uv run ruff check .` | Code style and errors (linting) |
 | `uv run ruff format --check .` | Code formatting (check only, no auto-fix) |
-| `uv run interrogate agvv --fail-under=100 --quiet` | Docstring coverage must be 100% |
+| `interrogate` dual gate (overall 80% + core 100%) | Overall docstring coverage must be at least 80%, while production core modules must remain at 100% |
+
+Docstring commands used in CI:
+
+```bash
+uv run interrogate . --quiet --fail-under=80 \
+  --exclude tests --exclude scripts --exclude dist --exclude tmp \
+  --exclude agvv/__init__.py --exclude agvv/cli.py \
+  --exclude agvv/orchestration/__init__.py --exclude agvv/runtime/__init__.py --exclude agvv/shared/__init__.py
+uv run interrogate agvv/runtime agvv/orchestration agvv/shared --quiet --fail-under=100 \
+  --exclude agvv/orchestration/__init__.py --exclude agvv/runtime/__init__.py --exclude agvv/shared/__init__.py
+```
 
 > **Why enforce docstrings in CI?**
 > The project has a `.githooks/pre-commit` hook for local enforcement, but git hooks are opt-in. Enforcing this in CI guarantees every commit merged to `main` meets the requirement.
@@ -104,7 +115,7 @@ verify job
 ─────────────────────────────────
 ruff check .
 ruff format --check .
-interrogate --fail-under=100 --quiet
+interrogate dual-gate (overall 80% + core 100%)
 pytest
          │
          │ passes
@@ -250,7 +261,12 @@ git add -u && git commit -m "style: apply ruff format"
 Find which functions are missing docstrings:
 
 ```bash
-uv run interrogate agvv --fail-under=100
+uv run interrogate . --fail-under=80 \
+  --exclude tests --exclude scripts --exclude dist --exclude tmp \
+  --exclude agvv/__init__.py --exclude agvv/cli.py \
+  --exclude agvv/orchestration/__init__.py --exclude agvv/runtime/__init__.py --exclude agvv/shared/__init__.py
+uv run interrogate agvv/runtime agvv/orchestration agvv/shared --fail-under=100 \
+  --exclude agvv/orchestration/__init__.py --exclude agvv/runtime/__init__.py --exclude agvv/shared/__init__.py
 ```
 
 Add docstrings to all reported functions, classes, and modules.
@@ -276,7 +292,12 @@ git push origin :refs/tags/v0.1.2
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run interrogate agvv --fail-under=100 --quiet
+uv run interrogate . --quiet --fail-under=80 \
+  --exclude tests --exclude scripts --exclude dist --exclude tmp \
+  --exclude agvv/__init__.py --exclude agvv/cli.py \
+  --exclude agvv/orchestration/__init__.py --exclude agvv/runtime/__init__.py --exclude agvv/shared/__init__.py
+uv run interrogate agvv/runtime agvv/orchestration agvv/shared --quiet --fail-under=100 \
+  --exclude agvv/orchestration/__init__.py --exclude agvv/runtime/__init__.py --exclude agvv/shared/__init__.py
 uv run pytest --cov=agvv --cov-branch --cov-report=term-missing
 ```
 
