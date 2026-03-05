@@ -12,13 +12,19 @@ from agvv.shared.errors import AgvvError
 
 def feature_worktree_path(task: TaskSnapshot) -> Path:
     """Resolve feature worktree path for one runtime task."""
-    paths = orch.layout_paths(task.project_name, task.spec.base_dir, feature=task.feature)
+    paths = orch.layout_paths(
+        task.project_name, task.spec.base_dir, feature=task.feature
+    )
     if paths.feature_dir is None:
         raise AgvvError("Internal error: feature_dir missing")
     return paths.feature_dir
 
 
-def mark_failed(store: TaskStore, task: TaskSnapshot, step: str, message: str) -> TaskSnapshot:
+def mark_failed(
+    store: TaskStore, task: TaskSnapshot, step: str, message: str
+) -> TaskSnapshot:
     """Record failure event and transition task into FAILED."""
     store.add_event(task.id, "error", step, message)
-    return store.update_task(task.id, state=TaskState.FAILED, last_error=message, finished_at=now_iso())
+    return store.update_task(
+        task.id, state=TaskState.FAILED, last_error=message, finished_at=now_iso()
+    )

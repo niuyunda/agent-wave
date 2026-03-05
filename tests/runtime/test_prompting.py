@@ -8,7 +8,9 @@ from agvv.runtime.models import TaskSpec
 from agvv.runtime.prompting import build_launch_command
 
 
-def test_build_launch_command_uses_codex_exec_in_non_interactive_mode(tmp_path: Path) -> None:
+def test_build_launch_command_uses_codex_exec_in_non_interactive_mode(
+    tmp_path: Path,
+) -> None:
     prompt_path = tmp_path / "rendered_prompt.md"
     spec = TaskSpec(
         task_id="task_prompt",

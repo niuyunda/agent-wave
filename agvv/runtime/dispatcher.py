@@ -34,25 +34,47 @@ def _handle_pending(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
 def _handle_running(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
     """Check whether the coding session is still alive; transition when it ends."""
     if _session_timed_out(task):
-        message = f"Coding session exceeded timeout ({task.spec.timeout_minutes} minutes)."
-        store.add_event(task.id, "error", "session.timeout", message,
-                        {"session": task.session, "timeout_minutes": task.spec.timeout_minutes})
+        message = (
+            f"Coding session exceeded timeout ({task.spec.timeout_minutes} minutes)."
+        )
+        store.add_event(
+            task.id,
+            "error",
+            "session.timeout",
+            message,
+            {"session": task.session, "timeout_minutes": task.spec.timeout_minutes},
+        )
         try:
             orch.tmux_kill_session(task.session)
         except Exception as exc:
-            store.add_event(task.id, "warning", "session.timeout.kill",
-                            f"Failed to kill timed-out session: {exc}", {"session": task.session})
-        return store.update_task(task.id, state=TaskState.TIMED_OUT,
-                                 last_error="session_timeout", finished_at=now_iso())
+            store.add_event(
+                task.id,
+                "warning",
+                "session.timeout.kill",
+                f"Failed to kill timed-out session: {exc}",
+                {"session": task.session},
+            )
+        return store.update_task(
+            task.id,
+            state=TaskState.TIMED_OUT,
+            last_error="session_timeout",
+            finished_at=now_iso(),
+        )
 
     if orch.tmux_session_exists(task.session):
         return task  # still running, nothing to do
 
     # Session ended — mark done
-    store.add_event(task.id, "info", "session.done", "Coding session ended",
-                    {"session": task.session})
-    return store.update_task(task.id, state=TaskState.DONE,
-                             finished_at=now_iso(), last_error=None)
+    store.add_event(
+        task.id,
+        "info",
+        "session.done",
+        "Coding session ended",
+        {"session": task.session},
+    )
+    return store.update_task(
+        task.id, state=TaskState.DONE, finished_at=now_iso(), last_error=None
+    )
 
 
 _STATE_HANDLERS = {
@@ -80,14 +102,18 @@ def _reconcile_task(task_id: str, store: TaskStore, *, lock_owner: str) -> TaskS
         store.release_reconcile_lock(task_id, owner_id=lock_owner)
 
 
-def _reconcile_task_safe(task_id: str, store: TaskStore, *, lock_owner: str) -> TaskSnapshot:
+def _reconcile_task_safe(
+    task_id: str, store: TaskStore, *, lock_owner: str
+) -> TaskSnapshot:
     """Reconcile one task and convert unexpected failures into FAILED state."""
     try:
         return _reconcile_task(task_id, store, lock_owner=lock_owner)
     except Exception as exc:
         _LOGGER.exception("Unexpected reconcile failure for task %s", task_id)
         task = store.get_task(task_id)
-        return mark_failed(store, task, "daemon.reconcile", f"Unexpected reconcile failure: {exc}")
+        return mark_failed(
+            store, task, "daemon.reconcile", f"Unexpected reconcile failure: {exc}"
+        )
 
 
 def reconcile_task(task_id: str, db_path: Path | None = None) -> TaskSnapshot:
@@ -96,7 +122,9 @@ def reconcile_task(task_id: str, db_path: Path | None = None) -> TaskSnapshot:
     return _reconcile_task_safe(task_id, store, lock_owner=f"reconcile-{uuid4()}")
 
 
-def daemon_run_once(db_path: Path | None = None, *, max_workers: int = 1) -> list[TaskSnapshot]:
+def daemon_run_once(
+    db_path: Path | None = None, *, max_workers: int = 1
+) -> list[TaskSnapshot]:
     """Reconcile all active tasks once."""
     if max_workers <= 0:
         raise AgvvError("max_workers must be > 0")
@@ -106,14 +134,21 @@ def daemon_run_once(db_path: Path | None = None, *, max_workers: int = 1) -> lis
         return []
     if max_workers == 1 or len(active) == 1:
         lock_owner = f"daemon-{uuid4()}"
-        return [_reconcile_task_safe(task.id, store, lock_owner=lock_owner) for task in active]
+        return [
+            _reconcile_task_safe(task.id, store, lock_owner=lock_owner)
+            for task in active
+        ]
 
     indexed_tasks = list(enumerate(active))
     results: list[TaskSnapshot | None] = [None] * len(indexed_tasks)
     lock_owner = f"daemon-{uuid4()}"
-    with ThreadPoolExecutor(max_workers=min(max_workers, len(indexed_tasks))) as executor:
+    with ThreadPoolExecutor(
+        max_workers=min(max_workers, len(indexed_tasks))
+    ) as executor:
         future_to_index = {
-            executor.submit(_reconcile_task_safe, task.id, store, lock_owner=lock_owner): index
+            executor.submit(
+                _reconcile_task_safe, task.id, store, lock_owner=lock_owner
+            ): index
             for index, task in indexed_tasks
         }
         for future in as_completed(future_to_index):

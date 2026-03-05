@@ -5,7 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import agvv.orchestration as orch
-from agvv.runtime.models import RECOVERABLE_RETRY_STATES, TaskSpec, TaskState, normalize_agent_provider, build_agent_command
+from agvv.runtime.models import (
+    RECOVERABLE_RETRY_STATES,
+    TaskSpec,
+    TaskState,
+    normalize_agent_provider,
+    build_agent_command,
+)
 from agvv.runtime.session_lifecycle import launch_coding_session
 from agvv.runtime.spec import load_task_spec
 from agvv.runtime.store import TaskSnapshot, TaskStore, now_iso
@@ -25,15 +31,23 @@ def _apply_agent_overrides(
     provider = normalize_agent_provider(agent_provider or spec.agent or "codex")
     model = spec.agent_model
     extra_args = list(spec.agent_extra_args or [])
-    agent_cmd = build_agent_command(provider=provider, model=model, extra_args=extra_args)
-    non_interactive = spec.agent_non_interactive if agent_non_interactive is None else agent_non_interactive
-    return spec.model_copy(update={
-        "agent": provider,
-        "agent_model": model,
-        "agent_cmd": agent_cmd,
-        "agent_extra_args": extra_args,
-        "agent_non_interactive": non_interactive,
-    })
+    agent_cmd = build_agent_command(
+        provider=provider, model=model, extra_args=extra_args
+    )
+    non_interactive = (
+        spec.agent_non_interactive
+        if agent_non_interactive is None
+        else agent_non_interactive
+    )
+    return spec.model_copy(
+        update={
+            "agent": provider,
+            "agent_model": model,
+            "agent_cmd": agent_cmd,
+            "agent_extra_args": extra_args,
+            "agent_non_interactive": non_interactive,
+        }
+    )
 
 
 def _resolve_runtime_base_dir(*, project_dir: Path | None) -> Path:
@@ -54,7 +68,9 @@ def run_task_from_spec(
     """Create task from spec and start coding session."""
     spec = load_task_spec(spec_path)
     spec = _apply_agent_overrides(
-        spec, agent_provider=agent_provider, agent_non_interactive=agent_non_interactive,
+        spec,
+        agent_provider=agent_provider,
+        agent_non_interactive=agent_non_interactive,
     )
     resolved_base_dir = _resolve_runtime_base_dir(project_dir=project_dir)
     spec = spec.model_copy(update={"base_dir": resolved_base_dir})
@@ -65,7 +81,11 @@ def run_task_from_spec(
             raise AgvvError(f"Project directory not found: {source_repo}")
         layout = orch.layout_paths(spec.project_name, spec.base_dir)
         if not layout.repo_dir.exists() or not layout.main_dir.exists():
-            orch.adopt_project(existing_repo=source_repo, project_name=spec.project_name, base_dir=spec.base_dir)
+            orch.adopt_project(
+                existing_repo=source_repo,
+                project_name=spec.project_name,
+                base_dir=spec.base_dir,
+            )
     else:
         layout = orch.layout_paths(spec.project_name, spec.base_dir)
         if not layout.repo_dir.exists() or not layout.main_dir.exists():
@@ -103,13 +123,21 @@ def retry_task(
     if session_exists and force_restart:
         orch.tmux_kill_session(task.session)
         store.add_event(
-            task.id, "warning", "task.retry.force_restart",
+            task.id,
+            "warning",
+            "task.retry.force_restart",
             "Killed existing tmux session before retry relaunch.",
             {"session": task.session, "state": task.state.value},
         )
 
     if session and session != task.session:
-        store.add_event(task.id, "info", "task.retry", "Session override requested", {"session": session})
+        store.add_event(
+            task.id,
+            "info",
+            "task.retry",
+            "Session override requested",
+            {"session": session},
+        )
         task = store.update_task_session(task.id, session)
 
     worktree = feature_worktree_path(task)

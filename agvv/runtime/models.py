@@ -8,7 +8,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+    ValidationError,
+)
 
 from agvv.shared.errors import AgvvError
 
@@ -27,15 +34,21 @@ def _generate_task_id(project_name: str, feature: str) -> str:
 
 class TaskState(str, Enum):
     """Lifecycle states for the task state machine."""
-    PENDING   = "pending"    # created, not yet launched
-    RUNNING   = "running"    # tmux session active
-    DONE      = "done"       # agent session ended cleanly
-    FAILED    = "failed"     # error during setup or launch
+
+    PENDING = "pending"  # created, not yet launched
+    RUNNING = "running"  # tmux session active
+    DONE = "done"  # agent session ended cleanly
+    FAILED = "failed"  # error during setup or launch
     TIMED_OUT = "timed_out"  # session exceeded timeout
-    CLEANED   = "cleaned"    # worktree removed
+    CLEANED = "cleaned"  # worktree removed
 
 
-TERMINAL_STATES = {TaskState.DONE, TaskState.TIMED_OUT, TaskState.FAILED, TaskState.CLEANED}
+TERMINAL_STATES = {
+    TaskState.DONE,
+    TaskState.TIMED_OUT,
+    TaskState.FAILED,
+    TaskState.CLEANED,
+}
 ACTIVE_STATES = {TaskState.PENDING, TaskState.RUNNING}
 RECOVERABLE_RETRY_STATES = {TaskState.FAILED, TaskState.TIMED_OUT, TaskState.RUNNING}
 
@@ -67,11 +80,14 @@ def build_agent_command(provider: str, model: str | None, extra_args: list[str])
 
 class TaskSpec(BaseModel):
     """Task spec consumed by the state machine."""
-    model_config = ConfigDict(frozen=True, validate_default=True, arbitrary_types_allowed=True)
+
+    model_config = ConfigDict(
+        frozen=True, validate_default=True, arbitrary_types_allowed=True
+    )
 
     project_name: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
     feature: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
-    repo: str | None = None          # optional GitHub owner/repo slug for the agent's use
+    repo: str | None = None  # optional GitHub owner/repo slug for the agent's use
     base_dir: Path = Field(default_factory=Path.cwd)
     from_branch: str = "main"
     session: str | None = None
@@ -125,7 +141,9 @@ class TaskSpec(BaseModel):
 
         task_doc = data.get("task_doc")
         if task_doc is not None:
-            if not isinstance(task_doc, str) or not task_doc.strip().lower().endswith(".md"):
+            if not isinstance(task_doc, str) or not task_doc.strip().lower().endswith(
+                ".md"
+            ):
                 raise ValueError("task_doc must be a Markdown (.md) file path")
             p = Path(task_doc.strip()).expanduser()
             spec_dir = data.get("spec_dir__")
@@ -145,9 +163,13 @@ class TaskSpec(BaseModel):
         agent_provider = normalize_agent_provider(self.agent)
         object.__setattr__(self, "agent", agent_provider)
         if not self.task_id:
-            object.__setattr__(self, "task_id", _generate_task_id(self.project_name, self.feature))
+            object.__setattr__(
+                self, "task_id", _generate_task_id(self.project_name, self.feature)
+            )
         if not self.agent_cmd:
-            cmd = build_agent_command(agent_provider, self.agent_model, self.agent_extra_args)
+            cmd = build_agent_command(
+                agent_provider, self.agent_model, self.agent_extra_args
+            )
             object.__setattr__(self, "agent_cmd", cmd)
         return self
 
@@ -178,7 +200,9 @@ class TaskSpec(BaseModel):
         }
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any], *, spec_dir: Path | None = None) -> TaskSpec:
+    def from_payload(
+        cls, payload: dict[str, Any], *, spec_dir: Path | None = None
+    ) -> TaskSpec:
         """Build a validated TaskSpec from a user-authored spec JSON file."""
         if not isinstance(payload, dict):
             raise AgvvError("Task spec root must be an object.")
@@ -197,7 +221,9 @@ class TaskSpec(BaseModel):
         has_task_doc = bool(payload.get("task_doc"))
         has_requirements = bool((payload.get("requirements") or "").strip())
         if not has_task_doc and not has_requirements:
-            raise AgvvError("Spec must include 'task_doc' (a Markdown file) or 'requirements' (a string).")
+            raise AgvvError(
+                "Spec must include 'task_doc' (a Markdown file) or 'requirements' (a string)."
+            )
 
         try:
             return cls.model_validate(payload)

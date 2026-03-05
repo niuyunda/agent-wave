@@ -14,7 +14,9 @@ from agvv.runtime.store import TaskStore
 from agvv.shared.errors import AgvvError
 
 
-def test_daemon_run_once_marks_running_done_when_session_ends(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_daemon_run_once_marks_running_done_when_session_ends(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_done",
@@ -25,9 +27,13 @@ def test_daemon_run_once_marks_running_done_when_session_ends(monkeypatch: pytes
         requirements="do something",
     )
     created = store.create_task(spec)
-    store.update_task(created.id, state=TaskState.RUNNING, started_at=created.created_at)
+    store.update_task(
+        created.id, state=TaskState.RUNNING, started_at=created.created_at
+    )
 
-    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.orchestration.tmux_session_exists", lambda _session: False
+    )
 
     results = daemon_run_once(tmp_path / "tasks.db")
     assert len(results) == 1
@@ -40,7 +46,9 @@ def test_daemon_run_once_rejects_non_positive_max_workers(tmp_path: Path) -> Non
         daemon_run_once(tmp_path / "tasks.db", max_workers=0)
 
 
-def test_daemon_run_once_skips_task_when_reconcile_lock_held(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_daemon_run_once_skips_task_when_reconcile_lock_held(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_locked",
@@ -55,7 +63,11 @@ def test_daemon_run_once_skips_task_when_reconcile_lock_held(monkeypatch: pytest
 
     monkeypatch.setattr(
         "agvv.runtime.dispatcher._STATE_HANDLERS",
-        {TaskState.PENDING: lambda _store, _task: (_ for _ in ()).throw(RuntimeError("should not run"))},
+        {
+            TaskState.PENDING: lambda _store, _task: (_ for _ in ()).throw(
+                RuntimeError("should not run")
+            )
+        },
     )
 
     results = daemon_run_once(tmp_path / "tasks.db")
@@ -63,7 +75,9 @@ def test_daemon_run_once_skips_task_when_reconcile_lock_held(monkeypatch: pytest
     assert store.get_task(created.id).state == TaskState.PENDING
 
 
-def test_daemon_run_once_marks_failed_on_unexpected_handler_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_daemon_run_once_marks_failed_on_unexpected_handler_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_handler_error",
@@ -78,7 +92,9 @@ def test_daemon_run_once_marks_failed_on_unexpected_handler_error(monkeypatch: p
     def _boom(_store: TaskStore, _task):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr("agvv.runtime.dispatcher._STATE_HANDLERS", {TaskState.PENDING: _boom})
+    monkeypatch.setattr(
+        "agvv.runtime.dispatcher._STATE_HANDLERS", {TaskState.PENDING: _boom}
+    )
     results = daemon_run_once(tmp_path / "tasks.db")
     assert len(results) == 1
     failed = store.get_task("task_handler_error")
@@ -91,7 +107,9 @@ def test_daemon_run_loop_rejects_non_positive_interval(tmp_path: Path) -> None:
         daemon_run_loop(tmp_path / "tasks.db", interval_seconds=0)
 
 
-def test_daemon_run_loop_stops_at_max_loops(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_daemon_run_loop_stops_at_max_loops(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     run_calls = {"count": 0}
     sleep_calls: list[int] = []
 
@@ -100,7 +118,10 @@ def test_daemon_run_loop_stops_at_max_loops(monkeypatch: pytest.MonkeyPatch, tmp
         return []
 
     monkeypatch.setattr("agvv.runtime.dispatcher.daemon_run_once", _fake_daemon_once)
-    monkeypatch.setattr("agvv.runtime.dispatcher.time.sleep", lambda seconds: sleep_calls.append(seconds))
+    monkeypatch.setattr(
+        "agvv.runtime.dispatcher.time.sleep",
+        lambda seconds: sleep_calls.append(seconds),
+    )
 
     loops = daemon_run_loop(tmp_path / "tasks.db", interval_seconds=5, max_loops=3)
     assert loops == 3
@@ -108,7 +129,9 @@ def test_daemon_run_loop_stops_at_max_loops(monkeypatch: pytest.MonkeyPatch, tmp
     assert sleep_calls == [5, 5]
 
 
-def test_daemon_run_once_uses_parallel_path_when_multiple_workers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_daemon_run_once_uses_parallel_path_when_multiple_workers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     for task_id in ("parallel_a", "parallel_b"):
         spec = TaskSpec(
@@ -142,7 +165,9 @@ def test_daemon_run_once_uses_parallel_path_when_multiple_workers(monkeypatch: p
 
     monkeypatch.setattr("agvv.runtime.dispatcher._STATE_HANDLERS", {})
     monkeypatch.setattr("agvv.runtime.dispatcher.ThreadPoolExecutor", _FakeExecutor)
-    monkeypatch.setattr("agvv.runtime.dispatcher.as_completed", lambda futures: list(futures))
+    monkeypatch.setattr(
+        "agvv.runtime.dispatcher.as_completed", lambda futures: list(futures)
+    )
 
     results = daemon_run_once(tmp_path / "tasks.db", max_workers=2)
     assert observed_max_workers == [2]
@@ -163,7 +188,9 @@ def test_daemon_run_once_marks_timed_out_when_session_exceeds_timeout(
         requirements="do something",
     )
     created = store.create_task(spec)
-    past = (datetime.now(tz=timezone.utc) - timedelta(minutes=spec.timeout_minutes + 1)).isoformat()
+    past = (
+        datetime.now(tz=timezone.utc) - timedelta(minutes=spec.timeout_minutes + 1)
+    ).isoformat()
     store.update_task(created.id, state=TaskState.RUNNING, started_at=past)
 
     monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: True)
@@ -189,7 +216,9 @@ def test_daemon_run_once_marks_timed_out_even_when_kill_raises(
         requirements="do something",
     )
     created = store.create_task(spec)
-    past = (datetime.now(tz=timezone.utc) - timedelta(minutes=spec.timeout_minutes + 1)).isoformat()
+    past = (
+        datetime.now(tz=timezone.utc) - timedelta(minutes=spec.timeout_minutes + 1)
+    ).isoformat()
     store.update_task(created.id, state=TaskState.RUNNING, started_at=past)
 
     monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: True)

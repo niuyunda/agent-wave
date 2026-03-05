@@ -10,14 +10,21 @@ import pytest
 from agvv.orchestration import layout_paths
 from agvv.runtime.models import TaskSpec, TaskState
 from agvv.runtime.store import TaskStore
-from agvv.runtime.core import cleanup_task, list_task_statuses, retry_task, run_task_from_spec
+from agvv.runtime.core import (
+    cleanup_task,
+    list_task_statuses,
+    retry_task,
+    run_task_from_spec,
+)
 from agvv.shared.errors import AgvvError
 
 
 def _write_spec(path: Path, payload: dict) -> Path:
     if "task_doc" not in payload:
         task_doc_path = path.with_suffix(".md")
-        task_doc_path.write_text("# Task Doc\n\n- Implement required changes.\n", encoding="utf-8")
+        task_doc_path.write_text(
+            "# Task Doc\n\n- Implement required changes.\n", encoding="utf-8"
+        )
         payload["task_doc"] = str(task_doc_path)
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
@@ -40,7 +47,9 @@ def test_task_store_create_and_list(tmp_path: Path) -> None:
     assert tasks[0].id == "taskA"
 
 
-def test_run_task_from_spec_starts_coding_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_run_task_from_spec_starts_coding_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.chdir(tmp_path)
     spec_path = _write_spec(
         tmp_path / "task.json",
@@ -59,11 +68,15 @@ def test_run_task_from_spec_starts_coding_session(monkeypatch: pytest.MonkeyPatc
     main_dir.mkdir(parents=True, exist_ok=True)
 
     def _fake_start_feature(**kwargs):
-        feature_dir = Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+        feature_dir = (
+            Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+        )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr("agvv.orchestration.start_feature", _fake_start_feature)
-    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.orchestration.tmux_session_exists", lambda _session: False
+    )
     monkeypatch.setattr(
         "agvv.orchestration.tmux_new_session",
         lambda session, cwd, command: launched.append(f"{session}:{cwd}:{command}"),
@@ -79,7 +92,9 @@ def test_run_task_from_spec_starts_coding_session(monkeypatch: pytest.MonkeyPatc
     assert (feature_dir / ".agvv" / "input_snapshot.json").exists()
 
 
-def test_run_task_from_spec_applies_agent_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_run_task_from_spec_applies_agent_overrides(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.chdir(tmp_path)
     spec_path = _write_spec(
         tmp_path / "task-override.json",
@@ -99,11 +114,15 @@ def test_run_task_from_spec_applies_agent_overrides(monkeypatch: pytest.MonkeyPa
     main_dir.mkdir(parents=True, exist_ok=True)
 
     def _fake_start_feature(**kwargs):
-        feature_dir = Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+        feature_dir = (
+            Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+        )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr("agvv.orchestration.start_feature", _fake_start_feature)
-    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.orchestration.tmux_session_exists", lambda _session: False
+    )
     monkeypatch.setattr(
         "agvv.orchestration.tmux_new_session",
         lambda _session, _cwd, command: launched.append(command),
@@ -142,7 +161,11 @@ def test_run_task_from_spec_rejects_invalid_agent_override(tmp_path: Path) -> No
         },
     )
     with pytest.raises(AgvvError, match="Unsupported agent provider"):
-        run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db", agent_provider="not-real")
+        run_task_from_spec(
+            spec_path=spec_path,
+            db_path=tmp_path / "tasks.db",
+            agent_provider="not-real",
+        )
 
 
 def test_run_task_from_spec_rejects_missing_task_doc(tmp_path: Path) -> None:
@@ -158,14 +181,22 @@ def test_run_task_from_spec_rejects_missing_task_doc(tmp_path: Path) -> None:
 def test_run_task_from_spec_rejects_non_markdown_task_doc(tmp_path: Path) -> None:
     spec_path = tmp_path / "task-bad-task-doc.json"
     spec_path.write_text(
-        json.dumps({"project_name": "demo", "feature": "feat_bad_doc", "task_doc": "./task.txt"}),
+        json.dumps(
+            {
+                "project_name": "demo",
+                "feature": "feat_bad_doc",
+                "task_doc": "./task.txt",
+            }
+        ),
         encoding="utf-8",
     )
     with pytest.raises(AgvvError, match="Markdown"):
         run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db")
 
 
-def test_run_task_from_spec_ignores_spec_base_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_run_task_from_spec_ignores_spec_base_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.chdir(tmp_path)
     spec_path = _write_spec(
         tmp_path / "task-ignore-base-dir.json",
@@ -187,11 +218,15 @@ def test_run_task_from_spec_ignores_spec_base_dir(monkeypatch: pytest.MonkeyPatc
         main_dir.mkdir(parents=True, exist_ok=True)
 
     def _fake_start_feature(**kwargs):
-        feature_dir = Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+        feature_dir = (
+            Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+        )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr("agvv.orchestration.init_project", _fake_init_project)
-    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.orchestration.tmux_session_exists", lambda _session: False
+    )
     monkeypatch.setattr("agvv.orchestration.start_feature", _fake_start_feature)
     monkeypatch.setattr("agvv.orchestration.tmux_new_session", lambda _s, _c, _m: None)
     monkeypatch.setattr("agvv.orchestration.tmux_pipe_pane", lambda _s, _p: None)
@@ -200,7 +235,9 @@ def test_run_task_from_spec_ignores_spec_base_dir(monkeypatch: pytest.MonkeyPatc
     assert seen["base_dir"] == tmp_path.resolve()
 
 
-def test_run_task_from_spec_auto_inits_project_when_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_run_task_from_spec_auto_inits_project_when_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.chdir(tmp_path)
     spec_path = _write_spec(
         tmp_path / "task-auto-init.json",
@@ -222,11 +259,15 @@ def test_run_task_from_spec_auto_inits_project_when_missing(monkeypatch: pytest.
         main_dir.mkdir(parents=True, exist_ok=True)
 
     def _fake_start_feature(**kwargs):
-        feature_dir = Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+        feature_dir = (
+            Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+        )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr("agvv.orchestration.init_project", _fake_init_project)
-    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.orchestration.tmux_session_exists", lambda _session: False
+    )
     monkeypatch.setattr("agvv.orchestration.start_feature", _fake_start_feature)
     monkeypatch.setattr("agvv.orchestration.tmux_new_session", lambda _s, _c, _m: None)
     monkeypatch.setattr("agvv.orchestration.tmux_pipe_pane", lambda _s, _p: None)
@@ -236,7 +277,9 @@ def test_run_task_from_spec_auto_inits_project_when_missing(monkeypatch: pytest.
     assert task.state == TaskState.RUNNING
 
 
-def test_run_task_from_spec_auto_adopts_existing_project(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_run_task_from_spec_auto_adopts_existing_project(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.chdir(tmp_path)
     spec_path = _write_spec(
         tmp_path / "task-auto-adopt.json",
@@ -260,24 +303,39 @@ def test_run_task_from_spec_auto_adopts_existing_project(monkeypatch: pytest.Mon
         main_dir = base_dir / project_name / "main"
         repo_dir.mkdir(parents=True, exist_ok=True)
         main_dir.mkdir(parents=True, exist_ok=True)
-        return (type("L", (), {"repo_dir": repo_dir, "main_dir": main_dir, "feature_dir": None})(), "main")
+        return (
+            type(
+                "L",
+                (),
+                {"repo_dir": repo_dir, "main_dir": main_dir, "feature_dir": None},
+            )(),
+            "main",
+        )
 
     def _fake_start_feature(**kwargs):
-        feature_dir = Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+        feature_dir = (
+            Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+        )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr("agvv.orchestration.adopt_project", _fake_adopt_project)
-    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.orchestration.tmux_session_exists", lambda _session: False
+    )
     monkeypatch.setattr("agvv.orchestration.start_feature", _fake_start_feature)
     monkeypatch.setattr("agvv.orchestration.tmux_new_session", lambda _s, _c, _m: None)
     monkeypatch.setattr("agvv.orchestration.tmux_pipe_pane", lambda _s, _p: None)
 
-    task = run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db", project_dir=source_repo)
+    task = run_task_from_spec(
+        spec_path=spec_path, db_path=tmp_path / "tasks.db", project_dir=source_repo
+    )
     assert adopted["called"] is True
     assert task.state == TaskState.RUNNING
 
 
-def test_retry_task_relaunches_when_session_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_retry_task_relaunches_when_session_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_retry",
@@ -289,10 +347,17 @@ def test_retry_task_relaunches_when_session_missing(monkeypatch: pytest.MonkeyPa
         requirements="do something",
     )
     created = store.create_task(spec)
-    store.update_task(created.id, state=TaskState.FAILED, last_error="boom", finished_at="2026-03-03T00:00:00+00:00")
+    store.update_task(
+        created.id,
+        state=TaskState.FAILED,
+        last_error="boom",
+        finished_at="2026-03-03T00:00:00+00:00",
+    )
     (tmp_path / "demo" / "feat_retry").mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.orchestration.tmux_session_exists", lambda _session: False
+    )
     monkeypatch.setattr("agvv.orchestration.start_feature", lambda **kwargs: None)
     monkeypatch.setattr("agvv.orchestration.tmux_new_session", lambda _s, _c, _m: None)
     monkeypatch.setattr("agvv.orchestration.tmux_pipe_pane", lambda _s, _p: None)
@@ -303,7 +368,9 @@ def test_retry_task_relaunches_when_session_missing(monkeypatch: pytest.MonkeyPa
     assert retried.finished_at is None
 
 
-def test_retry_task_force_restart_kills_existing_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_retry_task_force_restart_kills_existing_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_retry_force",
@@ -315,7 +382,9 @@ def test_retry_task_force_restart_kills_existing_session(monkeypatch: pytest.Mon
         requirements="do something",
     )
     created = store.create_task(spec)
-    store.update_task(created.id, state=TaskState.RUNNING, started_at="2026-03-03T00:00:00+00:00")
+    store.update_task(
+        created.id, state=TaskState.RUNNING, started_at="2026-03-03T00:00:00+00:00"
+    )
     (tmp_path / "demo" / "feat_retry_force").mkdir(parents=True, exist_ok=True)
 
     called: dict[str, bool] = {"killed": False}
@@ -326,13 +395,18 @@ def test_retry_task_force_restart_kills_existing_session(monkeypatch: pytest.Mon
     )
     monkeypatch.setattr(
         "agvv.orchestration.tmux_kill_session",
-        lambda _session: (called.__setitem__("killed", True), session_live.__setitem__("value", False)),
+        lambda _session: (
+            called.__setitem__("killed", True),
+            session_live.__setitem__("value", False),
+        ),
     )
     monkeypatch.setattr("agvv.orchestration.start_feature", lambda **kwargs: None)
     monkeypatch.setattr("agvv.orchestration.tmux_new_session", lambda _s, _c, _m: None)
     monkeypatch.setattr("agvv.orchestration.tmux_pipe_pane", lambda _s, _p: None)
 
-    retried = retry_task(task_id="task_retry_force", db_path=tmp_path / "tasks.db", force_restart=True)
+    retried = retry_task(
+        task_id="task_retry_force", db_path=tmp_path / "tasks.db", force_restart=True
+    )
     assert called["killed"] is True
     assert retried.state == TaskState.RUNNING
     assert retried.finished_at is None
@@ -349,12 +423,16 @@ def test_retry_task_rejects_non_recoverable_state(tmp_path: Path) -> None:
         requirements="do something",
     )
     created = store.create_task(spec)
-    store.update_task(created.id, state=TaskState.DONE, finished_at="2026-03-03T01:00:00+00:00")
+    store.update_task(
+        created.id, state=TaskState.DONE, finished_at="2026-03-03T01:00:00+00:00"
+    )
     with pytest.raises(AgvvError, match="Cannot retry task in state: done"):
         retry_task(task_id="task_non_retryable", db_path=tmp_path / "tasks.db")
 
 
-def test_cleanup_task_marks_cleaned(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_cleanup_task_marks_cleaned(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_clean",
@@ -365,7 +443,9 @@ def test_cleanup_task_marks_cleaned(monkeypatch: pytest.MonkeyPatch, tmp_path: P
         requirements="do something",
     )
     store.create_task(spec)
-    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.orchestration.tmux_session_exists", lambda _session: False
+    )
     monkeypatch.setattr(
         "agvv.orchestration.cleanup_feature",
         lambda project_name, feature, base_dir, delete_branch: None,
@@ -374,7 +454,9 @@ def test_cleanup_task_marks_cleaned(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert cleaned.state == TaskState.CLEANED
 
 
-def test_cleanup_task_preserves_last_error_for_history(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_cleanup_task_preserves_last_error_for_history(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_clean_error",
@@ -386,7 +468,9 @@ def test_cleanup_task_preserves_last_error_for_history(monkeypatch: pytest.Monke
     )
     created = store.create_task(spec)
     store.update_task(created.id, state=TaskState.FAILED, last_error="session timeout")
-    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.orchestration.tmux_session_exists", lambda _session: False
+    )
     monkeypatch.setattr(
         "agvv.orchestration.cleanup_feature",
         lambda project_name, feature, base_dir, delete_branch: None,
@@ -396,7 +480,9 @@ def test_cleanup_task_preserves_last_error_for_history(monkeypatch: pytest.Monke
     assert cleaned.last_error == "session timeout"
 
 
-def test_cleanup_task_force_deletes_branch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_cleanup_task_force_deletes_branch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_force_clean",
@@ -407,17 +493,23 @@ def test_cleanup_task_force_deletes_branch(monkeypatch: pytest.MonkeyPatch, tmp_
         requirements="do something",
     )
     created = store.create_task(spec)
-    paths = layout_paths(created.project_name, created.spec.base_dir, feature=created.feature)
+    paths = layout_paths(
+        created.project_name, created.spec.base_dir, feature=created.feature
+    )
     paths.repo_dir.mkdir(parents=True, exist_ok=True)
     if paths.feature_dir is not None:
         paths.feature_dir.mkdir(parents=True, exist_ok=True)
 
     captured: dict[str, bool] = {}
 
-    def _fake_cleanup_force(project_name: str, feature: str, base_dir: Path, delete_branch: bool) -> None:
+    def _fake_cleanup_force(
+        project_name: str, feature: str, base_dir: Path, delete_branch: bool
+    ) -> None:
         captured["delete_branch"] = delete_branch
 
-    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.orchestration.tmux_session_exists", lambda _session: False
+    )
     monkeypatch.setattr("agvv.orchestration.cleanup_feature_force", _fake_cleanup_force)
 
     cleaned = cleanup_task(created.id, db_path=tmp_path / "tasks.db", force=True)
@@ -436,7 +528,9 @@ def test_list_task_statuses_filters_state(tmp_path: Path) -> None:
         requirements="do something",
     )
     created = store.create_task(spec)
-    store.update_task(created.id, state=TaskState.CLEANED, finished_at=created.created_at)
+    store.update_task(
+        created.id, state=TaskState.CLEANED, finished_at=created.created_at
+    )
     only_cleaned = list_task_statuses(tmp_path / "tasks.db", state=TaskState.CLEANED)
     assert len(only_cleaned) == 1
     assert only_cleaned[0].id == "task_list"
