@@ -17,8 +17,13 @@ It gives each task an isolated git worktree, runs the agent in a detached tmux s
 - `tmux`
 - A coding agent CLI in `PATH`:
   - `codex` (default)
-  - `claude` (when using `--agent claude`)
+  - `claude` (used when `--agent claude` or `--agent claude_code`)
 - `uv` (recommended for install/run)
+
+Agent provider note:
+
+- `--agent claude` and `--agent claude_code` are equivalent inputs.
+- Both normalize to the internal provider `claude_code` and invoke the `claude` CLI binary.
 
 ## Install
 
@@ -76,6 +81,8 @@ Use Claude Code instead of Codex:
 agvv task run --spec ./task.json --agent claude
 ```
 
+`--agent claude_code` is also valid and behaves the same as `--agent claude`.
+
 ### 4) Monitor and reconcile state
 
 ```bash
@@ -126,6 +133,7 @@ agvv task cleanup --task-id <task_id> --force
 - `repo`: optional repository slug/identifier
 - `from_branch`: base branch for feature worktree (default: `main`)
 - `session`: custom tmux session name
+- `ticket`: optional ticket identifier (for task metadata)
 - `constraints`: list of extra constraints
 - `timeout_minutes`: session timeout in minutes (default: `240`)
 - `agent_extra_args`: extra args passed to the agent command

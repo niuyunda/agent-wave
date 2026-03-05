@@ -66,7 +66,7 @@ Create two files:
 
 - `task_id` in spec is ignored; runtime generates it.
 - `agent` and `agent_model` in spec are reset by runtime.
-- To select provider, use CLI `--agent` (`codex` default, `claude` alias supported).
+- To select provider, use CLI `--agent` (`codex` default; `claude` and `claude_code` are equivalent inputs).
 - When `task run` executes, `base_dir` from spec is overridden by runtime.
 
 ## 3) Execution Protocol

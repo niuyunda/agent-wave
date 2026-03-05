@@ -74,7 +74,7 @@ These findings should feed the next iteration.
 
 Use a short loop: implement -> test -> observe -> adjust.
 
-Minimum checks before finishing non-trivial changes:
+Minimum checks before finishing non-trivial code or test changes:
 
 ```bash
 uv run ruff check .
@@ -82,6 +82,9 @@ uv run ruff format --check .
 uv run interrogate agvv --fail-under=100 --quiet
 uv run pytest --cov=agvv --cov-branch --cov-report=term-missing
 ```
+
+For docs-only edits, running the full suite is optional.
+In docs-only cases, at least verify the changed docs are internally consistent with current code behavior.
 
 ## 6) Refactoring Policy
 

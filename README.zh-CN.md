@@ -17,8 +17,13 @@
 - `tmux`
 - `PATH` 中可用的编码 agent 命令：
   - `codex`（默认）
-  - `claude`（使用 `--agent claude` 时）
+  - `claude`（使用 `--agent claude` 或 `--agent claude_code` 时）
 - `uv`（推荐用于安装和运行）
+
+Agent provider 说明：
+
+- `--agent claude` 与 `--agent claude_code` 是等价输入。
+- 两者都会归一化到内部 provider `claude_code`，实际调用的命令都是 `claude` 可执行文件。
 
 ## 安装
 
@@ -76,6 +81,8 @@ agvv task run --spec ./task.json
 agvv task run --spec ./task.json --agent claude
 ```
 
+`--agent claude_code` 也可用，行为与 `--agent claude` 相同。
+
 ### 4）查看与推进状态
 
 ```bash
@@ -126,6 +133,7 @@ agvv task cleanup --task-id <task_id> --force
 - `repo`：可选仓库标识
 - `from_branch`：feature 工作树基线分支（默认 `main`）
 - `session`：自定义 tmux 会话名
+- `ticket`：可选工单标识（任务元数据）
 - `constraints`：额外约束列表
 - `timeout_minutes`：会话超时分钟数（默认 `240`）
 - `agent_extra_args`：传给 agent 命令的额外参数
