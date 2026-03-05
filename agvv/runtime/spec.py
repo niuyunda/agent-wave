@@ -212,7 +212,8 @@ def load_task_spec(path: Path) -> TaskSpec:
     if any(not isinstance(key, str) for key in payload):
         raise AgvvError("Task spec front matter keys must be strings.")
     if body_text:
-        # Markdown body intentionally overrides front matter requirements.
+        # Markdown body intentionally overrides front matter requirements
+        # (see test_load_task_spec_prefers_markdown_body_as_requirements).
         payload["requirements"] = body_text
 
     return TaskSpec.from_payload(payload, spec_dir=path.parent)
