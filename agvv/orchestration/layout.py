@@ -56,12 +56,24 @@ def _write_json(path: Path, data: dict) -> None:
 
 def _default_branch(repo_dir: Path) -> str:
     """Choose the default branch from a bare repo, preferring main/master."""
+    head_branch: str | None = None
+    if run_git_success(
+        ["-C", str(repo_dir), "symbolic-ref", "--quiet", "--short", "HEAD"]
+    ):
+        resolved = run_git(
+            ["-C", str(repo_dir), "symbolic-ref", "--quiet", "--short", "HEAD"]
+        ).stdout.strip()
+        if resolved:
+            head_branch = resolved
+
     branches_raw = run_git(
         ["-C", str(repo_dir), "for-each-ref", "--format=%(refname:short)", "refs/heads"]
     ).stdout
     branches = [line.strip() for line in branches_raw.splitlines() if line.strip()]
     if not branches:
         raise AgvvError("No branches found in bare repo.")
+    if head_branch and head_branch in branches:
+        return head_branch
     for preferred in ("main", "master"):
         if preferred in branches:
             return preferred

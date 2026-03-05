@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from agvv.runtime.models import TaskSpec, build_agent_command, normalize_agent_provider
 from agvv.runtime.spec import load_task_spec
 from agvv.shared.errors import AgvvError
 
@@ -231,8 +232,6 @@ def test_from_payload_resets_runtime_controlled_fields(tmp_path: Path) -> None:
         # agent_extra_args is deliberately absent: verified separately below
     }
 
-    from agvv.runtime.models import TaskSpec
-
     spec = TaskSpec.from_payload(payload)
 
     # agent is always reset to codex
@@ -254,8 +253,6 @@ def test_from_db_payload_preserves_stored_values_and_recomputes_agent_cmd(
     """from_db_payload must preserve stored provider/from_branch and recompute agent_cmd correctly."""
     task_doc = tmp_path / "task.md"
     task_doc.write_text("# Task\n", encoding="utf-8")
-
-    from agvv.runtime.models import TaskSpec
 
     # Simulate what to_payload() stores in the DB for a claude_code task
     db_payload = {
@@ -294,3 +291,75 @@ def test_from_db_payload_preserves_stored_values_and_recomputes_agent_cmd(
     # agent_cmd is recomputed from the stored provider, not taken from the stale cached value
     assert "claude" in spec.agent_cmd
     assert "stale-cached-value" not in spec.agent_cmd
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, "codex"),
+        ("", "codex"),
+        (" codex ", "codex"),
+        ("CLAUDE", "claude_code"),
+        ("claude-code", "claude_code"),
+        ("claude_code", "claude_code"),
+    ],
+)
+def test_normalize_agent_provider_aliases(raw: str | None, expected: str) -> None:
+    assert normalize_agent_provider(raw) == expected
+
+
+def test_normalize_agent_provider_rejects_unknown_value() -> None:
+    with pytest.raises(AgvvError, match="Unsupported agent provider"):
+        normalize_agent_provider("unknown-provider")
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "extra_args", "expected"),
+    [
+        ("codex", None, [], "codex"),
+        (
+            "codex",
+            "gpt-5",
+            ["--sandbox", "workspace-write"],
+            "codex --model gpt-5 --sandbox workspace-write",
+        ),
+        (
+            "claude_code",
+            None,
+            ["--print", "hello world"],
+            "claude --print 'hello world'",
+        ),
+    ],
+)
+def test_build_agent_command(
+    provider: str, model: str | None, extra_args: list[str], expected: str
+) -> None:
+    assert build_agent_command(provider, model, extra_args) == expected
+
+
+def test_build_agent_command_rejects_unknown_provider() -> None:
+    with pytest.raises(AgvvError, match="Unsupported agent provider"):
+        build_agent_command("unsupported", None, [])
+
+
+def test_taskspec_normalized_session_defaults_to_agvv_task_id() -> None:
+    spec = TaskSpec.from_payload(
+        {
+            "project_name": "demo",
+            "feature": "feat_default_session",
+            "requirements": "Implement feature.",
+        }
+    )
+    assert spec.normalized_session() == f"agvv-{spec.task_id}"
+
+
+def test_taskspec_normalized_session_preserves_explicit_session() -> None:
+    spec = TaskSpec.from_payload(
+        {
+            "project_name": "demo",
+            "feature": "feat_custom_session",
+            "requirements": "Implement feature.",
+            "session": "agvv-custom",
+        }
+    )
+    assert spec.normalized_session() == "agvv-custom"

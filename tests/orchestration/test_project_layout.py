@@ -87,6 +87,14 @@ def test_adopt_project_prefers_main_when_present(tmp_path: Path) -> None:
     assert paths.main_dir.exists()
 
 
+def test_adopt_project_prefers_symbolic_head_over_main(tmp_path: Path) -> None:
+    existing_repo = _create_existing_repo(tmp_path / "src-trunk", branch="trunk")
+    _git(["branch", "main"], cwd=existing_repo)
+    paths, branch = adopt_project(existing_repo, "adopted-trunk", tmp_path)
+    assert branch == "trunk"
+    assert paths.main_dir.exists()
+
+
 def test_adopt_project_preserves_upstream_origin_and_allows_feature_push_e2e(
     tmp_path: Path,
 ) -> None:

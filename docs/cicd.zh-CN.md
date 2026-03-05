@@ -15,7 +15,7 @@
 
 ### 触发条件
 
-```
+```text
 push 到以下分支：main、feat-*、fix-*、refactor-*、codex/*
 任意 Pull Request
 手动触发（workflow_dispatch）
@@ -23,7 +23,7 @@ push 到以下分支：main、feat-*、fix-*、refactor-*、codex/*
 
 ### 执行步骤
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │  lint job                    test job (matrix)          │
 │  ─────────────────           ──────────────────────     │
@@ -59,7 +59,7 @@ push 到以下分支：main、feat-*、fix-*、refactor-*、codex/*
 
 在 **Python 3.10 和 3.12** 两个版本上分别运行完整测试套件：
 
-```
+```text
 uv run pytest --cov=agvv --cov-branch --cov-report=term-missing --cov-report=xml
 ```
 
@@ -70,7 +70,7 @@ uv run pytest --cov=agvv --cov-branch --cov-report=term-missing --cov-report=xml
 
 仅在 `lint` 和 `test` 全部通过后执行：
 
-```
+```text
 uv build
 ```
 
@@ -92,14 +92,14 @@ concurrency:
 
 ### 触发条件
 
-```
+```text
 push git tag，格式为 v*（例如：v0.1.2、v1.0.0）
 手动触发（workflow_dispatch）— 仅运行 verify job，不发布
 ```
 
 ### 执行步骤
 
-```
+```text
 verify job
 ─────────────────────────────────
 ruff check .
@@ -197,7 +197,7 @@ tag 推送后，GitHub Actions 会自动触发 `publish.yml`。
 
 在 GitHub Actions 页面确认 `Publish to PyPI` workflow 运行成功，然后验证 PyPI 上的新版本：
 
-```
+```text
 https://pypi.org/project/agent-wave/
 ```
 

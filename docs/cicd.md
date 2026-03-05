@@ -15,7 +15,7 @@ The project uses GitHub Actions for automated CI/CD, consisting of two independe
 
 ### Triggers
 
-```
+```text
 push to: main, feat-*, fix-*, refactor-*, codex/*
 any Pull Request
 manual trigger (workflow_dispatch)
@@ -23,7 +23,7 @@ manual trigger (workflow_dispatch)
 
 ### Execution Flow
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │  lint job                    test job (matrix)          │
 │  ─────────────────           ──────────────────────     │
@@ -59,7 +59,7 @@ Runs on Python 3.12. All three checks must pass:
 
 Runs the full test suite on **Python 3.10 and 3.12**:
 
-```
+```text
 uv run pytest --cov=agvv --cov-branch --cov-report=term-missing --cov-report=xml
 ```
 
@@ -70,7 +70,7 @@ uv run pytest --cov=agvv --cov-branch --cov-report=term-missing --cov-report=xml
 
 Runs only after both `lint` and `test` pass:
 
-```
+```text
 uv build
 ```
 
@@ -92,14 +92,14 @@ concurrency:
 
 ### Triggers
 
-```
+```text
 push a git tag matching v* (e.g. v0.1.2, v1.0.0)
 manual trigger (workflow_dispatch) — runs verify only, does not publish
 ```
 
 ### Execution Flow
 
-```
+```text
 verify job
 ─────────────────────────────────
 ruff check .
@@ -195,7 +195,7 @@ Pushing the tag triggers `publish.yml` automatically.
 
 Check the `Publish to PyPI` workflow in GitHub Actions, then verify the new version on PyPI:
 
-```
+```text
 https://pypi.org/project/agent-wave/
 ```
 
