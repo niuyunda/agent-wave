@@ -116,7 +116,7 @@ If cleanup is blocked by uncommitted changes in feature worktree, use `--force`.
 
 ## 4) Guardrails
 
-- Never use spaces, slashes, or punctuation in `feature` and `project_name`.
+- For `feature` and `project_name`, do not use spaces, slashes, or punctuation except underscore (`_`) and hyphen (`-`).
 - Never use non-Markdown `task_doc` paths.
 - Do not rely on spec-level `agent` fields for provider selection.
 - Always run `daemon run --once`; without it, background state may not advance.
