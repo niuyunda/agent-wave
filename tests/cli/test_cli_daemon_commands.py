@@ -24,7 +24,7 @@ def test_cli_daemon_run_once(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
     monkeypatch.setattr(
         "agvv.cli.daemon_run_once",
-        lambda db_path, max_workers=1: [_FakeTask(id="task-1", state=TaskState.CODING, updated_at="2026-03-03T10:00:00+00:00")],
+        lambda db_path, max_workers=1: [_FakeTask(id="task-1", state=TaskState.RUNNING, updated_at="2026-03-03T10:00:00+00:00")],
     )
     result = runner.invoke(app, ["daemon", "run", "--once", "--db-path", str(tmp_path / "tasks.db")])
     assert result.exit_code == 0

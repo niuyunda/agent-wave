@@ -5,20 +5,25 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable
 from uuid import uuid4
 
+import agvv.orchestration as orch
 from agvv.runtime.models import TERMINAL_STATES, TaskState
-from agvv.runtime.pr_lifecycle import handle_coding_completion, handle_pr_cycle
 from agvv.runtime.session_lifecycle import launch_coding_session
-from agvv.runtime.store import TaskSnapshot, TaskStore
+from agvv.runtime.store import TaskSnapshot, TaskStore, now_iso, parse_iso
 from agvv.runtime.task_helpers import mark_failed
-from agvv.runtime.core import cleanup_task
 from agvv.shared.errors import AgvvError
 
-StateHandler = Callable[[TaskStore, TaskSnapshot], TaskSnapshot]
 _LOGGER = logging.getLogger(__name__)
+
+
+def _session_timed_out(task: TaskSnapshot) -> bool:
+    """Return whether the task session runtime exceeded the configured timeout."""
+    since = parse_iso(task.started_at or task.created_at)
+    elapsed = datetime.now(tz=timezone.utc) - since
+    return elapsed > timedelta(minutes=task.spec.timeout_minutes)
 
 
 def _handle_pending(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
@@ -26,29 +31,41 @@ def _handle_pending(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
     return launch_coding_session(store, task, fresh_setup=True)
 
 
-def _handle_coding(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
-    """Evaluate coding-session completion and transition state if needed."""
-    return handle_coding_completion(store, task)
+def _handle_running(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
+    """Check whether the coding session is still alive; transition when it ends."""
+    if _session_timed_out(task):
+        message = f"Coding session exceeded timeout ({task.spec.timeout_minutes} minutes)."
+        store.add_event(task.id, "error", "session.timeout", message,
+                        {"session": task.session, "timeout_minutes": task.spec.timeout_minutes})
+        try:
+            orch.tmux_kill_session(task.session)
+        except Exception as exc:
+            store.add_event(task.id, "warning", "session.timeout.kill",
+                            f"Failed to kill timed-out session: {exc}", {"session": task.session})
+        return store.update_task(task.id, state=TaskState.TIMED_OUT,
+                                 last_error="session_timeout", finished_at=now_iso())
+
+    if orch.tmux_session_exists(task.session):
+        return task  # still running, nothing to do
+
+    # Session ended — mark done
+    store.add_event(task.id, "info", "session.done", "Coding session ended",
+                    {"session": task.session})
+    return store.update_task(task.id, state=TaskState.DONE,
+                             finished_at=now_iso(), last_error=None)
 
 
-def _handle_pr_open(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
-    """Run PR lifecycle checks and reconcile feedback or merge outcomes."""
-    return handle_pr_cycle(store, task, cleanup_task_fn=cleanup_task)
-
-
-_STATE_HANDLERS: dict[TaskState, StateHandler] = {
+_STATE_HANDLERS = {
     TaskState.PENDING: _handle_pending,
-    TaskState.CODING: _handle_coding,
-    TaskState.PR_OPEN: _handle_pr_open,
+    TaskState.RUNNING: _handle_running,
 }
 
 
 def _reconcile_task(task_id: str, store: TaskStore, *, lock_owner: str) -> TaskSnapshot:
-    """Reconcile one task by dispatching to current-state handler."""
+    """Reconcile one task by dispatching to its current-state handler."""
     task = store.get_task(task_id)
     if task.state in TERMINAL_STATES:
         return task
-
     if not store.try_acquire_reconcile_lock(task_id, owner_id=lock_owner):
         return task
     try:
@@ -64,7 +81,7 @@ def _reconcile_task(task_id: str, store: TaskStore, *, lock_owner: str) -> TaskS
 
 
 def _reconcile_task_safe(task_id: str, store: TaskStore, *, lock_owner: str) -> TaskSnapshot:
-    """Reconcile one task and convert unexpected failures into task failure state."""
+    """Reconcile one task and convert unexpected failures into FAILED state."""
     try:
         return _reconcile_task(task_id, store, lock_owner=lock_owner)
     except Exception as exc:
@@ -73,24 +90,16 @@ def _reconcile_task_safe(task_id: str, store: TaskStore, *, lock_owner: str) -> 
         return mark_failed(store, task, "daemon.reconcile", f"Unexpected reconcile failure: {exc}")
 
 
-def reconcile_task(
-    task_id: str,
-    db_path: Path | None = None,
-) -> TaskSnapshot:
-    """Reconcile one task by dispatching to current-state handler."""
+def reconcile_task(task_id: str, db_path: Path | None = None) -> TaskSnapshot:
+    """Reconcile one task by dispatching to its current-state handler."""
     store = TaskStore(db_path)
     return _reconcile_task_safe(task_id, store, lock_owner=f"reconcile-{uuid4()}")
 
 
-def daemon_run_once(
-    db_path: Path | None = None,
-    *,
-    max_workers: int = 1,
-) -> list[TaskSnapshot]:
+def daemon_run_once(db_path: Path | None = None, *, max_workers: int = 1) -> list[TaskSnapshot]:
     """Reconcile all active tasks once."""
     if max_workers <= 0:
         raise AgvvError("max_workers must be > 0")
-
     store = TaskStore(db_path)
     active = store.list_active_tasks()
     if not active:

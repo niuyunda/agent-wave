@@ -95,6 +95,16 @@ def test_load_task_spec_ignores_task_id_from_spec(tmp_path: Path) -> None:
     assert spec.task_id != "custom-id-should-be-ignored"
 
 
+def test_load_task_spec_rejects_whitespace_only_requirements(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task-blank-requirements.json"
+    spec_path.write_text(
+        '{"project_name":"demo","feature":"feat_blank","requirements":"   "}',
+        encoding="utf-8",
+    )
+    with pytest.raises(AgvvError, match="Spec must include"):
+        load_task_spec(spec_path)
+
+
 def test_load_task_spec_fails_when_file_missing(tmp_path: Path) -> None:
     with pytest.raises(AgvvError, match="Failed to read spec file"):
         load_task_spec(tmp_path / "missing-spec.json")
@@ -128,14 +138,27 @@ def test_load_task_spec_defaults_base_dir_to_cwd(tmp_path: Path) -> None:
     assert spec.base_dir == Path.cwd().resolve()
 
 
-def test_load_task_spec_forces_from_branch_main(tmp_path: Path) -> None:
+def test_load_task_spec_honors_user_specified_from_branch(tmp_path: Path) -> None:
     spec_path = _write_spec(
-        tmp_path / "task-force-main.json",
+        tmp_path / "task-from-branch.json",
         {
             "project_name": "demo",
             "feature": "feat_branch",
             "repo": "owner/repo",
             "from_branch": "release",
+        },
+    )
+    spec = load_task_spec(spec_path)
+    assert spec.from_branch == "release"
+
+
+def test_load_task_spec_defaults_from_branch_to_main_when_absent(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path / "task-no-branch.json",
+        {
+            "project_name": "demo",
+            "feature": "feat_default_branch",
+            "repo": "owner/repo",
         },
     )
     spec = load_task_spec(spec_path)
@@ -153,27 +176,11 @@ def test_load_task_spec_parses_requirement_contract_fields(tmp_path: Path) -> No
             "base_dir": str(tmp_path),
             "requirements": "Implement API endpoint for health check.",
             "constraints": ["Do not change existing API schema.", "Use stdlib only."],
-            "acceptance_criteria": ["`GET /health` returns 200", "Unit tests pass"],
         },
     )
     spec = load_task_spec(spec_path)
     assert spec.requirements == "Implement API endpoint for health check."
     assert spec.constraints == ["Do not change existing API schema.", "Use stdlib only."]
-    assert spec.acceptance_criteria == ["`GET /health` returns 200", "Unit tests pass"]
-
-
-def test_load_task_spec_rejects_invalid_acceptance_criteria_length(tmp_path: Path) -> None:
-    spec_path = _write_spec(
-        tmp_path / "task-invalid-dod.json",
-        {
-            "project_name": "demo",
-            "feature": "feat_bad_dod",
-            "repo": "owner/repo",
-            "acceptance_criteria": ["only one"],
-        },
-    )
-    with pytest.raises(AgvvError, match="acceptance_criteria"):
-        load_task_spec(spec_path)
 
 
 def test_load_task_spec_rejects_feature_with_spaces(tmp_path: Path) -> None:
@@ -219,8 +226,8 @@ def test_from_payload_resets_runtime_controlled_fields(tmp_path: Path) -> None:
 
     # agent is always reset to codex
     assert spec.agent == "codex", f"expected agent='codex', got {spec.agent!r}"
-    # from_branch is always reset to main
-    assert spec.from_branch == "main", f"expected from_branch='main', got {spec.from_branch!r}"
+    # from_branch is preserved when the user specifies one
+    assert spec.from_branch == "release", f"expected from_branch='release', got {spec.from_branch!r}"
     # task_id is regenerated (different from the supplied custom id)
     assert spec.task_id != "custom-id-must-not-survive"
     assert spec.task_id.startswith("demo-feat_rt-")
@@ -255,18 +262,7 @@ def test_from_db_payload_preserves_stored_values_and_recomputes_agent_cmd(tmp_pa
         "ticket": None,
         "requirements": None,
         "constraints": [],
-        "acceptance_criteria": [],
-        "params": {},
-        "create_dirs": [],
-        "pr_title": None,
-        "pr_body": None,
-        "pr_base": "main",
-        "branch_remote": "origin",
-        "max_retry_cycles": 3,
         "timeout_minutes": 240,
-        "auto_cleanup": False,
-        "keep_branch_on_cleanup": False,
-        "commit_message": "chore: apply agent changes",
     }
 
     spec = TaskSpec.from_db_payload(db_payload)

@@ -112,7 +112,6 @@ def task_status(
         return
 
     for task in tasks:
-        pr_value = str(task.pr_number) if task.pr_number is not None else "-"
         if task.last_error is None:
             error_value = "-"
         else:
@@ -120,8 +119,7 @@ def task_status(
             error_value = re.sub(r"\s+", " ", normalized).strip() or "-"
         typer.echo(
             f"{task.id}\t{task.state.value}\t{task.project_name}/{task.feature}\t"
-            f"session={task.session}\tpr={pr_value}\tcycles={task.repair_cycles}\t"
-            f"error={error_value}\tupdated={task.updated_at}"
+            f"session={task.session}\terror={error_value}\tupdated={task.updated_at}"
         )
 
 
@@ -138,7 +136,7 @@ def task_retry(
         bool,
         typer.Option(
             "--force-restart",
-            help="Kill existing tmux session when task is currently coding, then relaunch.",
+            help="Kill existing tmux session when task is currently running, then relaunch.",
         ),
     ] = False,
 ) -> None:

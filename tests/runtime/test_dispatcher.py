@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 from concurrent.futures import Future
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -12,89 +12,27 @@ from agvv.runtime import daemon_run_loop, daemon_run_once, reconcile_task
 from agvv.runtime.models import TaskSpec, TaskState
 from agvv.runtime.store import TaskStore
 from agvv.shared.errors import AgvvError
-from agvv.shared.pr import PrStatus
 
 
-def _write_default_dod_result(feature_dir: Path) -> None:
-    (feature_dir / ".agvv").mkdir(parents=True, exist_ok=True)
-    payload = {
-        "criteria": [
-            {"item": "Relevant tests/checks pass for changed scope.", "status": "pass", "evidence": "ok"},
-            {"item": "Changed files and verification results are summarized.", "status": "pass", "evidence": "ok"},
-        ]
-    }
-    (feature_dir / ".agvv" / "dod_result.json").write_text(json.dumps(payload), encoding="utf-8")
-
-
-def test_daemon_run_once_promotes_coding_to_pr_open(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_daemon_run_once_marks_running_done_when_session_ends(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
-        task_id="task_daemon",
+        task_id="task_done",
         project_name="demo",
-        feature="feat_daemon",
+        feature="feat_done",
         agent_cmd="echo run",
-        repo="owner/repo",
         base_dir=tmp_path,
+        requirements="do something",
     )
     created = store.create_task(spec)
-    store.update_task(created.id, state=TaskState.CODING, started_at=created.created_at)
-    feature_dir = tmp_path / "demo" / "feat_daemon"
-    feature_dir.mkdir(parents=True, exist_ok=True)
-    _write_default_dod_result(feature_dir)
+    store.update_task(created.id, state=TaskState.RUNNING, started_at=created.created_at)
 
-    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
-    monkeypatch.setattr(
-        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.commit_and_push_branch",
-        lambda *, worktree, feature, base_branch, remote, commit_message: None,
-    )
-    monkeypatch.setattr(
-        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.ensure_pr_number_for_branch",
-        lambda *, repo, feature, pr_base, title, body, worktree, pr_number=None: 42,
-    )
+    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: False)
 
     results = daemon_run_once(tmp_path / "tasks.db")
     assert len(results) == 1
-    updated = store.get_task("task_daemon")
-    assert updated.state == TaskState.PR_OPEN
-    assert updated.pr_number == 42
-
-
-def test_daemon_run_once_relaunches_on_needs_work(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    store = TaskStore(tmp_path / "tasks.db")
-    spec = TaskSpec(
-        task_id="task_review",
-        project_name="demo",
-        feature="feat_review",
-        agent_cmd="echo run",
-        repo="owner/repo",
-        base_dir=tmp_path,
-        max_retry_cycles=2,
-    )
-    created = store.create_task(spec)
-    store.update_task(created.id, state=TaskState.PR_OPEN, pr_number=11, started_at=created.created_at)
-    feature_dir = tmp_path / "demo" / "feat_review"
-    feature_dir.mkdir(parents=True, exist_ok=True)
-
-    monkeypatch.setattr(
-        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.check_pr_status",
-        lambda _repo, _pr: type(
-            "R",
-            (),
-            {"status": PrStatus.NEEDS_WORK, "reason": "changes_requested", "state": "OPEN", "review_decision": "CHANGES_REQUESTED"},
-        )(),
-    )
-    monkeypatch.setattr(
-        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.summarize_pr_feedback",
-        lambda _repo, _pr: type("S", (), {"actionable": ["Actionable comments posted: 1"], "skipped": ["Skipped informational bot comment"]})(),
-    )
-    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
-    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_new_session", lambda _session, _cwd, _cmd: None)
-
-    daemon_run_once(tmp_path / "tasks.db")
-    updated = store.get_task("task_review")
-    assert updated.state == TaskState.CODING
-    assert updated.repair_cycles == 1
-    assert (feature_dir / ".agvv" / "feedback.txt").exists()
+    updated = store.get_task("task_done")
+    assert updated.state == TaskState.DONE
 
 
 def test_daemon_run_once_rejects_non_positive_max_workers(tmp_path: Path) -> None:
@@ -109,15 +47,15 @@ def test_daemon_run_once_skips_task_when_reconcile_lock_held(monkeypatch: pytest
         project_name="demo",
         feature="feat_locked",
         agent_cmd="echo run",
-        repo="owner/repo",
         base_dir=tmp_path,
+        requirements="do something",
     )
     created = store.create_task(spec)
     assert store.try_acquire_reconcile_lock(created.id, owner_id="external-owner")
 
     monkeypatch.setattr(
         "agvv.runtime.dispatcher._STATE_HANDLERS",
-        {TaskState.PENDING: lambda _store, _task, _port: (_ for _ in ()).throw(RuntimeError("should not run"))},
+        {TaskState.PENDING: lambda _store, _task: (_ for _ in ()).throw(RuntimeError("should not run"))},
     )
 
     results = daemon_run_once(tmp_path / "tasks.db")
@@ -132,18 +70,18 @@ def test_daemon_run_once_marks_failed_on_unexpected_handler_error(monkeypatch: p
         project_name="demo",
         feature="feat_handler_error",
         agent_cmd="echo run",
-        repo="owner/repo",
         base_dir=tmp_path,
+        requirements="do something",
     )
-    created = store.create_task(spec)
+    store.create_task(spec)
 
-    def _boom(_store: TaskStore, _task, _port):
+    def _boom(_store: TaskStore, _task):
         raise RuntimeError("boom")
 
     monkeypatch.setattr("agvv.runtime.dispatcher._STATE_HANDLERS", {TaskState.PENDING: _boom})
     results = daemon_run_once(tmp_path / "tasks.db")
     assert len(results) == 1
-    failed = store.get_task(created.id)
+    failed = store.get_task("task_handler_error")
     assert failed.state == TaskState.FAILED
     assert "Unexpected reconcile failure" in (failed.last_error or "")
 
@@ -157,7 +95,7 @@ def test_daemon_run_loop_stops_at_max_loops(monkeypatch: pytest.MonkeyPatch, tmp
     run_calls = {"count": 0}
     sleep_calls: list[int] = []
 
-    def _fake_daemon_once(db_path=None, *, max_workers=1, orchestration_port=None):
+    def _fake_daemon_once(db_path=None, *, max_workers=1):
         run_calls["count"] += 1
         return []
 
@@ -178,8 +116,8 @@ def test_daemon_run_once_uses_parallel_path_when_multiple_workers(monkeypatch: p
             project_name="demo",
             feature=f"feat_{task_id}",
             agent_cmd="echo run",
-            repo="owner/repo",
             base_dir=tmp_path,
+            requirements="do something",
         )
         store.create_task(spec)
 
@@ -212,6 +150,62 @@ def test_daemon_run_once_uses_parallel_path_when_multiple_workers(monkeypatch: p
     assert sorted(item.id for item in results) == ["parallel_a", "parallel_b"]
 
 
+def test_daemon_run_once_marks_timed_out_when_session_exceeds_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    spec = TaskSpec(
+        task_id="task_timeout",
+        project_name="demo",
+        feature="feat_timeout",
+        agent_cmd="echo run",
+        base_dir=tmp_path,
+        requirements="do something",
+    )
+    created = store.create_task(spec)
+    past = (datetime.now(tz=timezone.utc) - timedelta(minutes=spec.timeout_minutes + 1)).isoformat()
+    store.update_task(created.id, state=TaskState.RUNNING, started_at=past)
+
+    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: True)
+    monkeypatch.setattr("agvv.orchestration.tmux_kill_session", lambda _session: None)
+
+    results = daemon_run_once(tmp_path / "tasks.db")
+    assert len(results) == 1
+    updated = store.get_task("task_timeout")
+    assert updated.state == TaskState.TIMED_OUT
+    assert updated.last_error == "session_timeout"
+
+
+def test_daemon_run_once_marks_timed_out_even_when_kill_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = TaskStore(tmp_path / "tasks.db")
+    spec = TaskSpec(
+        task_id="task_kill_fail",
+        project_name="demo",
+        feature="feat_kill_fail",
+        agent_cmd="echo run",
+        base_dir=tmp_path,
+        requirements="do something",
+    )
+    created = store.create_task(spec)
+    past = (datetime.now(tz=timezone.utc) - timedelta(minutes=spec.timeout_minutes + 1)).isoformat()
+    store.update_task(created.id, state=TaskState.RUNNING, started_at=past)
+
+    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: True)
+    monkeypatch.setattr(
+        "agvv.orchestration.tmux_kill_session",
+        lambda _session: (_ for _ in ()).throw(RuntimeError("kill failed")),
+    )
+
+    results = daemon_run_once(tmp_path / "tasks.db")
+    assert len(results) == 1
+    updated = store.get_task("task_kill_fail")
+    # Task must still reach TIMED_OUT despite the kill error
+    assert updated.state == TaskState.TIMED_OUT
+    assert updated.last_error == "session_timeout"
+
+
 def test_reconcile_task_returns_terminal_state_unchanged(tmp_path: Path) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
@@ -219,8 +213,8 @@ def test_reconcile_task_returns_terminal_state_unchanged(tmp_path: Path) -> None
         project_name="demo",
         feature="feat_terminal",
         agent_cmd="echo run",
-        repo="owner/repo",
         base_dir=tmp_path,
+        requirements="do something",
     )
     created = store.create_task(spec)
     store.update_task(created.id, state=TaskState.CLEANED)
