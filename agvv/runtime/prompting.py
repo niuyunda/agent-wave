@@ -13,7 +13,11 @@ _TTY_AGENTS = {"codex", "claude_code"}
 _ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 _COMPACT_NON_ALNUM_RE = re.compile(r"[^a-z0-9?]+")
 _BLOCKING_PROMPT_PATTERNS: tuple[tuple[str, str, str], ...] = (
-    ("trust_confirmation", "trust confirmation prompt", "doyoutrustthecontentsofthisdirectory?"),
+    (
+        "trust_confirmation",
+        "trust confirmation prompt",
+        "doyoutrustthecontentsofthisdirectory?",
+    ),
     ("interactive_continue", "interactive continue prompt", "pressentertocontinue"),
 )
 
@@ -122,7 +126,9 @@ def write_launch_artifacts(*, worktree: Path, spec: TaskSpec) -> dict[str, Path]
         "agent_cmd": spec.agent_cmd,
         "agent_non_interactive": spec.agent_non_interactive,
     }
-    input_snapshot_path.write_text(json.dumps(input_snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    input_snapshot_path.write_text(
+        json.dumps(input_snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return {
         "prompt_path": prompt_path,
         "input_snapshot_path": input_snapshot_path,
@@ -135,7 +141,9 @@ def _codex_has_sandbox_flag(extra_args: list[str]) -> bool:
     return "-s" in extra_args or "--sandbox" in extra_args
 
 
-def build_launch_command(*, spec: TaskSpec, prompt_path: Path, output_log_path: Path) -> str:
+def build_launch_command(
+    *, spec: TaskSpec, prompt_path: Path, output_log_path: Path
+) -> str:
     """Build wrapped agent command with prompt injection and output logging."""
 
     agent_cmd = spec.agent_cmd.strip()
@@ -189,13 +197,17 @@ def write_output_summary(*, worktree: Path, max_lines: int = 80) -> Path | None:
     summary_lines = [line for line in summary_lines if line.strip()]
     summary_path = worktree / ".agvv" / "agent_output_summary.txt"
     if not summary_lines:
-        summary_path.write_text("No non-empty output lines captured.\n", encoding="utf-8")
+        summary_path.write_text(
+            "No non-empty output lines captured.\n", encoding="utf-8"
+        )
         return summary_path
     summary_path.write_text("\n".join(summary_lines).strip() + "\n", encoding="utf-8")
     return summary_path
 
 
-def detect_blocking_prompt(*, worktree: Path, max_scan_chars: int = 32768) -> tuple[str, str] | None:
+def detect_blocking_prompt(
+    *, worktree: Path, max_scan_chars: int = 32768
+) -> tuple[str, str] | None:
     """Detect known interactive prompts that block unattended agent sessions."""
 
     output_log = worktree / ".agvv" / "agent_output.log"

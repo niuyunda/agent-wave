@@ -20,7 +20,9 @@ from agvv.orchestration.models import PrFeedbackSummary
 from agvv.shared.pr import PrStatus
 
 
-def test_commit_and_push_branch_commits_when_worktree_dirty(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_commit_and_push_branch_commits_when_worktree_dirty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     calls: list[list[str]] = []
 
     def _fake_run_git(args: list[str], cwd: Path | None = None):
@@ -42,11 +44,20 @@ def test_commit_and_push_branch_commits_when_worktree_dirty(monkeypatch: pytest.
         commit_message="feat: update readme",
     )
     assert ["add", "-A", "--", ".", ":(exclude).agvv/**"] in calls
-    assert ["commit", "-m", "feat: update readme", "--", ".", ":(exclude).agvv/**"] in calls
+    assert [
+        "commit",
+        "-m",
+        "feat: update readme",
+        "--",
+        ".",
+        ":(exclude).agvv/**",
+    ] in calls
     assert ["push", "-u", "origin", "feat-1"] in calls
 
 
-def test_commit_and_push_branch_fails_when_not_ahead(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_commit_and_push_branch_fails_when_not_ahead(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     def _fake_run_git(args: list[str], cwd: Path | None = None):
         if args[:2] == ["remote", "get-url"]:
             return type("R", (), {"stdout": "git@example.com:owner/repo.git\n"})()
@@ -67,7 +78,9 @@ def test_commit_and_push_branch_fails_when_not_ahead(monkeypatch: pytest.MonkeyP
         )
 
 
-def test_commit_and_push_branch_fails_when_remote_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_commit_and_push_branch_fails_when_remote_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     calls: list[list[str]] = []
 
     def _fake_run_git(args: list[str], cwd: Path | None = None):
@@ -88,7 +101,9 @@ def test_commit_and_push_branch_fails_when_remote_missing(monkeypatch: pytest.Mo
     assert calls == [["remote", "get-url", "origin"]]
 
 
-def test_commit_and_push_branch_ignores_agvv_internal_changes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_commit_and_push_branch_ignores_agvv_internal_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     calls: list[list[str]] = []
 
     def _fake_run_git(args: list[str], cwd: Path | None = None):
@@ -96,7 +111,9 @@ def test_commit_and_push_branch_ignores_agvv_internal_changes(monkeypatch: pytes
         if args[:2] == ["remote", "get-url"]:
             return type("R", (), {"stdout": "git@example.com:owner/repo.git\n"})()
         if args == ["status", "--porcelain"]:
-            return type("R", (), {"stdout": "?? .agvv/context.json\n M .agvv/feedback.txt\n"})()
+            return type(
+                "R", (), {"stdout": "?? .agvv/context.json\n M .agvv/feedback.txt\n"}
+            )()
         if args[:2] == ["rev-list", "--count"]:
             return type("R", (), {"stdout": "0\n"})()
         return type("R", (), {"stdout": ""})()
@@ -111,11 +128,20 @@ def test_commit_and_push_branch_ignores_agvv_internal_changes(monkeypatch: pytes
             commit_message="feat: update readme",
         )
     assert ["add", "-A", "--", ".", ":(exclude).agvv/**"] not in calls
-    assert ["commit", "-m", "feat: update readme", "--", ".", ":(exclude).agvv/**"] not in calls
+    assert [
+        "commit",
+        "-m",
+        "feat: update readme",
+        "--",
+        ".",
+        ":(exclude).agvv/**",
+    ] not in calls
     assert ["push", "-u", "origin", "feat-1"] not in calls
 
 
-def test_git_remote_exists_true(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_git_remote_exists_true(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     def _fake_run_git(args: list[str], cwd: Path | None = None):
         assert args == ["remote", "get-url", "origin"]
         return type("R", (), {"stdout": "git@example.com:owner/repo.git\n"})()
@@ -124,7 +150,9 @@ def test_git_remote_exists_true(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     assert git_remote_exists(worktree=tmp_path, remote="origin") is True
 
 
-def test_git_remote_exists_false_when_lookup_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_git_remote_exists_false_when_lookup_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     def _fake_run_git(args: list[str], cwd: Path | None = None):
         raise AgvvError("Command failed: git remote get-url origin")
 
@@ -132,15 +160,22 @@ def test_git_remote_exists_false_when_lookup_fails(monkeypatch: pytest.MonkeyPat
     assert git_remote_exists(worktree=tmp_path, remote="origin") is False
 
 
-def test_git_remote_exists_blank_or_whitespace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_git_remote_exists_blank_or_whitespace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     def _fake_run_git(args: list[str], cwd: Path | None = None):
-        raise AssertionError(f"_run_git should not be called for blank remote, got: {args}")
+        raise AssertionError(
+            f"_run_git should not be called for blank remote, got: {args}"
+        )
 
     monkeypatch.setattr("agvv.orchestration.git_ops._run_git", _fake_run_git)
     assert git_remote_exists(worktree=tmp_path, remote="") is False
     assert git_remote_exists(worktree=tmp_path, remote="   ") is False
 
-def test_ensure_pr_number_for_branch_falls_back_when_create_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+
+def test_ensure_pr_number_for_branch_falls_back_when_create_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     def _fake_run(cmd: list[str], cwd: Path | None = None):
         if cmd[:4] == ["gh", "pr", "create", "--repo"]:
             raise AgvvError("Command failed: gh pr create ... already exists")
@@ -182,7 +217,9 @@ def test_ensure_pr_number_for_branch_raises_when_create_and_list_fail(
         )
 
 
-def test_check_pr_status_maps_changes_requested(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_pr_status_maps_changes_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def _fake_run(_cmd, cwd=None):
         return type(
             "R",
@@ -226,7 +263,9 @@ def test_check_pr_status_maps_merged(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.status == PrStatus.DONE
 
 
-def test_check_pr_status_maps_failed_state_without_conclusion(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_pr_status_maps_failed_state_without_conclusion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def _fake_run(_cmd, cwd=None):
         return type(
             "R",
@@ -254,8 +293,26 @@ def test_wait_pr_status_polls_until_terminal(monkeypatch: pytest.MonkeyPatch) ->
     def _fake_check(repo: str, pr_number: int):
         calls["n"] += 1
         if calls["n"] < 3:
-            return type("R", (), {"status": PrStatus.WAITING, "reason": "pending", "state": "OPEN", "review_decision": None})()
-        return type("R", (), {"status": PrStatus.NEEDS_WORK, "reason": "changes_requested", "state": "OPEN", "review_decision": "CHANGES_REQUESTED"})()
+            return type(
+                "R",
+                (),
+                {
+                    "status": PrStatus.WAITING,
+                    "reason": "pending",
+                    "state": "OPEN",
+                    "review_decision": None,
+                },
+            )()
+        return type(
+            "R",
+            (),
+            {
+                "status": PrStatus.NEEDS_WORK,
+                "reason": "changes_requested",
+                "state": "OPEN",
+                "review_decision": "CHANGES_REQUESTED",
+            },
+        )()
 
     monkeypatch.setattr("agvv.orchestration.pr_workflow.check_pr_status", _fake_check)
     monkeypatch.setattr("agvv.orchestration.pr_workflow.time.sleep", lambda _s: None)
@@ -268,7 +325,16 @@ def test_wait_pr_status_polls_until_terminal(monkeypatch: pytest.MonkeyPatch) ->
 def test_wait_pr_status_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "agvv.orchestration.pr_workflow.check_pr_status",
-        lambda repo, pr_number: type("R", (), {"status": PrStatus.WAITING, "reason": "pending", "state": "OPEN", "review_decision": None})(),
+        lambda repo, pr_number: type(
+            "R",
+            (),
+            {
+                "status": PrStatus.WAITING,
+                "reason": "pending",
+                "state": "OPEN",
+                "review_decision": None,
+            },
+        )(),
     )
     monkeypatch.setattr("agvv.orchestration.pr_workflow.time.sleep", lambda _s: None)
     wait_result = wait_pr_status("owner/repo", 9, interval_seconds=1, max_attempts=3)
@@ -290,7 +356,16 @@ def test_wait_pr_status_rejects_non_positive_attempts() -> None:
 def test_recommend_pr_next_action_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "agvv.orchestration.pr_workflow.check_pr_status",
-        lambda repo, pr_number: type("R", (), {"status": PrStatus.WAITING, "reason": "pending", "state": "OPEN", "review_decision": None})(),
+        lambda repo, pr_number: type(
+            "R",
+            (),
+            {
+                "status": PrStatus.WAITING,
+                "reason": "pending",
+                "state": "OPEN",
+                "review_decision": None,
+            },
+        )(),
     )
     rec = recommend_pr_next_action("owner/repo", 3)
     assert rec.action == "wait"
@@ -299,13 +374,24 @@ def test_recommend_pr_next_action_wait(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_recommend_pr_next_action_needs_work(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "agvv.orchestration.pr_workflow.check_pr_status",
-        lambda repo, pr_number: type("R", (), {"status": PrStatus.NEEDS_WORK, "reason": "changes_requested", "state": "OPEN", "review_decision": "CHANGES_REQUESTED"})(),
+        lambda repo, pr_number: type(
+            "R",
+            (),
+            {
+                "status": PrStatus.NEEDS_WORK,
+                "reason": "changes_requested",
+                "state": "OPEN",
+                "review_decision": "CHANGES_REQUESTED",
+            },
+        )(),
     )
     rec = recommend_pr_next_action("owner/repo", 3)
     assert rec.action == "retry"
 
 
-def test_summarize_pr_feedback_splits_actionable_and_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_summarize_pr_feedback_splits_actionable_and_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def _fake_run(_cmd, cwd=None):
         return type(
             "R",
@@ -330,8 +416,12 @@ def test_summarize_pr_feedback_splits_actionable_and_skipped(monkeypatch: pytest
 
 
 def test_write_pr_feedback_file_creates_expected_content(tmp_path: Path) -> None:
-    feedback = PrFeedbackSummary(actionable=["Fix lint"], skipped=["Informational bot comment"])
-    feedback_path = write_pr_feedback_file(worktree=tmp_path, task_id="task-123", pr_number=99, feedback=feedback)
+    feedback = PrFeedbackSummary(
+        actionable=["Fix lint"], skipped=["Informational bot comment"]
+    )
+    feedback_path = write_pr_feedback_file(
+        worktree=tmp_path, task_id="task-123", pr_number=99, feedback=feedback
+    )
     assert feedback_path.exists()
     text = feedback_path.read_text(encoding="utf-8")
     assert "task=task-123 pr=99" in text

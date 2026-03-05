@@ -9,7 +9,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+    ValidationError,
+)
 
 from agvv.shared.errors import AgvvError
 
@@ -30,6 +37,7 @@ def _generate_task_id(project_name: str, feature: str) -> str:
 
 class TaskState(str, Enum):
     """Lifecycle states for the task state machine."""
+
     PENDING = "pending"
     CODING = "coding"
     PR_OPEN = "pr_open"
@@ -42,12 +50,19 @@ class TaskState(str, Enum):
 
 
 TERMINAL_STATES = {
-    TaskState.PR_MERGED, TaskState.PR_CLOSED, TaskState.TIMED_OUT,
-    TaskState.CLEANED, TaskState.FAILED, TaskState.BLOCKED,
+    TaskState.PR_MERGED,
+    TaskState.PR_CLOSED,
+    TaskState.TIMED_OUT,
+    TaskState.CLEANED,
+    TaskState.FAILED,
+    TaskState.BLOCKED,
 }
 ACTIVE_STATES = {TaskState.PENDING, TaskState.CODING, TaskState.PR_OPEN}
 RECOVERABLE_RETRY_STATES = {
-    TaskState.FAILED, TaskState.TIMED_OUT, TaskState.BLOCKED, TaskState.CODING,
+    TaskState.FAILED,
+    TaskState.TIMED_OUT,
+    TaskState.BLOCKED,
+    TaskState.CODING,
 }
 
 
@@ -60,7 +75,9 @@ def normalize_agent_provider(value: str | None) -> str:
     provider = _AGENT_PROVIDER_ALIASES.get(key)
     if provider is None:
         supported = ", ".join(sorted(set(_AGENT_PROVIDER_ALIASES.values())))
-        raise AgvvError(f"Unsupported agent provider '{raw}'. Supported providers: {supported}.")
+        raise AgvvError(
+            f"Unsupported agent provider '{raw}'. Supported providers: {supported}."
+        )
     return provider
 
 
@@ -81,7 +98,10 @@ def build_agent_command(provider: str, model: str | None, extra_args: list[str])
 
 class TaskSpec(BaseModel):
     """Task spec consumed by the state machine."""
-    model_config = ConfigDict(frozen=True, validate_default=True, arbitrary_types_allowed=True)
+
+    model_config = ConfigDict(
+        frozen=True, validate_default=True, arbitrary_types_allowed=True
+    )
 
     project_name: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
     feature: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
@@ -159,12 +179,14 @@ class TaskSpec(BaseModel):
     def prepare_data(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             raise ValueError("Task spec must be an object.")
-            
+
         task_doc = data.get("task_doc")
         if task_doc is not None:
-            if not isinstance(task_doc, str) or not task_doc.strip().lower().endswith(".md"):
+            if not isinstance(task_doc, str) or not task_doc.strip().lower().endswith(
+                ".md"
+            ):
                 raise ValueError("task_doc must be a Markdown (.md) file path")
-            
+
             p = Path(task_doc.strip()).expanduser()
             spec_dir = data.get("spec_dir__")
             if not p.is_absolute() and spec_dir:
@@ -178,7 +200,7 @@ class TaskSpec(BaseModel):
 
         if "pr_base" not in data and "from_branch" in data:
             data["pr_base"] = data.get("from_branch", "main")
-            
+
         return data
 
     @model_validator(mode="after")
@@ -187,12 +209,16 @@ class TaskSpec(BaseModel):
         object.__setattr__(self, "agent", agent_provider)
 
         if not self.task_id:
-            object.__setattr__(self, "task_id", _generate_task_id(self.project_name, self.feature))
-        
+            object.__setattr__(
+                self, "task_id", _generate_task_id(self.project_name, self.feature)
+            )
+
         if not self.agent_cmd:
-            cmd = build_agent_command(agent_provider, self.agent_model, self.agent_extra_args)
+            cmd = build_agent_command(
+                agent_provider, self.agent_model, self.agent_extra_args
+            )
             object.__setattr__(self, "agent_cmd", cmd)
-            
+
         return self
 
     def normalized_session(self) -> str:
@@ -238,7 +264,9 @@ class TaskSpec(BaseModel):
         }
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any], *, spec_dir: Path | None = None) -> TaskSpec:
+    def from_payload(
+        cls, payload: dict[str, Any], *, spec_dir: Path | None = None
+    ) -> TaskSpec:
         """Build a validated TaskSpec from a user-authored spec JSON file.
 
         Runtime-controlled fields (agent provider, task_id, from_branch) are
@@ -255,9 +283,9 @@ class TaskSpec(BaseModel):
         # Runtime-controlled fields: always reset when loading from spec file.
         payload["agent"] = "codex"
         payload["agent_model"] = None
-        payload.pop("task_id", None)      # Regenerated from project+feature+timestamp
-        payload.pop("agent_cmd", None)    # Recomputed by model_validator
-        payload["from_branch"] = "main"   # Always base off main from fresh spec
+        payload.pop("task_id", None)  # Regenerated from project+feature+timestamp
+        payload.pop("agent_cmd", None)  # Recomputed by model_validator
+        payload["from_branch"] = "main"  # Always base off main from fresh spec
 
         # Spec files must provide at least one instruction source.
         if not payload.get("task_doc") and not payload.get("requirements"):
@@ -301,4 +329,3 @@ class TaskSpec(BaseModel):
             return cls.model_validate(payload)
         except ValidationError as e:
             raise AgvvError(f"Validation error: {e}") from e
-

@@ -16,6 +16,8 @@ from agvv.runtime.models import ACTIVE_STATES, TaskSpec, TaskState
 
 _TASK_DB_ENV_VAR = "AGVV_DB_PATH"
 _DEFAULT_TASK_DB_PATH = Path("~/.agvv/tasks.db")
+
+
 class _Missing:
     """Sentinel type for optional update_task fields (distinct from None)."""
 
@@ -202,7 +204,14 @@ class TaskStore:
             INSERT INTO task_events (task_id, created_at, level, step, message, meta_json)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (task_id, now_iso(), level, step, message, json.dumps(meta or {}, sort_keys=True)),
+            (
+                task_id,
+                now_iso(),
+                level,
+                step,
+                message,
+                json.dumps(meta or {}, sort_keys=True),
+            ),
         )
 
     def add_event(
@@ -267,7 +276,9 @@ class TaskStore:
         """Fetch a task by id or raise when missing."""
 
         with self._connection() as conn:
-            row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
         if row is None:
             raise AgvvError(f"Task not found: {task_id}")
         return self._row_to_snapshot(row)
@@ -292,7 +303,8 @@ class TaskStore:
         states = tuple(state.value for state in ACTIVE_STATES)
         with self._connection() as conn:
             rows = conn.execute(
-                f"SELECT * FROM tasks WHERE state IN ({placeholders}) ORDER BY updated_at ASC", states
+                f"SELECT * FROM tasks WHERE state IN ({placeholders}) ORDER BY updated_at ASC",
+                states,
             ).fetchall()
         return [self._row_to_snapshot(row) for row in rows]
 
@@ -307,16 +319,22 @@ class TaskStore:
             )
         return self.get_task(task_id)
 
-    def try_acquire_reconcile_lock(self, task_id: str, *, owner_id: str, ttl_seconds: int = 300) -> bool:
+    def try_acquire_reconcile_lock(
+        self, task_id: str, *, owner_id: str, ttl_seconds: int = 300
+    ) -> bool:
         """Try to acquire a task reconcile lock for one owner."""
 
         if ttl_seconds <= 0:
             raise AgvvError("ttl_seconds must be > 0")
 
         acquired_at = now_iso()
-        expires_at = (datetime.now(tz=timezone.utc) + timedelta(seconds=ttl_seconds)).isoformat()
+        expires_at = (
+            datetime.now(tz=timezone.utc) + timedelta(seconds=ttl_seconds)
+        ).isoformat()
         with self._connection() as conn:
-            conn.execute("DELETE FROM task_reconcile_locks WHERE expires_at <= ?", (acquired_at,))
+            conn.execute(
+                "DELETE FROM task_reconcile_locks WHERE expires_at <= ?", (acquired_at,)
+            )
             try:
                 conn.execute(
                     """
@@ -355,10 +373,16 @@ class TaskStore:
             repo=str(row["repo"]),
             pr_number=(int(pr_number) if pr_number is not None else None),
             repair_cycles=int(row["repair_cycles"]),
-            last_error=(str(row["last_error"]) if row["last_error"] is not None else None),
+            last_error=(
+                str(row["last_error"]) if row["last_error"] is not None else None
+            ),
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
-            started_at=(str(row["started_at"]) if row["started_at"] is not None else None),
-            finished_at=(str(row["finished_at"]) if row["finished_at"] is not None else None),
+            started_at=(
+                str(row["started_at"]) if row["started_at"] is not None else None
+            ),
+            finished_at=(
+                str(row["finished_at"]) if row["finished_at"] is not None else None
+            ),
             spec=spec,
         )

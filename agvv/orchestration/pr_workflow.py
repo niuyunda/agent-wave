@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Callable
 
 from agvv.orchestration.executor import CommandRunner, run_checked
-from agvv.orchestration.models import PrCheckResult, PrFeedbackSummary, PrNextAction, PrWaitResult
+from agvv.orchestration.models import (
+    PrCheckResult,
+    PrFeedbackSummary,
+    PrNextAction,
+    PrWaitResult,
+)
 from agvv.orchestration.pr_core import (
     check_pr_status as _check_pr_status_impl,
     recommend_pr_next_action as _recommend_pr_next_action_impl,
@@ -103,11 +108,15 @@ def ensure_pr_number_for_branch(
             f"create_error={create_error}"
         ) from create_error
     if list_error is not None:
-        raise AgvvError(f"Failed to resolve PR number from gh list: {list_error}") from list_error
+        raise AgvvError(
+            f"Failed to resolve PR number from gh list: {list_error}"
+        ) from list_error
     raise AgvvError("Failed to resolve PR number after creation.")
 
 
-def check_pr_status(repo: str, pr_number: int, *, run_cmd: CommandRunner | None = None) -> PrCheckResult:
+def check_pr_status(
+    repo: str, pr_number: int, *, run_cmd: CommandRunner | None = None
+) -> PrCheckResult:
     """Check PR state via gh and map to minimal status for fast review loops."""
 
     runner = run_cmd or _run
@@ -146,10 +155,14 @@ def wait_pr_status(
             last = check_pr_status(repo=repo, pr_number=pr_number, run_cmd=run_cmd)
         attempts += 1
 
-    return PrWaitResult(result=last, attempts=attempts, timed_out=last.status == PrStatus.WAITING)
+    return PrWaitResult(
+        result=last, attempts=attempts, timed_out=last.status == PrStatus.WAITING
+    )
 
 
-def recommend_pr_next_action(repo: str, pr_number: int, *, run_cmd: CommandRunner | None = None) -> PrNextAction:
+def recommend_pr_next_action(
+    repo: str, pr_number: int, *, run_cmd: CommandRunner | None = None
+) -> PrNextAction:
     """Return a minimal next-step recommendation for a PR."""
 
     if run_cmd is None:
@@ -159,7 +172,9 @@ def recommend_pr_next_action(repo: str, pr_number: int, *, run_cmd: CommandRunne
     return _recommend_pr_next_action_impl(result)
 
 
-def summarize_pr_feedback(repo: str, pr_number: int, *, run_cmd: CommandRunner | None = None) -> PrFeedbackSummary:
+def summarize_pr_feedback(
+    repo: str, pr_number: int, *, run_cmd: CommandRunner | None = None
+) -> PrFeedbackSummary:
     """Summarize PR comments/reviews into actionable items and skipped reasons."""
 
     runner = run_cmd or _run

@@ -14,7 +14,9 @@ from agvv.shared.errors import AgvvError
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
-def layout_paths(project_name: str, base_dir: Path, feature: str | None = None) -> LayoutPaths:
+def layout_paths(
+    project_name: str, base_dir: Path, feature: str | None = None
+) -> LayoutPaths:
     """Construct canonical path objects for a project and optional feature."""
 
     project_dir = base_dir / project_name
@@ -60,7 +62,9 @@ def _ensure_create_dir_value(directory: str) -> None:
     parts = normalized.split("/")
     for part in parts:
         if not part or part in {".", ".."}:
-            raise AgvvError(f"Directory name '{directory}' contains unsafe path segments.")
+            raise AgvvError(
+                f"Directory name '{directory}' contains unsafe path segments."
+            )
         if _SAFE_NAME_RE.fullmatch(part) is None:
             raise AgvvError(
                 f"Directory name '{directory}' contains invalid characters. "
@@ -78,7 +82,9 @@ def _write_json(path: Path, data: dict) -> None:
 def _default_branch(repo_dir: Path) -> str:
     """Pick a default branch from a bare repo, preferring main/master."""
 
-    branches_raw = run_git(["-C", str(repo_dir), "for-each-ref", "--format=%(refname:short)", "refs/heads"]).stdout
+    branches_raw = run_git(
+        ["-C", str(repo_dir), "for-each-ref", "--format=%(refname:short)", "refs/heads"]
+    ).stdout
     branches = [line.strip() for line in branches_raw.splitlines() if line.strip()]
     if not branches:
         raise AgvvError("No branches found in bare repo.")
@@ -95,7 +101,10 @@ def _is_bare_repo(path: Path) -> bool:
         return False
     if not run_git_success(["-C", str(path), "rev-parse", "--is-bare-repository"]):
         return False
-    return run_git(["-C", str(path), "rev-parse", "--is-bare-repository"]).stdout.strip() == "true"
+    return (
+        run_git(["-C", str(path), "rev-parse", "--is-bare-repository"]).stdout.strip()
+        == "true"
+    )
 
 
 def _resolve_adopt_source_repo(existing_repo: Path) -> Path:
@@ -152,20 +161,63 @@ def init_project(project_name: str, base_dir: Path) -> LayoutPaths:
         run_git(["init", "--bare", str(paths.repo_dir)])
 
     if not paths.main_dir.exists():
-        if run_git_success(["-C", str(paths.repo_dir), "show-ref", "--verify", "--quiet", "refs/heads/main"]):
-            run_git(["-C", str(paths.repo_dir), "worktree", "add", str(paths.main_dir), "main"])
+        if run_git_success(
+            [
+                "-C",
+                str(paths.repo_dir),
+                "show-ref",
+                "--verify",
+                "--quiet",
+                "refs/heads/main",
+            ]
+        ):
+            run_git(
+                [
+                    "-C",
+                    str(paths.repo_dir),
+                    "worktree",
+                    "add",
+                    str(paths.main_dir),
+                    "main",
+                ]
+            )
         else:
-            run_git(["-C", str(paths.repo_dir), "worktree", "add", "-b", "main", str(paths.main_dir)])
+            run_git(
+                [
+                    "-C",
+                    str(paths.repo_dir),
+                    "worktree",
+                    "add",
+                    "-b",
+                    "main",
+                    str(paths.main_dir),
+                ]
+            )
 
-    if not run_git_success(["-C", str(paths.main_dir), "rev-parse", "--verify", "HEAD"]):
-        run_git(["-C", str(paths.main_dir), "config", "user.email", "agvv@example.invalid"])
+    if not run_git_success(
+        ["-C", str(paths.main_dir), "rev-parse", "--verify", "HEAD"]
+    ):
+        run_git(
+            ["-C", str(paths.main_dir), "config", "user.email", "agvv@example.invalid"]
+        )
         run_git(["-C", str(paths.main_dir), "config", "user.name", "Agent Wave"])
-        run_git(["-C", str(paths.main_dir), "commit", "--allow-empty", "-m", "init: bare repo setup"])
+        run_git(
+            [
+                "-C",
+                str(paths.main_dir),
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init: bare repo setup",
+            ]
+        )
 
     return paths
 
 
-def adopt_project(existing_repo: Path, project_name: str, base_dir: Path) -> tuple[LayoutPaths, str]:
+def adopt_project(
+    existing_repo: Path, project_name: str, base_dir: Path
+) -> tuple[LayoutPaths, str]:
     """Adopt an existing repository into Agent Wave layout under ``base_dir``.
 
     The function performs a bare clone of ``existing_repo`` into the managed
@@ -201,10 +253,23 @@ def adopt_project(existing_repo: Path, project_name: str, base_dir: Path) -> tup
 
     # If source repo has an upstream origin URL, preserve it so adopted tasks
     # push to the original remote instead of the local source path.
-    if run_git_success(["-C", str(source_repo), "config", "--get", "remote.origin.url"]):
-        source_origin = run_git(["-C", str(source_repo), "config", "--get", "remote.origin.url"]).stdout.strip()
+    if run_git_success(
+        ["-C", str(source_repo), "config", "--get", "remote.origin.url"]
+    ):
+        source_origin = run_git(
+            ["-C", str(source_repo), "config", "--get", "remote.origin.url"]
+        ).stdout.strip()
         if source_origin:
-            run_git(["-C", str(paths.repo_dir), "remote", "set-url", "origin", source_origin])
+            run_git(
+                [
+                    "-C",
+                    str(paths.repo_dir),
+                    "remote",
+                    "set-url",
+                    "origin",
+                    source_origin,
+                ]
+            )
 
     branch = _default_branch(paths.repo_dir)
     run_git(["-C", str(paths.repo_dir), "worktree", "add", str(paths.main_dir), branch])
@@ -240,12 +305,39 @@ def start_feature(
         raise AgvvError(f"Feature worktree path already exists: {paths.feature_dir}")
 
     branch_exists = run_git_success(
-        ["-C", str(paths.repo_dir), "show-ref", "--verify", "--quiet", f"refs/heads/{feature}"]
+        [
+            "-C",
+            str(paths.repo_dir),
+            "show-ref",
+            "--verify",
+            "--quiet",
+            f"refs/heads/{feature}",
+        ]
     )
     if branch_exists:
-        run_git(["-C", str(paths.repo_dir), "worktree", "add", str(paths.feature_dir), feature])
+        run_git(
+            [
+                "-C",
+                str(paths.repo_dir),
+                "worktree",
+                "add",
+                str(paths.feature_dir),
+                feature,
+            ]
+        )
     else:
-        run_git(["-C", str(paths.repo_dir), "worktree", "add", "-b", feature, str(paths.feature_dir), from_branch])
+        run_git(
+            [
+                "-C",
+                str(paths.repo_dir),
+                "worktree",
+                "add",
+                "-b",
+                feature,
+                str(paths.feature_dir),
+                from_branch,
+            ]
+        )
 
     feature_root = paths.feature_dir.resolve()
     for directory in create_dirs:
@@ -273,7 +365,9 @@ def start_feature(
     return paths
 
 
-def _feature_cleanup_paths(project_name: str, feature: str, base_dir: Path) -> LayoutPaths:
+def _feature_cleanup_paths(
+    project_name: str, feature: str, base_dir: Path
+) -> LayoutPaths:
     """Resolve and validate feature cleanup paths for a project."""
 
     _ensure_layout_name(project_name, "Project name")
@@ -294,10 +388,20 @@ def _remove_feature_worktree(paths: LayoutPaths, *, allow_dirty: bool) -> None:
     if paths.feature_dir is None or not paths.feature_dir.exists():
         return
     if not allow_dirty:
-        has_tracked_changes = not run_git_success(["-C", str(paths.feature_dir), "diff", "--quiet"])
-        has_staged_changes = not run_git_success(["-C", str(paths.feature_dir), "diff", "--cached", "--quiet"])
+        has_tracked_changes = not run_git_success(
+            ["-C", str(paths.feature_dir), "diff", "--quiet"]
+        )
+        has_staged_changes = not run_git_success(
+            ["-C", str(paths.feature_dir), "diff", "--cached", "--quiet"]
+        )
         untracked_raw = run_git(
-            ["-C", str(paths.feature_dir), "status", "--porcelain", "--untracked-files=all"]
+            [
+                "-C",
+                str(paths.feature_dir),
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+            ]
         ).stdout
         has_untracked_files = any(
             line.startswith("?? ") and not line.startswith("?? .agvv/")
@@ -308,15 +412,35 @@ def _remove_feature_worktree(paths: LayoutPaths, *, allow_dirty: bool) -> None:
                 f"Feature worktree has uncommitted changes at {paths.feature_dir}. "
                 "Commit, stash, or discard changes before cleanup."
             )
-    run_git(["-C", str(paths.repo_dir), "worktree", "remove", str(paths.feature_dir), "--force"])
+    run_git(
+        [
+            "-C",
+            str(paths.repo_dir),
+            "worktree",
+            "remove",
+            str(paths.feature_dir),
+            "--force",
+        ]
+    )
 
 
-def _remove_feature_branch(paths: LayoutPaths, feature: str, *, delete_branch: bool) -> None:
+def _remove_feature_branch(
+    paths: LayoutPaths, feature: str, *, delete_branch: bool
+) -> None:
     """Delete feature branch when requested and still present."""
 
     if not delete_branch:
         return
-    if run_git_success(["-C", str(paths.repo_dir), "show-ref", "--verify", "--quiet", f"refs/heads/{feature}"]):
+    if run_git_success(
+        [
+            "-C",
+            str(paths.repo_dir),
+            "show-ref",
+            "--verify",
+            "--quiet",
+            f"refs/heads/{feature}",
+        ]
+    ):
         run_git(["-C", str(paths.repo_dir), "branch", "-D", feature])
 
 

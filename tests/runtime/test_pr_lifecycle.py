@@ -18,11 +18,21 @@ def _write_default_dod_result(feature_dir: Path) -> None:
     (feature_dir / ".agvv").mkdir(parents=True, exist_ok=True)
     payload = {
         "criteria": [
-            {"item": "Relevant tests/checks pass for changed scope.", "status": "pass", "evidence": "ok"},
-            {"item": "Changed files and verification results are summarized.", "status": "pass", "evidence": "ok"},
+            {
+                "item": "Relevant tests/checks pass for changed scope.",
+                "status": "pass",
+                "evidence": "ok",
+            },
+            {
+                "item": "Changed files and verification results are summarized.",
+                "status": "pass",
+                "evidence": "ok",
+            },
         ]
     }
-    (feature_dir / ".agvv" / "dod_result.json").write_text(json.dumps(payload), encoding="utf-8")
+    (feature_dir / ".agvv" / "dod_result.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
 
 
 def _create_pr_open_task(store: TaskStore, tmp_path: Path, task_id: str) -> None:
@@ -40,7 +50,9 @@ def _create_pr_open_task(store: TaskStore, tmp_path: Path, task_id: str) -> None
     store.update_task(created.id, state=TaskState.PR_OPEN, pr_number=11)
 
 
-def test_handle_coding_completion_fails_when_worktree_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_handle_coding_completion_fails_when_worktree_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_missing_worktree",
@@ -52,13 +64,18 @@ def test_handle_coding_completion_fails_when_worktree_missing(monkeypatch: pytes
     )
     created = store.create_task(spec)
     coding = store.update_task(created.id, state=TaskState.CODING)
-    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists",
+        lambda _session: False,
+    )
     updated = handle_coding_completion(store, coding)
     assert updated.state == TaskState.FAILED
     assert "Worktree missing" in (updated.last_error or "")
 
 
-def test_handle_coding_completion_fails_when_finalize_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_handle_coding_completion_fails_when_finalize_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_finalize_error",
@@ -73,7 +90,10 @@ def test_handle_coding_completion_fails_when_finalize_raises(monkeypatch: pytest
     feature_dir = tmp_path / "demo" / "feat_finalize_error"
     feature_dir.mkdir(parents=True, exist_ok=True)
     _write_default_dod_result(feature_dir)
-    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists",
+        lambda _session: False,
+    )
     monkeypatch.setattr(
         "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.commit_and_push_branch",
         lambda **kwargs: (_ for _ in ()).throw(RuntimeError("push failed")),
@@ -100,7 +120,10 @@ def test_handle_coding_completion_surfaces_missing_remote_guidance(
     feature_dir = tmp_path / "demo" / "feat_missing_remote"
     feature_dir.mkdir(parents=True, exist_ok=True)
     _write_default_dod_result(feature_dir)
-    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists",
+        lambda _session: False,
+    )
     monkeypatch.setattr(
         "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.commit_and_push_branch",
         lambda **kwargs: (_ for _ in ()).throw(
@@ -128,7 +151,10 @@ def test_handle_coding_completion_fails_when_dod_result_missing(
     created = store.create_task(spec)
     coding = store.update_task(created.id, state=TaskState.CODING)
     (tmp_path / "demo" / "feat_missing_dod").mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists",
+        lambda _session: False,
+    )
     updated = handle_coding_completion(store, coding)
     assert updated.state == TaskState.FAILED
     assert "DoD validation failed" in (updated.last_error or "")
@@ -147,14 +173,19 @@ def test_handle_coding_completion_marks_blocked_when_trust_prompt_detected(
         base_dir=tmp_path,
     )
     created = store.create_task(spec)
-    coding = store.update_task(created.id, state=TaskState.CODING, started_at="2026-03-03T00:00:00+00:00")
+    coding = store.update_task(
+        created.id, state=TaskState.CODING, started_at="2026-03-03T00:00:00+00:00"
+    )
     feature_dir = tmp_path / "demo" / "feat_blocked_prompt"
     (feature_dir / ".agvv").mkdir(parents=True, exist_ok=True)
     (feature_dir / ".agvv" / "agent_output.log").write_text(
         "Do you trust the contents of this directory?\nPress enter to continue\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: True)
+    monkeypatch.setattr(
+        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists",
+        lambda _session: True,
+    )
 
     updated = handle_coding_completion(store, coding)
     assert updated.state == TaskState.BLOCKED
@@ -175,11 +206,16 @@ def test_handle_coding_completion_marks_timed_out_and_kills_session(
         timeout_minutes=1,
     )
     created = store.create_task(spec)
-    coding = store.update_task(created.id, state=TaskState.CODING, started_at="2000-01-01T00:00:00+00:00")
+    coding = store.update_task(
+        created.id, state=TaskState.CODING, started_at="2000-01-01T00:00:00+00:00"
+    )
     feature_dir = tmp_path / "demo" / "feat_coding_timeout"
     (feature_dir / ".agvv").mkdir(parents=True, exist_ok=True)
     killed: dict[str, bool] = {"value": False}
-    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: True)
+    monkeypatch.setattr(
+        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists",
+        lambda _session: True,
+    )
     monkeypatch.setattr(
         "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_kill_session",
         lambda _session: killed.__setitem__("value", True),
@@ -204,7 +240,11 @@ def test_handle_pr_cycle_fails_when_pr_number_missing(tmp_path: Path) -> None:
     )
     created = store.create_task(spec)
     task = store.update_task(created.id, state=TaskState.PR_OPEN, pr_number=None)
-    updated = handle_pr_cycle(store, task, cleanup_task_fn=lambda task_id, db_path, force: store.get_task(task_id))
+    updated = handle_pr_cycle(
+        store,
+        task,
+        cleanup_task_fn=lambda task_id, db_path, force: store.get_task(task_id),
+    )
     assert updated.state == TaskState.FAILED
     assert "PR number missing" in (updated.last_error or "")
 
@@ -226,10 +266,17 @@ def test_handle_pr_cycle_times_out_without_auto_cleanup(tmp_path: Path) -> None:
     conn = sqlite3.connect(store.path)
     try:
         with conn:
-            conn.execute("UPDATE tasks SET created_at = ? WHERE id = ?", ("2000-01-01T00:00:00+00:00", task.id))
+            conn.execute(
+                "UPDATE tasks SET created_at = ? WHERE id = ?",
+                ("2000-01-01T00:00:00+00:00", task.id),
+            )
     finally:
         conn.close()
-    updated = handle_pr_cycle(store, store.get_task(task.id), cleanup_task_fn=lambda task_id, db_path, force: store.get_task(task_id))
+    updated = handle_pr_cycle(
+        store,
+        store.get_task(task.id),
+        cleanup_task_fn=lambda task_id, db_path, force: store.get_task(task_id),
+    )
     assert updated.state == TaskState.TIMED_OUT
     assert updated.last_error == "task_timeout"
 
@@ -251,7 +298,10 @@ def test_handle_pr_cycle_times_out_with_auto_cleanup(tmp_path: Path) -> None:
     conn = sqlite3.connect(store.path)
     try:
         with conn:
-            conn.execute("UPDATE tasks SET created_at = ? WHERE id = ?", ("2000-01-01T00:00:00+00:00", task.id))
+            conn.execute(
+                "UPDATE tasks SET created_at = ? WHERE id = ?",
+                ("2000-01-01T00:00:00+00:00", task.id),
+            )
     finally:
         conn.close()
 
@@ -266,7 +316,9 @@ def test_handle_pr_cycle_times_out_with_auto_cleanup(tmp_path: Path) -> None:
     assert cleaned.state == TaskState.CLEANED
 
 
-def test_handle_pr_cycle_merges_and_auto_cleans(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_handle_pr_cycle_merges_and_auto_cleans(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_done_cleanup",
@@ -286,12 +338,16 @@ def test_handle_pr_cycle_merges_and_auto_cleans(monkeypatch: pytest.MonkeyPatch,
     updated = handle_pr_cycle(
         store,
         task,
-        cleanup_task_fn=lambda task_id, db_path, force: store.update_task(task_id, state=TaskState.CLEANED),
+        cleanup_task_fn=lambda task_id, db_path, force: store.update_task(
+            task_id, state=TaskState.CLEANED
+        ),
     )
     assert updated.state == TaskState.CLEANED
 
 
-def test_handle_pr_cycle_closes_without_auto_cleanup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_handle_pr_cycle_closes_without_auto_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_closed_no_cleanup",
@@ -308,11 +364,17 @@ def test_handle_pr_cycle_closes_without_auto_cleanup(monkeypatch: pytest.MonkeyP
         "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.check_pr_status",
         lambda _repo, _pr: type("R", (), {"status": PrStatus.CLOSED})(),
     )
-    updated = handle_pr_cycle(store, task, cleanup_task_fn=lambda task_id, db_path, force: store.get_task(task_id))
+    updated = handle_pr_cycle(
+        store,
+        task,
+        cleanup_task_fn=lambda task_id, db_path, force: store.get_task(task_id),
+    )
     assert updated.state == TaskState.PR_CLOSED
 
 
-def test_handle_pr_cycle_marks_failed_when_pr_check_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_handle_pr_cycle_marks_failed_when_pr_check_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     _create_pr_open_task(store, tmp_path, "task_check_error")
     task = store.get_task("task_check_error")
@@ -320,12 +382,18 @@ def test_handle_pr_cycle_marks_failed_when_pr_check_raises(monkeypatch: pytest.M
         "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.check_pr_status",
         lambda _repo, _pr: (_ for _ in ()).throw(RuntimeError("gh unavailable")),
     )
-    updated = handle_pr_cycle(store, task, cleanup_task_fn=lambda task_id, db_path, force: store.get_task(task_id))
+    updated = handle_pr_cycle(
+        store,
+        task,
+        cleanup_task_fn=lambda task_id, db_path, force: store.get_task(task_id),
+    )
     assert updated.state == TaskState.FAILED
     assert "PR status check failed" in (updated.last_error or "")
 
 
-def test_handle_pr_cycle_marks_failed_at_max_retry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_handle_pr_cycle_marks_failed_at_max_retry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
         task_id="task_retry_limit",
@@ -337,7 +405,9 @@ def test_handle_pr_cycle_marks_failed_at_max_retry(monkeypatch: pytest.MonkeyPat
         max_retry_cycles=1,
     )
     created = store.create_task(spec)
-    task = store.update_task(created.id, state=TaskState.PR_OPEN, pr_number=99, repair_cycles=1)
+    task = store.update_task(
+        created.id, state=TaskState.PR_OPEN, pr_number=99, repair_cycles=1
+    )
     (tmp_path / "demo" / "feat_retry_limit").mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(
         "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.check_pr_status",
@@ -347,12 +417,18 @@ def test_handle_pr_cycle_marks_failed_at_max_retry(monkeypatch: pytest.MonkeyPat
         "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.summarize_pr_feedback",
         lambda _repo, _pr: type("S", (), {"actionable": ["fix 1"], "skipped": []})(),
     )
-    updated = handle_pr_cycle(store, task, cleanup_task_fn=lambda task_id, db_path, force: store.get_task(task_id))
+    updated = handle_pr_cycle(
+        store,
+        task,
+        cleanup_task_fn=lambda task_id, db_path, force: store.get_task(task_id),
+    )
     assert updated.state == TaskState.FAILED
     assert "Reached max retry cycles" in (updated.last_error or "")
 
 
-def test_handle_pr_cycle_reuses_existing_tmux_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_handle_pr_cycle_reuses_existing_tmux_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     _create_pr_open_task(store, tmp_path, "task_session_reuse")
     task = store.get_task("task_session_reuse")
@@ -370,13 +446,22 @@ def test_handle_pr_cycle_reuses_existing_tmux_session(monkeypatch: pytest.Monkey
         "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.write_pr_feedback_file",
         lambda **kwargs: feature_dir / ".agvv" / "feedback.txt",
     )
-    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: True)
-    updated = handle_pr_cycle(store, task, cleanup_task_fn=lambda task_id, db_path, force: store.get_task(task_id))
+    monkeypatch.setattr(
+        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists",
+        lambda _session: True,
+    )
+    updated = handle_pr_cycle(
+        store,
+        task,
+        cleanup_task_fn=lambda task_id, db_path, force: store.get_task(task_id),
+    )
     assert updated.state == TaskState.CODING
     assert updated.repair_cycles == task.repair_cycles
 
 
-def test_handle_pr_cycle_marks_failed_when_relaunch_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_handle_pr_cycle_marks_failed_when_relaunch_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     _create_pr_open_task(store, tmp_path, "task_relaunch_fail")
     task = store.get_task("task_relaunch_fail")
@@ -394,11 +479,18 @@ def test_handle_pr_cycle_marks_failed_when_relaunch_fails(monkeypatch: pytest.Mo
         "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.write_pr_feedback_file",
         lambda **kwargs: feature_dir / ".agvv" / "feedback.txt",
     )
-    monkeypatch.setattr("agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists", lambda _session: False)
+    monkeypatch.setattr(
+        "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_session_exists",
+        lambda _session: False,
+    )
     monkeypatch.setattr(
         "agvv.runtime.adapters.DEFAULT_ORCHESTRATION_PORT.tmux_new_session",
         lambda _session, _cwd, _cmd: (_ for _ in ()).throw(RuntimeError("tmux failed")),
     )
-    updated = handle_pr_cycle(store, task, cleanup_task_fn=lambda task_id, db_path, force: store.get_task(task_id))
+    updated = handle_pr_cycle(
+        store,
+        task,
+        cleanup_task_fn=lambda task_id, db_path, force: store.get_task(task_id),
+    )
     assert updated.state == TaskState.FAILED
     assert "Failed to relaunch coding session" in (updated.last_error or "")

@@ -63,14 +63,18 @@ def _reconcile_task(task_id: str, store: TaskStore, *, lock_owner: str) -> TaskS
         store.release_reconcile_lock(task_id, owner_id=lock_owner)
 
 
-def _reconcile_task_safe(task_id: str, store: TaskStore, *, lock_owner: str) -> TaskSnapshot:
+def _reconcile_task_safe(
+    task_id: str, store: TaskStore, *, lock_owner: str
+) -> TaskSnapshot:
     """Reconcile one task and convert unexpected failures into task failure state."""
     try:
         return _reconcile_task(task_id, store, lock_owner=lock_owner)
     except Exception as exc:
         _LOGGER.exception("Unexpected reconcile failure for task %s", task_id)
         task = store.get_task(task_id)
-        return mark_failed(store, task, "daemon.reconcile", f"Unexpected reconcile failure: {exc}")
+        return mark_failed(
+            store, task, "daemon.reconcile", f"Unexpected reconcile failure: {exc}"
+        )
 
 
 def reconcile_task(
@@ -97,14 +101,21 @@ def daemon_run_once(
         return []
     if max_workers == 1 or len(active) == 1:
         lock_owner = f"daemon-{uuid4()}"
-        return [_reconcile_task_safe(task.id, store, lock_owner=lock_owner) for task in active]
+        return [
+            _reconcile_task_safe(task.id, store, lock_owner=lock_owner)
+            for task in active
+        ]
 
     indexed_tasks = list(enumerate(active))
     results: list[TaskSnapshot | None] = [None] * len(indexed_tasks)
     lock_owner = f"daemon-{uuid4()}"
-    with ThreadPoolExecutor(max_workers=min(max_workers, len(indexed_tasks))) as executor:
+    with ThreadPoolExecutor(
+        max_workers=min(max_workers, len(indexed_tasks))
+    ) as executor:
         future_to_index = {
-            executor.submit(_reconcile_task_safe, task.id, store, lock_owner=lock_owner): index
+            executor.submit(
+                _reconcile_task_safe, task.id, store, lock_owner=lock_owner
+            ): index
             for index, task in indexed_tasks
         }
         for future in as_completed(future_to_index):

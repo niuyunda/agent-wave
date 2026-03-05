@@ -31,7 +31,9 @@ def check_pr_status(
     try:
         payload = json.loads(run_cmd(cmd).stdout)
     except json.JSONDecodeError as exc:
-        raise AgvvError(f"Invalid JSON from gh pr view for {repo}#{pr_number}: {exc}") from exc
+        raise AgvvError(
+            f"Invalid JSON from gh pr view for {repo}#{pr_number}: {exc}"
+        ) from exc
     if not isinstance(payload, dict):
         raise AgvvError(
             f"Invalid gh pr view payload for {repo}#{pr_number}: expected object, got {type(payload).__name__}: {payload!r}"
@@ -42,10 +44,20 @@ def check_pr_status(
     review_decision = payload.get("reviewDecision")
 
     if merged_at:
-        return PrCheckResult(status=PrStatus.DONE, reason="merged", state=state, review_decision=review_decision)
+        return PrCheckResult(
+            status=PrStatus.DONE,
+            reason="merged",
+            state=state,
+            review_decision=review_decision,
+        )
 
     if state != "OPEN":
-        return PrCheckResult(status=PrStatus.CLOSED, reason="not_open", state=state, review_decision=review_decision)
+        return PrCheckResult(
+            status=PrStatus.CLOSED,
+            reason="not_open",
+            state=state,
+            review_decision=review_decision,
+        )
 
     if review_decision == "CHANGES_REQUESTED":
         return PrCheckResult(
@@ -56,7 +68,13 @@ def check_pr_status(
         )
 
     checks = payload.get("statusCheckRollup") or []
-    failing = {"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"}
+    failing = {
+        "FAILURE",
+        "TIMED_OUT",
+        "CANCELLED",
+        "ACTION_REQUIRED",
+        "STARTUP_FAILURE",
+    }
     failing_state = {"FAILURE", "FAILED", "ERROR"}
     for check in checks:
         entry = check or {}
@@ -95,9 +113,17 @@ def recommend_pr_next_action(result: PrCheckResult) -> PrNextAction:
             note="Run fix workflow, push updates, then reconcile with `agvv daemon run --once`.",
         )
     if result.status == PrStatus.DONE:
-        return PrNextAction(status=result.status, action="cleanup", note="PR merged; run feature cleanup.")
+        return PrNextAction(
+            status=result.status,
+            action="cleanup",
+            note="PR merged; run feature cleanup.",
+        )
     if result.status == PrStatus.CLOSED:
-        return PrNextAction(status=result.status, action="stop", note="PR closed without merge; manual follow-up needed.")
+        return PrNextAction(
+            status=result.status,
+            action="stop",
+            note="PR closed without merge; manual follow-up needed.",
+        )
     return PrNextAction(
         status=result.status,
         action="wait",
@@ -113,11 +139,22 @@ def summarize_pr_feedback(
 ) -> PrFeedbackSummary:
     """Summarize PR comments/reviews into actionable items and skipped reasons."""
 
-    cmd = ["gh", "pr", "view", str(pr_number), "--repo", repo, "--json", "comments,reviews"]
+    cmd = [
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--repo",
+        repo,
+        "--json",
+        "comments,reviews",
+    ]
     try:
         payload = json.loads(run_cmd(cmd).stdout)
     except json.JSONDecodeError as exc:
-        raise AgvvError(f"Invalid JSON from gh pr comments for {repo}#{pr_number}: {exc}") from exc
+        raise AgvvError(
+            f"Invalid JSON from gh pr comments for {repo}#{pr_number}: {exc}"
+        ) from exc
     if not isinstance(payload, dict):
         raise AgvvError(
             f"Invalid gh pr comments payload for {repo}#{pr_number}: expected object, got {type(payload).__name__}: {payload!r}"

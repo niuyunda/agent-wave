@@ -50,9 +50,18 @@ def handle_coding_completion(
                 "error",
                 "coding.blocked",
                 message,
-                {"session": task.session, "reason_code": reason_code, "reason": reason_label},
+                {
+                    "session": task.session,
+                    "reason_code": reason_code,
+                    "reason": reason_label,
+                },
             )
-            return store.update_task(task.id, state=TaskState.BLOCKED, last_error=message, finished_at=now_iso())
+            return store.update_task(
+                task.id,
+                state=TaskState.BLOCKED,
+                last_error=message,
+                finished_at=now_iso(),
+            )
         if _coding_session_timed_out(task):
             message = f"Coding session exceeded timeout ({task.spec.timeout_minutes} minutes)."
             store.add_event(
@@ -72,11 +81,18 @@ def handle_coding_completion(
                     f"Failed to terminate timed-out tmux session: {exc}",
                     {"session": task.session},
                 )
-            return store.update_task(task.id, state=TaskState.TIMED_OUT, last_error="coding_timeout", finished_at=now_iso())
+            return store.update_task(
+                task.id,
+                state=TaskState.TIMED_OUT,
+                last_error="coding_timeout",
+                finished_at=now_iso(),
+            )
         return task
 
     if not worktree.exists():
-        return mark_failed(store, task, "coding.verify", f"Worktree missing: {worktree}")
+        return mark_failed(
+            store, task, "coding.verify", f"Worktree missing: {worktree}"
+        )
     summary_path = write_output_summary(worktree=worktree)
     if summary_path is not None:
         store.add_event(
@@ -88,8 +104,12 @@ def handle_coding_completion(
         )
     dod_ok, dod_message = validate_dod_result(worktree=worktree, spec=task.spec)
     if not dod_ok:
-        return mark_failed(store, task, "coding.dod", f"DoD validation failed: {dod_message}")
-    store.add_event(task.id, "info", "coding.dod", "DoD validation passed", {"details": dod_message})
+        return mark_failed(
+            store, task, "coding.dod", f"DoD validation failed: {dod_message}"
+        )
+    store.add_event(
+        task.id, "info", "coding.dod", "DoD validation passed", {"details": dod_message}
+    )
 
     try:
         port.commit_and_push_branch(
@@ -97,7 +117,8 @@ def handle_coding_completion(
             feature=task.feature,
             base_branch=task.spec.pr_base,
             remote=task.spec.branch_remote,
-            commit_message=task.spec.commit_message or f"feat({task.feature}): implement {task.id}",
+            commit_message=task.spec.commit_message
+            or f"feat({task.feature}): implement {task.id}",
         )
         pr_number = port.ensure_pr_number_for_branch(
             repo=task.repo,
@@ -109,10 +130,16 @@ def handle_coding_completion(
             pr_number=task.pr_number,
         )
     except Exception as exc:
-        return mark_failed(store, task, "coding.finalize", f"Finalize coding failed: {exc}")
+        return mark_failed(
+            store, task, "coding.finalize", f"Finalize coding failed: {exc}"
+        )
 
-    store.add_event(task.id, "info", "pr.open", "PR opened/confirmed", {"pr_number": pr_number})
-    return store.update_task(task.id, state=TaskState.PR_OPEN, pr_number=pr_number, last_error=None)
+    store.add_event(
+        task.id, "info", "pr.open", "PR opened/confirmed", {"pr_number": pr_number}
+    )
+    return store.update_task(
+        task.id, state=TaskState.PR_OPEN, pr_number=pr_number, last_error=None
+    )
 
 
 def handle_pr_cycle(
@@ -122,14 +149,24 @@ def handle_pr_cycle(
 ) -> TaskSnapshot:
     """Advance ``PR_OPEN`` task through review/merge/close/retry states."""
 
-
     if task.pr_number is None:
         return mark_failed(store, task, "pr.check", "PR number missing for PR cycle.")
 
     elapsed = datetime.now(tz=timezone.utc) - parse_iso(task.created_at)
     if elapsed > timedelta(minutes=task.spec.timeout_minutes):
-        timed = store.update_task(task.id, state=TaskState.TIMED_OUT, finished_at=now_iso(), last_error="task_timeout")
-        store.add_event(task.id, "error", "task.timeout", "Task timed out", {"timeout_minutes": task.spec.timeout_minutes})
+        timed = store.update_task(
+            task.id,
+            state=TaskState.TIMED_OUT,
+            finished_at=now_iso(),
+            last_error="task_timeout",
+        )
+        store.add_event(
+            task.id,
+            "error",
+            "task.timeout",
+            "Task timed out",
+            {"timeout_minutes": task.spec.timeout_minutes},
+        )
         if task.spec.auto_cleanup:
             return cleanup_task_fn(task.id, store.path, False)
         return timed
@@ -143,14 +180,18 @@ def handle_pr_cycle(
         return store.update_task(task.id, state=TaskState.PR_OPEN)
 
     if result.status == PrStatus.DONE:
-        merged = store.update_task(task.id, state=TaskState.PR_MERGED, finished_at=now_iso(), last_error=None)
+        merged = store.update_task(
+            task.id, state=TaskState.PR_MERGED, finished_at=now_iso(), last_error=None
+        )
         store.add_event(task.id, "info", "pr.merged", "PR merged")
         if task.spec.auto_cleanup:
             return cleanup_task_fn(task.id, store.path, False)
         return merged
 
     if result.status == PrStatus.CLOSED:
-        closed = store.update_task(task.id, state=TaskState.PR_CLOSED, finished_at=now_iso(), last_error=None)
+        closed = store.update_task(
+            task.id, state=TaskState.PR_CLOSED, finished_at=now_iso(), last_error=None
+        )
         store.add_event(task.id, "info", "pr.closed", "PR closed")
         if task.spec.auto_cleanup:
             return cleanup_task_fn(task.id, store.path, False)
@@ -203,7 +244,9 @@ def handle_pr_cycle(
             store, task, worktree, event_step_prefix="pr.retry"
         )
     except Exception as exc:
-        return mark_failed(store, task, "pr.retry", f"Failed to relaunch coding session: {exc}")
+        return mark_failed(
+            store, task, "pr.retry", f"Failed to relaunch coding session: {exc}"
+        )
 
     store.add_event(
         task.id,

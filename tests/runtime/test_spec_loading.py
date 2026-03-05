@@ -14,7 +14,9 @@ from agvv.shared.errors import AgvvError
 def _write_spec(path: Path, payload: dict) -> Path:
     if "task_doc" not in payload:
         task_doc_path = path.with_suffix(".md")
-        task_doc_path.write_text("# Task Doc\n\n- Test task details.\n", encoding="utf-8")
+        task_doc_path.write_text(
+            "# Task Doc\n\n- Test task details.\n", encoding="utf-8"
+        )
         payload["task_doc"] = str(task_doc_path)
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
@@ -60,7 +62,9 @@ def test_load_task_spec_ignores_agent_provider_fields_from_spec(tmp_path: Path) 
     assert spec.agent_cmd == "codex --dangerously-skip-permissions"
 
 
-def test_load_task_spec_resolves_relative_task_doc_against_spec_dir(tmp_path: Path) -> None:
+def test_load_task_spec_resolves_relative_task_doc_against_spec_dir(
+    tmp_path: Path,
+) -> None:
     task_doc = tmp_path / "task.md"
     task_doc.write_text("# Task\n", encoding="utf-8")
     spec_path = tmp_path / "task.json"
@@ -158,11 +162,16 @@ def test_load_task_spec_parses_requirement_contract_fields(tmp_path: Path) -> No
     )
     spec = load_task_spec(spec_path)
     assert spec.requirements == "Implement API endpoint for health check."
-    assert spec.constraints == ["Do not change existing API schema.", "Use stdlib only."]
+    assert spec.constraints == [
+        "Do not change existing API schema.",
+        "Use stdlib only.",
+    ]
     assert spec.acceptance_criteria == ["`GET /health` returns 200", "Unit tests pass"]
 
 
-def test_load_task_spec_rejects_invalid_acceptance_criteria_length(tmp_path: Path) -> None:
+def test_load_task_spec_rejects_invalid_acceptance_criteria_length(
+    tmp_path: Path,
+) -> None:
     spec_path = _write_spec(
         tmp_path / "task-invalid-dod.json",
         {
@@ -193,6 +202,7 @@ def test_load_task_spec_rejects_feature_with_spaces(tmp_path: Path) -> None:
 # from_payload / from_db_payload round-trip semantics
 # ---------------------------------------------------------------------------
 
+
 def test_from_payload_resets_runtime_controlled_fields(tmp_path: Path) -> None:
     """from_payload must reset agent, from_branch, task_id regardless of spec content.
 
@@ -215,12 +225,15 @@ def test_from_payload_resets_runtime_controlled_fields(tmp_path: Path) -> None:
     }
 
     from agvv.runtime.models import TaskSpec
+
     spec = TaskSpec.from_payload(payload)
 
     # agent is always reset to codex
     assert spec.agent == "codex", f"expected agent='codex', got {spec.agent!r}"
     # from_branch is always reset to main
-    assert spec.from_branch == "main", f"expected from_branch='main', got {spec.from_branch!r}"
+    assert spec.from_branch == "main", (
+        f"expected from_branch='main', got {spec.from_branch!r}"
+    )
     # task_id is regenerated (different from the supplied custom id)
     assert spec.task_id != "custom-id-must-not-survive"
     assert spec.task_id.startswith("demo-feat_rt-")
@@ -228,7 +241,9 @@ def test_from_payload_resets_runtime_controlled_fields(tmp_path: Path) -> None:
     assert spec.agent_cmd == "codex"
 
 
-def test_from_db_payload_preserves_stored_values_and_recomputes_agent_cmd(tmp_path: Path) -> None:
+def test_from_db_payload_preserves_stored_values_and_recomputes_agent_cmd(
+    tmp_path: Path,
+) -> None:
     """from_db_payload must preserve stored provider/from_branch and recompute agent_cmd correctly."""
     task_doc = tmp_path / "task.md"
     task_doc.write_text("# Task\n", encoding="utf-8")
@@ -248,7 +263,11 @@ def test_from_db_payload_preserves_stored_values_and_recomputes_agent_cmd(tmp_pa
         "agent_non_interactive": True,
         "base_dir": str(tmp_path),
         # to_payload() serialises agent as a nested dict:
-        "agent": {"provider": "claude_code", "model": "claude-sonnet-4-5", "extra_args": []},
+        "agent": {
+            "provider": "claude_code",
+            "model": "claude-sonnet-4-5",
+            "extra_args": [],
+        },
         # agent_cmd is intentionally present but must be dropped and recomputed:
         "agent_cmd": "claude --stale-cached-value",
         "session": "demo-feat_db",
