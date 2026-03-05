@@ -41,6 +41,7 @@ def _strip_inline_comment(text: str) -> str:
     in_single = False
     in_double = False
     escape = False
+    at_scalar_start = True
     for idx, ch in enumerate(text):
         if escape:
             escape = False
@@ -48,15 +49,19 @@ def _strip_inline_comment(text: str) -> str:
         if ch == "\\" and in_double:
             escape = True
             continue
-        if ch == "'" and not in_double:
+        if ch == "'" and not in_double and (in_single or at_scalar_start):
             in_single = not in_single
+            at_scalar_start = False
             continue
-        if ch == '"' and not in_single:
+        if ch == '"' and not in_single and (in_double or at_scalar_start):
             in_double = not in_double
+            at_scalar_start = False
             continue
         if ch == "#" and not in_single and not in_double:
             if idx == 0 or text[idx - 1].isspace():
                 return text[:idx].rstrip()
+        if not in_single and not in_double and not ch.isspace():
+            at_scalar_start = False
     return text.rstrip()
 
 
@@ -71,6 +76,7 @@ def _parse_inline_list(value: str) -> list[Any]:
     in_single = False
     in_double = False
     escape = False
+    at_item_start = True
     for ch in inner:
         if escape:
             buf.append(ch)
@@ -80,18 +86,23 @@ def _parse_inline_list(value: str) -> list[Any]:
             buf.append(ch)
             escape = True
             continue
-        if ch == "'" and not in_double:
+        if ch == "'" and not in_double and (in_single or at_item_start):
             in_single = not in_single
             buf.append(ch)
+            at_item_start = False
             continue
-        if ch == '"' and not in_single:
+        if ch == '"' and not in_single and (in_double or at_item_start):
             in_double = not in_double
             buf.append(ch)
+            at_item_start = False
             continue
         if ch == "," and not in_single and not in_double:
             parts.append("".join(buf).strip())
             buf = []
+            at_item_start = True
             continue
+        if not in_single and not in_double and not ch.isspace():
+            at_item_start = False
         buf.append(ch)
     parts.append("".join(buf).strip())
     return [_parse_scalar(part) for part in parts]

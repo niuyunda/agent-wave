@@ -18,6 +18,9 @@ def _yaml_scalar(value: object) -> str:
         return "null"
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, float):
+        escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
     text = str(value)
     if (
         text == ""
@@ -228,6 +231,28 @@ def test_load_task_spec_treats_comment_only_scalar_as_null(tmp_path: Path) -> No
     )
     spec = load_task_spec(spec_path)
     assert spec.repo is None
+
+
+def test_load_task_spec_strips_comment_after_apostrophe_plain_scalar(
+    tmp_path: Path,
+) -> None:
+    spec_path = tmp_path / "task-apostrophe-comment.md"
+    spec_path.write_text(
+        "---\nproject_name: demo\nfeature: feat_apostrophe_scalar\nrepo: owner/repo\nrequirements: don't stop # trailing comment\n---\n",
+        encoding="utf-8",
+    )
+    spec = load_task_spec(spec_path)
+    assert spec.requirements == "don't stop"
+
+
+def test_load_task_spec_parses_inline_list_item_with_apostrophe(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task-inline-list-apostrophe.md"
+    spec_path.write_text(
+        "---\nproject_name: demo\nfeature: feat_apostrophe_list\nrepo: owner/repo\nagent_extra_args: [don't, --trace] # trailing comment\nrequirements: execute task\n---\n",
+        encoding="utf-8",
+    )
+    spec = load_task_spec(spec_path)
+    assert spec.agent_extra_args == ["don't", "--trace"]
 
 
 def test_load_task_spec_rejects_unterminated_quoted_scalar(tmp_path: Path) -> None:
