@@ -1,6 +1,6 @@
 [project]
 name = "agent-wave"
-version = "0.1.1"
+version = "0.2.0"
 description = "Agent Wave: orchestrate parallel git worktree workflow for AI agents."
 readme = "README.md"
 requires-python = ">=3.10"
