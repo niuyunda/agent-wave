@@ -20,9 +20,47 @@ from agvv.shared.errors import AgvvError
 
 
 def _write_spec(path: Path, payload: dict) -> Path:
-    body = payload.pop("requirements", "# Task Doc\n\n- Implement required changes.\n")
+    payload_copy = payload.copy()
+    body = str(
+        payload_copy.pop(
+            "requirements", "# Task Doc\n\n- Implement required changes.\n"
+        )
+    ).strip()
+
+    def _yaml_scalar(value: object) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if value is None:
+            return "null"
+        if isinstance(value, (int, float)):
+            return str(value)
+        text = str(value)
+        if (
+            text == ""
+            or text != text.strip()
+            or ":" in text
+            or "#" in text
+            or text.startswith(("[", "{", "-", "!", "&", "*", "@", "`", '"', "'"))
+        ):
+            escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+            return f'"{escaped}"'
+        return text
+
+    lines: list[str] = []
+    for key, value in payload_copy.items():
+        if isinstance(value, list):
+            if not value:
+                lines.append(f"{key}: []")
+            else:
+                lines.append(f"{key}:")
+                for item in value:
+                    lines.append(f"  - {_yaml_scalar(item)}")
+            continue
+        lines.append(f"{key}: {_yaml_scalar(value)}")
+
+    front_matter = "\n".join(lines)
     path.write_text(
-        f"---\n{json.dumps(payload, indent=2, sort_keys=True)}\n---\n\n{body.strip()}\n",
+        f"---\n{front_matter}\n---\n\n{body}\n",
         encoding="utf-8",
     )
     return path

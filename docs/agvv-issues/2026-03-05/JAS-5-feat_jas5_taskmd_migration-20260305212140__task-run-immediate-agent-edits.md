@@ -10,6 +10,9 @@
 agvv task run --spec .agvv-local/jas-5/task.json --project-dir /home/yunda/projects/test/JAS-5 --db-path /home/yunda/projects/test/JAS-5/.agvv-local/jas-5/tasks.db --agent codex --agent-non-interactive
 ```
 
+Note: this command reflects the historical invocation captured during this run
+before the repository migration to single-file `task.md` specs.
+
 ## Observed behavior
 
 - `task run` immediately launched the coding agent in tmux and started writing code in the new feature worktree.
