@@ -17,7 +17,7 @@ def agent_requires_tty(spec: TaskSpec) -> bool:
 
 
 def _task_doc_text(spec: TaskSpec) -> str:
-    """Read task document text when available."""
+    """Read legacy task_doc text when available."""
     if spec.task_doc is None:
         return ""
     try:
@@ -28,11 +28,11 @@ def _task_doc_text(spec: TaskSpec) -> str:
 
 def _requirements_text(spec: TaskSpec) -> str:
     """Resolve primary requirement text for prompt construction."""
+    if spec.requirements:
+        return spec.requirements.strip()
     task_doc = _task_doc_text(spec)
     if task_doc:
         return task_doc
-    if spec.requirements:
-        return spec.requirements.strip()
     return f"Complete task {spec.task_id} for branch {spec.feature}."
 
 

@@ -43,47 +43,48 @@ uv run agvv --help
 
 ## Quick Start
 
-### 1) Create `task.md`
+### 1) Create `task.md` (YAML + Markdown)
 
-Write the detailed coding requirement in Markdown.
+`task.md` uses YAML front matter + Markdown body:
 
-### 2) Create `task.json`
+```md
+---
+project_name: demo
+feature: feat_demo
+repo: owner/repo
+constraints:
+  - Keep existing API compatibility.
+---
 
-Minimal valid spec:
-
-```json
-{
-  "project_name": "demo",
-  "feature": "feat_demo",
-  "task_doc": "./task.md"
-}
+## Goal
+Implement the required feature and tests.
 ```
 
-`task_doc` or `requirements` must be present (at least one).
+Front matter maps to previous `task.json` fields; Markdown body is the task requirement text.
 
-### 3) Start a task
+### 2) Start a task
 
 For an existing local repository:
 
 ```bash
-agvv task run --spec ./task.json --project-dir /path/to/repo
+agvv task run --spec ./task.md --project-dir /path/to/repo
 ```
 
 For a new managed project (under current directory):
 
 ```bash
-agvv task run --spec ./task.json
+agvv task run --spec ./task.md
 ```
 
 Use Claude Code instead of Codex:
 
 ```bash
-agvv task run --spec ./task.json --agent claude
+agvv task run --spec ./task.md --agent claude
 ```
 
 `--agent claude_code` is also valid and behaves the same as `--agent claude`.
 
-### 4) Monitor and reconcile state
+### 3) Monitor and reconcile state
 
 ```bash
 agvv task status
@@ -92,7 +93,7 @@ agvv daemon run --once
 
 Run `daemon run --once` repeatedly to move states forward (`running -> done/timed_out`).
 
-### 5) Retry or cleanup
+### 4) Retry or cleanup
 
 Retry:
 
@@ -118,15 +119,16 @@ Force cleanup even with dirty worktree:
 agvv task cleanup --task-id <task_id> --force
 ```
 
-## `task.json` Contract (CLI)
+## `task.md` Contract (CLI)
 
 ### Required fields
 
+- YAML front matter enclosed by `---` delimiters
 - `project_name`: `^[A-Za-z0-9_-]+$`
 - `feature`: `^[A-Za-z0-9_-]+$`, and must not be `main` or `repo.git`
-- One of:
-  - `task_doc` (must end with `.md`)
-  - `requirements` (non-empty string)
+- Requirement text must be present:
+  - preferred: Markdown body (below front matter)
+  - fallback: front matter `requirements` (non-empty string)
 
 ### Common optional fields
 
@@ -140,9 +142,9 @@ agvv task cleanup --task-id <task_id> --force
 
 ### Important runtime behavior
 
-- `task_id` is generated at runtime; user-provided `task_id` is ignored.
-- `agent`/`agent_model` in spec are reset by runtime; choose provider via CLI `--agent`.
-- `base_dir` in spec is overridden by runtime:
+- `task_id` is generated at runtime; user-provided `task_id` in front matter is ignored.
+- `agent`/`agent_model` in front matter are reset by runtime; choose provider via CLI `--agent`.
+- `base_dir` in front matter is overridden by runtime:
   - no `--project-dir`: current working directory
   - with `--project-dir`: parent directory of that project
 

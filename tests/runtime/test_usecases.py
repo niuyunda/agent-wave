@@ -20,13 +20,11 @@ from agvv.shared.errors import AgvvError
 
 
 def _write_spec(path: Path, payload: dict) -> Path:
-    if "task_doc" not in payload:
-        task_doc_path = path.with_suffix(".md")
-        task_doc_path.write_text(
-            "# Task Doc\n\n- Implement required changes.\n", encoding="utf-8"
-        )
-        payload["task_doc"] = str(task_doc_path)
-    path.write_text(json.dumps(payload), encoding="utf-8")
+    body = payload.pop("requirements", "# Task Doc\n\n- Implement required changes.\n")
+    path.write_text(
+        f"---\n{json.dumps(payload, indent=2, sort_keys=True)}\n---\n\n{body.strip()}\n",
+        encoding="utf-8",
+    )
     return path
 
 
@@ -66,7 +64,7 @@ def test_run_task_from_spec_starts_coding_session(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     spec_path = _write_spec(
-        tmp_path / "task.json",
+        tmp_path / "task.md",
         {
             "task_id": "task_run",
             "project_name": "demo",
@@ -109,7 +107,7 @@ def test_run_task_from_spec_applies_agent_overrides(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     spec_path = _write_spec(
-        tmp_path / "task-override.json",
+        tmp_path / "task-override.md",
         {
             "task_id": "task_override",
             "project_name": "demo",
@@ -159,7 +157,7 @@ def test_run_task_from_spec_applies_agent_overrides(
 
 def test_run_task_from_spec_rejects_invalid_agent_override(tmp_path: Path) -> None:
     spec_path = _write_spec(
-        tmp_path / "task-invalid-override.json",
+        tmp_path / "task-invalid-override.md",
         {
             "task_id": "task_invalid_override",
             "project_name": "demo",
@@ -176,26 +174,20 @@ def test_run_task_from_spec_rejects_invalid_agent_override(tmp_path: Path) -> No
         )
 
 
-def test_run_task_from_spec_rejects_missing_task_doc(tmp_path: Path) -> None:
-    spec_path = tmp_path / "task-missing-task-doc.json"
+def test_run_task_from_spec_rejects_missing_requirements_text(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task-missing-requirements.md"
     spec_path.write_text(
-        json.dumps({"project_name": "demo", "feature": "feat_missing_doc"}),
+        "---\nproject_name: demo\nfeature: feat_missing_doc\n---\n",
         encoding="utf-8",
     )
-    with pytest.raises(AgvvError, match="task_doc"):
+    with pytest.raises(AgvvError, match="requirements"):
         run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db")
 
 
-def test_run_task_from_spec_rejects_non_markdown_task_doc(tmp_path: Path) -> None:
-    spec_path = tmp_path / "task-bad-task-doc.json"
+def test_run_task_from_spec_rejects_non_markdown_spec_file(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task-bad-spec.json"
     spec_path.write_text(
-        json.dumps(
-            {
-                "project_name": "demo",
-                "feature": "feat_bad_doc",
-                "task_doc": "./task.txt",
-            }
-        ),
+        json.dumps({"project_name": "demo", "feature": "feat_bad_doc"}),
         encoding="utf-8",
     )
     with pytest.raises(AgvvError, match="Markdown"):
@@ -207,7 +199,7 @@ def test_run_task_from_spec_ignores_spec_base_dir(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     spec_path = _write_spec(
-        tmp_path / "task-ignore-base-dir.json",
+        tmp_path / "task-ignore-base-dir.md",
         {
             "task_id": "task_ignore_base_dir",
             "project_name": "demo",
@@ -243,7 +235,7 @@ def test_run_task_from_spec_auto_inits_project_when_missing(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     spec_path = _write_spec(
-        tmp_path / "task-auto-init.json",
+        tmp_path / "task-auto-init.md",
         {
             "task_id": "task_auto_init",
             "project_name": "demo",
@@ -280,7 +272,7 @@ def test_run_task_from_spec_auto_adopts_existing_project(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     spec_path = _write_spec(
-        tmp_path / "task-auto-adopt.json",
+        tmp_path / "task-auto-adopt.md",
         {
             "task_id": "task_auto_adopt",
             "project_name": "demo",

@@ -51,7 +51,7 @@ def test_cli_task_run_invokes_tasking(
         )
 
     monkeypatch.setattr("agvv.cli.run_task_from_spec", _fake_run_task_from_spec)
-    spec = tmp_path / "task.json"
+    spec = tmp_path / "task.md"
     spec.write_text("{}", encoding="utf-8")
     result = runner.invoke(
         app,
@@ -98,7 +98,7 @@ def test_cli_task_run_forwards_agent_overrides(
         )
 
     monkeypatch.setattr("agvv.cli.run_task_from_spec", _fake_run_task_from_spec)
-    spec = tmp_path / "task.json"
+    spec = tmp_path / "task.md"
     spec.write_text("{}", encoding="utf-8")
     result = runner.invoke(
         app,
@@ -152,7 +152,7 @@ def test_cli_task_run_forwards_project_dir(
         )
 
     monkeypatch.setattr("agvv.cli.run_task_from_spec", _fake_run_task_from_spec)
-    spec = tmp_path / "task.json"
+    spec = tmp_path / "task.md"
     spec.write_text("{}", encoding="utf-8")
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
@@ -204,7 +204,7 @@ def test_cli_task_run_can_disable_non_interactive(
         )
 
     monkeypatch.setattr("agvv.cli.run_task_from_spec", _fake_run_task_from_spec)
-    spec = tmp_path / "task.json"
+    spec = tmp_path / "task.md"
     spec.write_text("{}", encoding="utf-8")
     result = runner.invoke(
         app, ["task", "run", "--spec", str(spec), "--agent-interactive"]
@@ -333,7 +333,7 @@ def test_cli_task_run_renders_agvv_error(
         "agvv.cli.run_task_from_spec",
         lambda *args, **kwargs: (_ for _ in ()).throw(AgvvError("invalid spec")),
     )
-    spec = tmp_path / "task.json"
+    spec = tmp_path / "task.md"
     spec.write_text("{}", encoding="utf-8")
     result = runner.invoke(app, ["task", "run", "--spec", str(spec)])
     assert result.exit_code == 1

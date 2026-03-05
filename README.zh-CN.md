@@ -43,47 +43,48 @@ uv run agvv --help
 
 ## 快速开始
 
-### 1）编写 `task.md`
+### 1）编写 `task.md`（YAML + Markdown）
 
-把完整开发需求写到 Markdown 文件中。
+`task.md` 由 YAML front matter + Markdown 正文组成：
 
-### 2）编写 `task.json`
+```md
+---
+project_name: demo
+feature: feat_demo
+repo: owner/repo
+constraints:
+  - 保持现有 API 兼容性。
+---
 
-最小合法示例：
-
-```json
-{
-  "project_name": "demo",
-  "feature": "feat_demo",
-  "task_doc": "./task.md"
-}
+## 目标
+实现所需功能并补充测试。
 ```
 
-`task_doc` 和 `requirements` 至少要提供一个。
+front matter 对应原来的 `task.json` 字段；Markdown 正文对应任务需求描述。
 
-### 3）启动任务
+### 2）启动任务
 
 在已有本地仓库上运行：
 
 ```bash
-agvv task run --spec ./task.json --project-dir /path/to/repo
+agvv task run --spec ./task.md --project-dir /path/to/repo
 ```
 
 创建受管新项目（在当前目录下）：
 
 ```bash
-agvv task run --spec ./task.json
+agvv task run --spec ./task.md
 ```
 
 改用 Claude Code：
 
 ```bash
-agvv task run --spec ./task.json --agent claude
+agvv task run --spec ./task.md --agent claude
 ```
 
 `--agent claude_code` 也可用，行为与 `--agent claude` 相同。
 
-### 4）查看与推进状态
+### 3）查看与推进状态
 
 ```bash
 agvv task status
@@ -92,7 +93,7 @@ agvv daemon run --once
 
 需要重复执行 `daemon run --once`，状态才会从 `running` 推进到 `done/timed_out`。
 
-### 5）重试与清理
+### 4）重试与清理
 
 重试任务：
 
@@ -118,15 +119,16 @@ agvv task cleanup --task-id <task_id>
 agvv task cleanup --task-id <task_id> --force
 ```
 
-## `task.json` 约定（CLI）
+## `task.md` 约定（CLI）
 
 ### 必填字段
 
+- 由 `---` 包裹的 YAML front matter
 - `project_name`：匹配 `^[A-Za-z0-9_-]+$`
 - `feature`：匹配 `^[A-Za-z0-9_-]+$`，且不能是 `main` 或 `repo.git`
-- 二选一至少一个：
-  - `task_doc`（必须以 `.md` 结尾）
-  - `requirements`（非空字符串）
+- 需求文本必须存在：
+  - 推荐：front matter 下方的 Markdown 正文
+  - 兜底：front matter 里的 `requirements`（非空字符串）
 
 ### 常用可选字段
 
@@ -140,9 +142,9 @@ agvv task cleanup --task-id <task_id> --force
 
 ### 关键运行时行为
 
-- `task_id` 由运行时生成，`task.json` 中的同名字段会被忽略。
-- spec 内的 `agent`/`agent_model` 会被运行时重置；如需切换 provider，请用 CLI `--agent`。
-- spec 内 `base_dir` 会被运行时覆盖：
+- `task_id` 由运行时生成，front matter 中的同名字段会被忽略。
+- front matter 内的 `agent`/`agent_model` 会被运行时重置；如需切换 provider，请用 CLI `--agent`。
+- front matter 内 `base_dir` 会被运行时覆盖：
   - 不传 `--project-dir`：使用当前工作目录
   - 传 `--project-dir`：使用该目录的父目录
 
