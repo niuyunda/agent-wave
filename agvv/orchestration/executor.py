@@ -45,9 +45,7 @@ def run_checked(
     except FileNotFoundError as exc:
         raise AgvvError(f"Command not found: {argv[0]}") from exc
     except subprocess.TimeoutExpired as exc:
-        raise AgvvError(
-            f"Command timed out after {timeout_seconds}s: {' '.join(argv)}"
-        ) from exc
+        raise AgvvError(f"Command timed out after {timeout_seconds}s: {' '.join(argv)}") from exc
     except subprocess.CalledProcessError as exc:
         raise AgvvError(
             f"Command failed: {' '.join(argv)}\n"

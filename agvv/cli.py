@@ -9,12 +9,7 @@ from typing import Annotated, NoReturn
 import typer
 
 from agvv.runtime.models import TaskState
-from agvv.runtime.core import (
-    cleanup_task,
-    list_task_statuses,
-    retry_task,
-    run_task_from_spec,
-)
+from agvv.runtime.core import cleanup_task, list_task_statuses, retry_task, run_task_from_spec
 from agvv.runtime.dispatcher import daemon_run_loop, daemon_run_once
 from agvv.shared.errors import AgvvError
 
@@ -29,7 +24,6 @@ app.add_typer(daemon_app, name="daemon")
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
-
 
 def _exit_error(exc: AgvvError) -> NoReturn:
     typer.secho(str(exc), err=True, fg=typer.colors.RED)
@@ -56,16 +50,11 @@ def _parse_state(value: str | None) -> TaskState | None:
 # task run
 # ---------------------------------------------------------------------------
 
-
 @task_app.command("run")
 def task_run(
     spec: Annotated[str, typer.Option("--spec", help="Path to task spec JSON.")],
-    db_path: Annotated[
-        str | None, typer.Option("--db-path", help="Path to SQLite task DB.")
-    ] = None,
-    agent: Annotated[
-        str | None, typer.Option("--agent", help="Override agent provider.")
-    ] = None,
+    db_path: Annotated[str | None, typer.Option("--db-path", help="Path to SQLite task DB.")] = None,
+    agent: Annotated[str | None, typer.Option("--agent", help="Override agent provider.")] = None,
     agent_non_interactive: Annotated[
         bool,
         typer.Option(
@@ -103,24 +92,15 @@ def task_run(
 # task status
 # ---------------------------------------------------------------------------
 
-
 @task_app.command("status")
 def task_status(
-    db_path: Annotated[
-        str | None, typer.Option("--db-path", help="Path to SQLite task DB.")
-    ] = None,
-    task_id: Annotated[
-        str | None, typer.Option("--task-id", help="Filter by task id.")
-    ] = None,
-    state: Annotated[
-        str | None, typer.Option("--state", help="Filter by state value.")
-    ] = None,
+    db_path: Annotated[str | None, typer.Option("--db-path", help="Path to SQLite task DB.")] = None,
+    task_id: Annotated[str | None, typer.Option("--task-id", help="Filter by task id.")] = None,
+    state: Annotated[str | None, typer.Option("--state", help="Filter by state value.")] = None,
 ) -> None:
     """List task state-machine runtime status."""
     try:
-        tasks = list_task_statuses(
-            db_path=_resolve_path(db_path), state=_parse_state(state)
-        )
+        tasks = list_task_statuses(db_path=_resolve_path(db_path), state=_parse_state(state))
     except AgvvError as exc:
         _exit_error(exc)
 
@@ -132,7 +112,6 @@ def task_status(
         return
 
     for task in tasks:
-        pr_value = str(task.pr_number) if task.pr_number is not None else "-"
         if task.last_error is None:
             error_value = "-"
         else:
@@ -140,8 +119,7 @@ def task_status(
             error_value = re.sub(r"\s+", " ", normalized).strip() or "-"
         typer.echo(
             f"{task.id}\t{task.state.value}\t{task.project_name}/{task.feature}\t"
-            f"session={task.session}\tpr={pr_value}\tcycles={task.repair_cycles}\t"
-            f"error={error_value}\tupdated={task.updated_at}"
+            f"session={task.session}\terror={error_value}\tupdated={task.updated_at}"
         )
 
 
@@ -149,21 +127,16 @@ def task_status(
 # task retry
 # ---------------------------------------------------------------------------
 
-
 @task_app.command("retry")
 def task_retry(
     task_id: Annotated[str, typer.Option("--task-id", help="Task id to retry.")],
-    db_path: Annotated[
-        str | None, typer.Option("--db-path", help="Path to SQLite task DB.")
-    ] = None,
-    session: Annotated[
-        str | None, typer.Option("--session", help="Override tmux session.")
-    ] = None,
+    db_path: Annotated[str | None, typer.Option("--db-path", help="Path to SQLite task DB.")] = None,
+    session: Annotated[str | None, typer.Option("--session", help="Override tmux session.")] = None,
     force_restart: Annotated[
         bool,
         typer.Option(
             "--force-restart",
-            help="Kill existing tmux session when task is currently coding, then relaunch.",
+            help="Kill existing tmux session when task is currently running, then relaunch.",
         ),
     ] = False,
 ) -> None:
@@ -178,31 +151,22 @@ def task_retry(
     except AgvvError as exc:
         _exit_error(exc)
 
-    typer.echo(
-        f"Task retried: {task.id}\tstate={task.state.value}\tsession={task.session}"
-    )
+    typer.echo(f"Task retried: {task.id}\tstate={task.state.value}\tsession={task.session}")
 
 
 # ---------------------------------------------------------------------------
 # task cleanup
 # ---------------------------------------------------------------------------
 
-
 @task_app.command("cleanup")
 def task_cleanup(
     task_id: Annotated[str, typer.Option("--task-id", help="Task id to cleanup.")],
-    db_path: Annotated[
-        str | None, typer.Option("--db-path", help="Path to SQLite task DB.")
-    ] = None,
-    force: Annotated[
-        bool, typer.Option("--force", help="Force cleanup (discard local changes).")
-    ] = False,
+    db_path: Annotated[str | None, typer.Option("--db-path", help="Path to SQLite task DB.")] = None,
+    force: Annotated[bool, typer.Option("--force", help="Force cleanup (discard local changes).")] = False,
 ) -> None:
     """Cleanup task resources and mark task as cleaned."""
     try:
-        task = cleanup_task(
-            task_id=task_id, db_path=_resolve_path(db_path), force=force
-        )
+        task = cleanup_task(task_id=task_id, db_path=_resolve_path(db_path), force=force)
     except AgvvError as exc:
         _exit_error(exc)
 
@@ -213,24 +177,13 @@ def task_cleanup(
 # daemon run
 # ---------------------------------------------------------------------------
 
-
 @daemon_app.command("run")
 def daemon_run(
-    db_path: Annotated[
-        str | None, typer.Option("--db-path", help="Path to SQLite task DB.")
-    ] = None,
-    interval_seconds: Annotated[
-        int, typer.Option("--interval-seconds", help="Loop interval in seconds.")
-    ] = 30,
-    once: Annotated[
-        bool, typer.Option("--once", help="Run one reconcile pass and exit.")
-    ] = False,
-    max_loops: Annotated[
-        int | None, typer.Option("--max-loops", help="Optional max loops before exit.")
-    ] = None,
-    max_workers: Annotated[
-        int, typer.Option("--max-workers", help="Max worker tasks per daemon pass.")
-    ] = 1,
+    db_path: Annotated[str | None, typer.Option("--db-path", help="Path to SQLite task DB.")] = None,
+    interval_seconds: Annotated[int, typer.Option("--interval-seconds", help="Loop interval in seconds.")] = 30,
+    once: Annotated[bool, typer.Option("--once", help="Run one reconcile pass and exit.")] = False,
+    max_loops: Annotated[int | None, typer.Option("--max-loops", help="Optional max loops before exit.")] = None,
+    max_workers: Annotated[int, typer.Option("--max-workers", help="Max worker tasks per daemon pass.")] = 1,
 ) -> None:
     """Run task monitor daemon loop."""
     resolved_db = _resolve_path(db_path)

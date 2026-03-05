@@ -7,9 +7,7 @@ from agvv.runtime.models import TaskSpec
 from agvv.runtime.store import TaskStore
 
 
-def test_task_store_connections_are_closed_after_operation(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_task_store_connections_are_closed_after_operation(monkeypatch, tmp_path: Path) -> None:
     opened = {"count": 0}
     closed = {"count": 0}
     original_connect = sqlite3.connect

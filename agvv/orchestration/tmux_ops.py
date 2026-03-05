@@ -17,12 +17,7 @@ def tmux_session_exists(session: str) -> bool:
     """Return whether a tmux session exists."""
 
     try:
-        result = subprocess.run(
-            ["tmux", "has-session", "-t", session],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        result = subprocess.run(["tmux", "has-session", "-t", session], check=False, capture_output=True, text=True)
     except FileNotFoundError as exc:
         raise AgvvError("tmux not found") from exc
     return result.returncode == 0
@@ -96,13 +91,4 @@ def tmux_pipe_pane(
     resolved = output_log_path.expanduser().resolve()
     resolved.parent.mkdir(parents=True, exist_ok=True)
     # `cat >> file` appends all pane output and keeps the pane interactive.
-    runner(
-        [
-            "tmux",
-            "pipe-pane",
-            "-o",
-            "-t",
-            session,
-            f"cat >> {shlex.quote(str(resolved))}",
-        ]
-    )
+    runner(["tmux", "pipe-pane", "-o", "-t", session, f"cat >> {shlex.quote(str(resolved))}"])

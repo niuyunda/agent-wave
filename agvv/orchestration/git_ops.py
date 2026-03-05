@@ -59,9 +59,7 @@ def commit_and_push_branch(
     if not normalized_remote:
         raise AgvvError("git remote name is required")
 
-    if not git_remote_exists(
-        worktree=worktree, remote=normalized_remote, run_git_cmd=runner
-    ):
+    if not git_remote_exists(worktree=worktree, remote=normalized_remote, run_git_cmd=runner):
         raise AgvvError(
             f"No git remote '{normalized_remote}' configured for worktree {worktree}. "
             f"Configure it with `git remote add {normalized_remote} <url>` "
@@ -70,26 +68,17 @@ def commit_and_push_branch(
 
     status_raw = runner(["status", "--porcelain"], cwd=worktree).stdout
     status_lines = [line for line in status_raw.splitlines() if line.strip()]
-    has_non_internal_changes = any(
-        not _is_internal_status_line(line) for line in status_lines
-    )
+    has_non_internal_changes = any(not _is_internal_status_line(line) for line in status_lines)
 
     if has_non_internal_changes:
         normalized_message = (commit_message or "").strip()
         if not normalized_message:
             raise AgvvError("commit message is required")
         runner(["add", "-A", "--", ".", ":(exclude).agvv/**"], cwd=worktree)
-        runner(
-            ["commit", "-m", normalized_message, "--", ".", ":(exclude).agvv/**"],
-            cwd=worktree,
-        )
+        runner(["commit", "-m", normalized_message, "--", ".", ":(exclude).agvv/**"], cwd=worktree)
 
-    ahead_raw = runner(
-        ["rev-list", "--count", f"{base_branch}..{feature}"], cwd=worktree
-    ).stdout.strip()
+    ahead_raw = runner(["rev-list", "--count", f"{base_branch}..{feature}"], cwd=worktree).stdout.strip()
     if int(ahead_raw or "0") <= 0:
-        raise AgvvError(
-            f"Task produced no commits ahead of base branch '{base_branch}'."
-        )
+        raise AgvvError(f"Task produced no commits ahead of base branch '{base_branch}'.")
 
     runner(["push", "-u", normalized_remote, feature], cwd=worktree)

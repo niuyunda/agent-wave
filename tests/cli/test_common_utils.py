@@ -14,7 +14,7 @@ from agvv.shared.errors import AgvvError
 
 def test_parse_state_accepts_none_and_valid_value() -> None:
     assert _parse_state(None) is None
-    assert _parse_state("coding") == TaskState.CODING
+    assert _parse_state("running") == TaskState.RUNNING
 
 
 def test_parse_state_rejects_invalid_value() -> None:
