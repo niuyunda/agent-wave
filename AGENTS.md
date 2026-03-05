@@ -1,37 +1,99 @@
-# `agvv` Codebase Guide for AI Agents
+# AGENTS.md for Agent Wave (`agvv`)
 
-Welcome! You are an AI Agent tasked with working on the `agvv` (Agent Wave) codebase. 
-This document provides a concise overview of the project architecture and boundaries to help you safely navigate and modify the code.
+This document defines high-level engineering principles for agents working on the `agvv` project.
 
-## Core Philosophy (The "Why")
-`agvv` orchestrates parallel coding tasks in isolated environments.
-It uses **git worktrees** to ensure absolute file-system isolation (so you don't pollute the user's main branch) and **tmux** to ensure background process isolation (so you can run concurrently without blocking the user's terminal).
+## 1) First-Principles Goals
 
-## Architecture & Directory Structure
-The architecture is strictly divided into two layers:
+Every change should improve at least one of these fundamentals:
 
-### 1. `agvv/orchestration/` (The "Doer")
-- **Responsibility**: System side-effects. This layer interacts with the OS, `git`, and `tmux`.
-- **Key Constraint**: It must remain **stateless**. It knows nothing about databases or task lifecycles.
-- **Files**:
-  - `layout.py`: Manages the physical directory layout (e.g., bare repo `repo.git`, `main` worktree, and `feature` worktrees).
-  - `executor.py`, `git_ops.py`, `tmux_ops.py`: Wrappers around subprocess calls.
+- Isolation: task development must not pollute the main workspace.
+- Reliability: task state and lifecycle must be durable and recoverable.
+- Clarity: behavior and code intent should be easy to understand.
+- Iteration speed: changes should be testable quickly and repeatedly.
 
-### 2. `agvv/runtime/` (The "Brain")
-- **Responsibility**: State-machine logic and persistence.
-- **Key Constraint**: It relies on SQLite (`store.py`) for lock-safe concurrency and state persistence.
-- **Files**:
-  - `models.py`: Pydantic definitions (e.g., `TaskState`, `TaskSpec`).
-  - `store.py`: SQLite persistence layer.
-  - `core.py`: The main business logic connecting CLI intents to state changes.
-  - `dispatcher.py`: The daemon that periodically reconciles tmux session status with the database.
+If a change does not improve these fundamentals, simplify or remove it.
 
-### 3. `agvv/cli.py` (The "Face")
-- **Responsibility**: The user interface. Uses `typer` to parse commands and route them to `runtime/core.py` and `runtime/dispatcher.py`.
+## 2) Core Principles
 
-## Rules for Agents Modifying This Codebase
+- Prefer essence over form: optimize for outcomes, not old structure.
+- Keep the system small: do not add abstractions/dependencies without clear payoff.
+- Make failures explicit: errors must be actionable and observable.
+- Keep behavior auditable: state transitions and side effects should be traceable.
+- Preserve user trust: avoid surprising behavior changes unless explicitly required.
 
-1. **Occam's Razor**: Do not introduce unnecessary abstractions or third-party dependencies. The project should remain lightweight.
-2. **First Principles**: Always question if a new feature solves the fundamental problem of "environment and process isolation." 
+## 3) Mandatory Development Workflow (Use `agvv` Every Time)
 
-Read these instructions carefully before making any codebase modifications.
+For every development task, agents must use `agvv` to create an isolated worktree before coding.
+Do not develop directly in the main workspace.
+
+Required loop:
+
+1. Create task inputs (`task.md` + `task.json`).
+2. Start task with `agvv task run` (use `--project-dir` for existing repo).
+3. Develop inside the new feature worktree created by `agvv`.
+4. Run checks/tests continuously while developing.
+5. If any issue appears while using `agvv`, record it immediately (see section 4).
+6. Reconcile state with `agvv daemon run --once` and inspect `agvv task status`.
+7. If blocked/failing, retry with `agvv task retry` after fixing root cause.
+8. After completion, clean up with `agvv task cleanup`.
+
+This is a strict operational rule: develop by using `agvv`, not beside `agvv`.
+
+## 4) Problem Logging (Required)
+
+During each task, record issues found while using `agvv` itself, including:
+
+- command UX friction
+- unclear errors/messages
+- state-machine edge cases
+- worktree/session lifecycle surprises
+- doc/spec mismatches
+
+At minimum, capture for each issue:
+
+- trigger command/input
+- observed behavior
+- expected behavior
+- temporary workaround (if any)
+
+Store issue records using this fixed location and naming:
+
+- directory: `docs/agvv-issues/<YYYY-MM-DD>/`
+- filename: `<task_id>__<short-kebab-topic>.md`
+  - example: `demo-feat_x-20260305101530__daemon-state-not-advancing.md`
+
+Repository policy for issue records:
+
+- default: commit and push issue records into this repository
+- exceptions: if record contains secrets/private data, redact first, then commit
+- if an issue is purely local and non-actionable for the project, do not commit it; mention it in task summary as local-only
+
+These findings should feed the next iteration.
+
+## 5) Fast Iteration Standard
+
+Use a short loop: implement -> test -> observe -> adjust.
+
+Minimum checks before finishing non-trivial changes:
+
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run interrogate agvv --fail-under=100 --quiet
+uv run pytest --cov=agvv --cov-branch --cov-report=term-missing
+```
+
+## 6) Refactoring Policy
+
+Refactoring is encouraged when it reduces complexity or improves correctness.
+You may reshape modules and boundaries if the result is simpler and better tested.
+
+When behavior or contract changes, update in the same task:
+
+- tests (`tests/cli`, `tests/runtime`, `tests/orchestration` as applicable)
+- user docs (`README.md`, `README.zh-CN.md`)
+- agent docs (`SKILL.md`, this file if principles change)
+
+## 7) Final Rule
+
+Choose the design that makes `agvv` easier to trust, easier to evolve, and easier to use in real agent workflows.

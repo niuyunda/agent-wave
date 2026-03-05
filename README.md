@@ -1,25 +1,31 @@
 # Agent Wave (`agvv`)
 
-[中文文档 (README.zh-CN.md)](./README.zh-CN.md)
+`agvv` is a lightweight task orchestrator for coding agents.
+It gives each task an isolated git worktree, runs the agent in a detached tmux session, and tracks lifecycle state in SQLite.
 
-`agvv` runs coding tasks in isolated git worktrees and tracks task state safely with SQLite. It's designed to be a safe, concurrent execution environment for AI Agents like Codex or Claude.
+## What It Does
 
-## Key Features
+- Isolates task changes with `git worktree` (`main` + per-feature worktrees).
+- Runs agent sessions in background `tmux` so work continues after terminal disconnect.
+- Persists task state/events in SQLite (`pending`, `running`, `done`, `failed`, `timed_out`, `cleaned`).
+- Provides operational commands: `task run/status/retry/cleanup` and `daemon run`.
 
-1. **Total Isolation (`git worktree`)**: AI Agents write code in isolated feature worktrees. They will never pollute your main branch or current working directory.
-2. **Concurrent Background Execution (`tmux`)**: Tasks run completely in the background. You can close your terminal and check back later.
-3. **Resilient State Tracking (`sqlite3`)**: Prevents corrupted task states. Unlike JSON files, SQLite provides lock-safe concurrency and power-loss resilience, ensuring task history is never lost even if the daemon crashes.
-
-## What You Need
+## Requirements
 
 - Python `>=3.10`
-- `git`, `tmux`, `gh` (authenticated)
-- `uv`
+- `git`
+- `tmux`
+- A coding agent CLI in `PATH`:
+  - `codex` (default)
+  - `claude` (when using `--agent claude`)
+- `uv` (recommended for install/run)
 
 ## Install
 
+From PyPI:
+
 ```bash
-uv tool install agvv
+uv tool install agent-wave
 agvv --help
 ```
 
@@ -32,61 +38,130 @@ uv run agvv --help
 
 ## Quick Start
 
-### 1) Write `task.json` (core metadata only)
+### 1) Create `task.md`
 
-Keep this small. Put your actual prompt/requirements into `task_doc`.
+Write the detailed coding requirement in Markdown.
+
+### 2) Create `task.json`
+
+Minimal valid spec:
 
 ```json
 {
   "project_name": "demo",
   "feature": "feat_demo",
-  "repo": "owner/repo",
   "task_doc": "./task.md"
 }
 ```
 
-### 2) Write `task.md`
+`task_doc` or `requirements` must be present (at least one).
 
-This is where you explain to the AI Agent what you want it to code.
+### 3) Start a task
 
-### 3) Start the task
-
-Existing local repo:
+For an existing local repository:
 
 ```bash
 agvv task run --spec ./task.json --project-dir /path/to/repo
 ```
 
-Create new managed project under current directory (useful for greenfield projects):
+For a new managed project (under current directory):
 
 ```bash
 agvv task run --spec ./task.json
 ```
 
-### 4) Monitor progress
+Use Claude Code instead of Codex:
 
-Check the status of your tasks:
+```bash
+agvv task run --spec ./task.json --agent claude
+```
+
+### 4) Monitor and reconcile state
 
 ```bash
 agvv task status
-```
-
-Run the background daemon to update statuses (mark tasks as DONE or TIMED_OUT):
-
-```bash
 agvv daemon run --once
 ```
 
-## Clean Up
+Run `daemon run --once` repeatedly to move states forward (`running -> done/timed_out`).
 
-When a task is done, you can delete the isolated worktree safely:
+### 5) Retry or cleanup
+
+Retry:
+
+```bash
+agvv task retry --task-id <task_id>
+```
+
+Force restart an existing tmux session during retry:
+
+```bash
+agvv task retry --task-id <task_id> --force-restart
+```
+
+Cleanup worktree resources:
 
 ```bash
 agvv task cleanup --task-id <task_id>
 ```
 
-## Troubleshooting
+Force cleanup even with dirty worktree:
 
-- `tmux not found`: install `tmux`.
-- `gh` auth issues: run `gh auth login`.
-- `No git remote 'origin' configured`: add remote to managed repo, e.g. `git -C <base_dir>/<project_name>/repo.git remote add origin <repo-url>`.
+```bash
+agvv task cleanup --task-id <task_id> --force
+```
+
+## `task.json` Contract (CLI)
+
+### Required fields
+
+- `project_name`: `^[A-Za-z0-9_-]+$`
+- `feature`: `^[A-Za-z0-9_-]+$`, and must not be `main` or `repo.git`
+- One of:
+  - `task_doc` (must end with `.md`)
+  - `requirements` (non-empty string)
+
+### Common optional fields
+
+- `repo`: optional repository slug/identifier
+- `from_branch`: base branch for feature worktree (default: `main`)
+- `session`: custom tmux session name
+- `constraints`: list of extra constraints
+- `timeout_minutes`: session timeout in minutes (default: `240`)
+- `agent_extra_args`: extra args passed to the agent command
+
+### Important runtime behavior
+
+- `task_id` is generated at runtime; user-provided `task_id` is ignored.
+- `agent`/`agent_model` in spec are reset by runtime; choose provider via CLI `--agent`.
+- `base_dir` in spec is overridden by runtime:
+  - no `--project-dir`: current working directory
+  - with `--project-dir`: parent directory of that project
+
+## CLI Summary
+
+```bash
+agvv task run --spec <path> [--db-path <path>] [--agent <codex|claude|claude_code>] [--agent-non-interactive|--agent-interactive] [--project-dir <path>]
+agvv task status [--db-path <path>] [--task-id <id>] [--state <pending|running|done|failed|timed_out|cleaned>]
+agvv task retry --task-id <id> [--db-path <path>] [--session <name>] [--force-restart]
+agvv task cleanup --task-id <id> [--db-path <path>] [--force]
+agvv daemon run [--db-path <path>] [--once] [--interval-seconds <n>] [--max-loops <n>] [--max-workers <n>]
+```
+
+## Data and Layout
+
+- Default DB path: `~/.agvv/tasks.db`
+- Override DB path with `--db-path` or environment variable `AGVV_DB_PATH`
+- Managed project layout:
+
+```text
+<runtime_base>/<project_name>/
+  repo.git/      # bare repository
+  main/          # main worktree
+  <feature>/     # feature worktree for one task
+```
+
+## Notes
+
+- `daemon run --once` is required to reconcile background task state.
+- `task cleanup` removes the feature worktree and deletes the feature branch in managed repo.
