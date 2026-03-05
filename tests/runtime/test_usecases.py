@@ -30,6 +30,20 @@ def _write_spec(path: Path, payload: dict) -> Path:
     return path
 
 
+def _patch_session_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    start_feature=lambda **kwargs: None,
+    tmux_session_exists=lambda _session: False,
+    tmux_new_session=lambda _session, _cwd, _command: None,
+    tmux_pipe_pane=lambda _session, _output_log_path: None,
+) -> None:
+    monkeypatch.setattr("agvv.orchestration.start_feature", start_feature)
+    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", tmux_session_exists)
+    monkeypatch.setattr("agvv.orchestration.tmux_new_session", tmux_new_session)
+    monkeypatch.setattr("agvv.orchestration.tmux_pipe_pane", tmux_pipe_pane)
+
+
 def test_task_store_create_and_list(tmp_path: Path) -> None:
     store = TaskStore(tmp_path / "tasks.db")
     spec = TaskSpec(
@@ -73,15 +87,13 @@ def test_run_task_from_spec_starts_coding_session(
         )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr("agvv.orchestration.start_feature", _fake_start_feature)
-    monkeypatch.setattr(
-        "agvv.orchestration.tmux_session_exists", lambda _session: False
+    _patch_session_launch(
+        monkeypatch,
+        start_feature=_fake_start_feature,
+        tmux_new_session=lambda session, cwd, command: launched.append(
+            f"{session}:{cwd}:{command}"
+        ),
     )
-    monkeypatch.setattr(
-        "agvv.orchestration.tmux_new_session",
-        lambda session, cwd, command: launched.append(f"{session}:{cwd}:{command}"),
-    )
-    monkeypatch.setattr("agvv.orchestration.tmux_pipe_pane", lambda _s, _p: None)
 
     task = run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db")
     assert task.state == TaskState.RUNNING
@@ -119,17 +131,13 @@ def test_run_task_from_spec_applies_agent_overrides(
         )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr("agvv.orchestration.start_feature", _fake_start_feature)
-    monkeypatch.setattr(
-        "agvv.orchestration.tmux_session_exists", lambda _session: False
-    )
-    monkeypatch.setattr(
-        "agvv.orchestration.tmux_new_session",
-        lambda _session, _cwd, command: launched.append(command),
-    )
-    monkeypatch.setattr(
-        "agvv.orchestration.tmux_pipe_pane",
-        lambda _session, output_log_path: piped.append(str(output_log_path)),
+    _patch_session_launch(
+        monkeypatch,
+        start_feature=_fake_start_feature,
+        tmux_new_session=lambda _session, _cwd, command: launched.append(command),
+        tmux_pipe_pane=lambda _session, output_log_path: piped.append(
+            str(output_log_path)
+        ),
     )
 
     task = run_task_from_spec(
@@ -224,12 +232,7 @@ def test_run_task_from_spec_ignores_spec_base_dir(
         feature_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr("agvv.orchestration.init_project", _fake_init_project)
-    monkeypatch.setattr(
-        "agvv.orchestration.tmux_session_exists", lambda _session: False
-    )
-    monkeypatch.setattr("agvv.orchestration.start_feature", _fake_start_feature)
-    monkeypatch.setattr("agvv.orchestration.tmux_new_session", lambda _s, _c, _m: None)
-    monkeypatch.setattr("agvv.orchestration.tmux_pipe_pane", lambda _s, _p: None)
+    _patch_session_launch(monkeypatch, start_feature=_fake_start_feature)
 
     run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db")
     assert seen["base_dir"] == tmp_path.resolve()
@@ -265,12 +268,7 @@ def test_run_task_from_spec_auto_inits_project_when_missing(
         feature_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr("agvv.orchestration.init_project", _fake_init_project)
-    monkeypatch.setattr(
-        "agvv.orchestration.tmux_session_exists", lambda _session: False
-    )
-    monkeypatch.setattr("agvv.orchestration.start_feature", _fake_start_feature)
-    monkeypatch.setattr("agvv.orchestration.tmux_new_session", lambda _s, _c, _m: None)
-    monkeypatch.setattr("agvv.orchestration.tmux_pipe_pane", lambda _s, _p: None)
+    _patch_session_launch(monkeypatch, start_feature=_fake_start_feature)
 
     task = run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db")
     assert started["init"] is True
@@ -319,12 +317,7 @@ def test_run_task_from_spec_auto_adopts_existing_project(
         feature_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr("agvv.orchestration.adopt_project", _fake_adopt_project)
-    monkeypatch.setattr(
-        "agvv.orchestration.tmux_session_exists", lambda _session: False
-    )
-    monkeypatch.setattr("agvv.orchestration.start_feature", _fake_start_feature)
-    monkeypatch.setattr("agvv.orchestration.tmux_new_session", lambda _s, _c, _m: None)
-    monkeypatch.setattr("agvv.orchestration.tmux_pipe_pane", lambda _s, _p: None)
+    _patch_session_launch(monkeypatch, start_feature=_fake_start_feature)
 
     task = run_task_from_spec(
         spec_path=spec_path, db_path=tmp_path / "tasks.db", project_dir=source_repo
@@ -355,12 +348,7 @@ def test_retry_task_relaunches_when_session_missing(
     )
     (tmp_path / "demo" / "feat_retry").mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr(
-        "agvv.orchestration.tmux_session_exists", lambda _session: False
-    )
-    monkeypatch.setattr("agvv.orchestration.start_feature", lambda **kwargs: None)
-    monkeypatch.setattr("agvv.orchestration.tmux_new_session", lambda _s, _c, _m: None)
-    monkeypatch.setattr("agvv.orchestration.tmux_pipe_pane", lambda _s, _p: None)
+    _patch_session_launch(monkeypatch)
 
     retried = retry_task(task_id="task_retry", db_path=tmp_path / "tasks.db")
     assert retried.state == TaskState.RUNNING
@@ -389,9 +377,8 @@ def test_retry_task_force_restart_kills_existing_session(
 
     called: dict[str, bool] = {"killed": False}
     session_live: dict[str, bool] = {"value": True}
-    monkeypatch.setattr(
-        "agvv.orchestration.tmux_session_exists",
-        lambda _session: session_live["value"],
+    _patch_session_launch(
+        monkeypatch, tmux_session_exists=lambda _session: session_live["value"]
     )
     monkeypatch.setattr(
         "agvv.orchestration.tmux_kill_session",
@@ -400,9 +387,6 @@ def test_retry_task_force_restart_kills_existing_session(
             session_live.__setitem__("value", False),
         ),
     )
-    monkeypatch.setattr("agvv.orchestration.start_feature", lambda **kwargs: None)
-    monkeypatch.setattr("agvv.orchestration.tmux_new_session", lambda _s, _c, _m: None)
-    monkeypatch.setattr("agvv.orchestration.tmux_pipe_pane", lambda _s, _p: None)
 
     retried = retry_task(
         task_id="task_retry_force", db_path=tmp_path / "tasks.db", force_restart=True
