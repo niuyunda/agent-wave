@@ -52,24 +52,17 @@ def test_init_project_creates_layout_and_is_idempotent(tmp_path: Path) -> None:
     assert second.main_dir.exists()
 
 
-def test_init_project_attaches_existing_main_branch_to_missing_main_worktree(
+def test_init_project_is_idempotent_when_project_already_exists(
     tmp_path: Path,
 ) -> None:
-    paths = init_project("demo", tmp_path / "base")
-    _git(
-        [
-            "-C",
-            str(paths.repo_dir),
-            "worktree",
-            "remove",
-            str(paths.main_dir),
-            "--force",
-        ],
-        cwd=tmp_path,
-    )
-    assert not paths.main_dir.exists()
-    restored = init_project("demo", tmp_path / "base")
-    assert restored.main_dir.exists()
+    """Calling init_project twice on the same project is safe (idempotent)."""
+    paths1 = init_project("demo", tmp_path / "base")
+    assert paths1.main_dir.exists()
+    assert paths1.repo_dir.exists()
+    # Calling again should return the same existing layout without error.
+    paths2 = init_project("demo", tmp_path / "base")
+    assert paths2.main_dir == paths1.main_dir
+    assert paths2.repo_dir == paths1.repo_dir
 
 
 def test_adopt_project_success_with_default_branch_preference(tmp_path: Path) -> None:
@@ -165,7 +158,7 @@ def test_adopt_project_supports_bare_repo_source(tmp_path: Path) -> None:
 def test_adopt_project_fails_when_source_not_git_repo(tmp_path: Path) -> None:
     src = tmp_path / "not-a-repo"
     src.mkdir()
-    with pytest.raises(AgvvError, match="No '\\*\\.git' entry found"):
+    with pytest.raises(AgvvError, match="No '.git' entry found"):
         adopt_project(src, "adopted", tmp_path)
 
 
@@ -182,20 +175,34 @@ def test_adopt_project_fails_when_first_level_has_multiple_git_entries(
 
 
 def test_adopt_project_fails_when_target_already_initialized(tmp_path: Path) -> None:
+    """Adopt fails when the target project already has a .git directory."""
     existing_repo = _create_existing_repo(tmp_path / "src-main")
     target = tmp_path / "adopted"
     target.mkdir()
-    (target / "repo.git").mkdir()
+    (target / ".git").mkdir()
     with pytest.raises(AgvvError):
         adopt_project(existing_repo, "adopted", tmp_path)
 
 
-def test_adopt_project_fails_when_bare_repo_has_no_branches(tmp_path: Path) -> None:
+def test_adopt_project_fails_when_source_has_no_commits(tmp_path: Path) -> None:
+    """Adopt fails when the source repo has no commits (nothing to clone)."""
     src = tmp_path / "src-empty"
     src.mkdir(parents=True, exist_ok=True)
     _git(["init"], cwd=src)
-    with pytest.raises(AgvvError, match="No branches found in bare repo"):
+    with pytest.raises(AgvvError, match="No branches found"):
         adopt_project(src, "adopted-empty", tmp_path)
+
+
+def test_adopt_project_rejects_git_worktree_path_source(tmp_path: Path) -> None:
+    src = _create_existing_repo(tmp_path / "src-main", branch="main")
+    linked_worktree = tmp_path / "src-linked-worktree"
+    _git(
+        ["worktree", "add", str(linked_worktree), "-b", "feat-linked-worktree"],
+        cwd=src,
+    )
+
+    with pytest.raises(AgvvError, match="linked git worktree"):
+        adopt_project(linked_worktree, "adopted-from-worktree", tmp_path)
 
 
 def test_start_feature_creates_worktree_metadata_and_dirs(tmp_path: Path) -> None:
@@ -283,7 +290,8 @@ def test_start_feature_reuses_existing_branch_after_cleanup_keep_branch(
 
 def test_start_feature_fails_when_feature_worktree_path_exists(tmp_path: Path) -> None:
     init_project("demo", tmp_path)
-    (tmp_path / "demo" / "feat-exists").mkdir(parents=True, exist_ok=True)
+    # Feature worktrees now live under <project>/worktrees/<feat-slug>/.
+    (tmp_path / "demo" / "worktrees" / "feat-exists").mkdir(parents=True, exist_ok=True)
     with pytest.raises(AgvvError):
         start_feature(
             project_name="demo",
@@ -337,7 +345,7 @@ def test_cleanup_feature_deletes_branch_by_default(tmp_path: Path) -> None:
     paths = cleanup_feature("demo", "feat-clean", tmp_path, delete_branch=True)
     assert paths.feature_dir is not None
     assert not paths.feature_dir.exists()
-    repo = tmp_path / "demo" / "repo.git"
+    repo = tmp_path / "demo" / ".git"
     branch_check = subprocess.run(
         [
             "git",
@@ -368,7 +376,7 @@ def test_cleanup_feature_deletes_branch_when_worktree_already_missing(
         params={},
     )
     assert paths.feature_dir is not None
-    repo = tmp_path / "demo" / "repo.git"
+    repo = tmp_path / "demo" / ".git"
     subprocess.run(
         [
             "git",
@@ -424,5 +432,6 @@ def test_cleanup_feature_fails_when_untracked_files_exist(tmp_path: Path) -> Non
 
 
 def test_cleanup_feature_fails_on_reserved_name(tmp_path: Path) -> None:
+    """Attempting to cleanup the reserved 'worktrees' name should fail."""
     with pytest.raises(AgvvError):
-        cleanup_feature("demo", "repo.git", tmp_path, delete_branch=True)
+        cleanup_feature("demo", "worktrees", tmp_path, delete_branch=True)

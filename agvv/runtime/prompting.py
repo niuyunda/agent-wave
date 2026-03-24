@@ -79,7 +79,6 @@ def write_launch_artifacts(*, worktree: Path, spec: TaskSpec) -> dict[str, Path]
         "requirements": _requirements_text(spec),
         "constraints": list(spec.constraints or []),
         "agent_cmd": spec.agent_cmd,
-        "agent_non_interactive": spec.agent_non_interactive,
     }
     input_snapshot_path.write_text(
         json.dumps(input_snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -110,19 +109,7 @@ def build_launch_command(
     )
     if agent_requires_tty(spec):
         if agent_cmd == default_cmd:
-            if spec.agent_non_interactive and (spec.agent or "codex") == "codex":
-                parts = shlex.split(agent_cmd)
-                if parts and parts[0] == "codex":
-                    if not _codex_has_sandbox_flag(extra_args):
-                        parts = [parts[0], "exec", "-s", "workspace-write", *parts[1:]]
-                    else:
-                        parts = [parts[0], "exec", *parts[1:]]
-                    non_interactive_cmd = shlex.join(parts)
-                    script = f"{non_interactive_cmd} {prompt_arg}"
-                else:
-                    script = f"{agent_cmd} {prompt_arg}"
-            else:
-                script = f"{agent_cmd} {prompt_arg}"
+            script = f"{agent_cmd} {prompt_arg}"
         else:
             script = agent_cmd
     else:

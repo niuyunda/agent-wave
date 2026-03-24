@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from pydantic import (
     BaseModel,
@@ -28,16 +29,17 @@ _AGENT_PROVIDER_ALIASES = {
 
 
 def _generate_task_id(project_name: str, feature: str) -> str:
-    """Generate a timestamped task identifier for a project/feature pair."""
-    stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S")
-    return f"{project_name}-{feature}-{stamp}"
+    """Generate a collision-resistant task identifier for a project/feature pair."""
+    stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    suffix = uuid4().hex[:8]
+    return f"{project_name}-{feature}-{stamp}-{suffix}"
 
 
 class TaskState(str, Enum):
     """Lifecycle states for the task state machine."""
 
     PENDING = "pending"  # created, not yet launched
-    RUNNING = "running"  # tmux session active
+    RUNNING = "running"  # acpx session active
     DONE = "done"  # agent session ended cleanly
     FAILED = "failed"  # error during setup or launch
     TIMED_OUT = "timed_out"  # session exceeded timeout
@@ -65,6 +67,18 @@ def normalize_agent_provider(value: str | None) -> str:
     return provider
 
 
+# Map internal provider names to acpx subcommand names
+ACP_AGENT_SUBCMD = {
+    "claude_code": "claude",
+    "codex": "codex",
+}
+
+
+def acp_agent_subcommand(provider: str) -> str:
+    """Return the acpx subcommand name for a normalized provider."""
+    return ACP_AGENT_SUBCMD.get(provider, provider)
+
+
 def build_agent_command(provider: str, model: str | None, extra_args: list[str]) -> str:
     """Build a shell-safe command line for the configured coding agent."""
     if provider == "codex":
@@ -87,7 +101,7 @@ class TaskSpec(BaseModel):
     )
 
     project_name: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
-    feature: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
+    feature: str = Field(pattern=r"^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$")
     repo: str | None = None  # optional GitHub owner/repo slug for the agent's use
     base_dir: Path = Field(default_factory=Path.cwd)
     from_branch: str = "main"
@@ -114,7 +128,7 @@ class TaskSpec(BaseModel):
         if v is None or str(v).strip() == "":
             raise ValueError("Must be a non-empty string")
         v_str = str(v).strip()
-        if v_str in ("main", "repo.git"):
+        if v_str in ("main", "repo.git", "worktrees"):
             raise ValueError(f"Value '{v_str}' is reserved.")
         return v_str
 
@@ -179,7 +193,7 @@ class TaskSpec(BaseModel):
         return self
 
     def normalized_session(self) -> str:
-        """Return a deterministic tmux session name for the task."""
+        """Return a deterministic acpx session name for the task."""
         return self.session or f"agvv-{self.task_id}"
 
     def to_payload(self) -> dict[str, Any]:

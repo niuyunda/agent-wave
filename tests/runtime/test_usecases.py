@@ -73,14 +73,44 @@ def _patch_session_launch(
     monkeypatch: pytest.MonkeyPatch,
     *,
     start_feature=lambda **kwargs: None,
-    tmux_session_exists=lambda _session: False,
-    tmux_new_session=lambda _session, _cwd, _command: None,
-    tmux_pipe_pane=lambda _session, _output_log_path: None,
+    acp_session_exists=lambda _agent, _session, _cwd: False,
+    acp_create_session=lambda _agent, _session, _cwd: None,
+    acp_send_prompt=lambda _agent, _session, _cwd, _prompt_path, _output_log_path=None, **kwargs: (
+        None
+    ),
+    acp_session_status=None,
 ) -> None:
     monkeypatch.setattr("agvv.orchestration.start_feature", start_feature)
-    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", tmux_session_exists)
-    monkeypatch.setattr("agvv.orchestration.tmux_new_session", tmux_new_session)
-    monkeypatch.setattr("agvv.orchestration.tmux_pipe_pane", tmux_pipe_pane)
+    # Patch the acp_ops module directly (not via import path)
+    import agvv.orchestration.acp_ops as _acp_ops
+
+    if acp_session_status is None:
+
+        def acp_session_status(_agent, _session, _cwd):
+            return _acp_ops.AcpSessionStatus(
+                state="running",
+                pid=123,
+                session_id=_session,
+                uptime="1s",
+                last_prompt=None,
+                last_exit=None,
+            )
+
+    def _composite_exists(agent, session, cwd):
+        return acp_session_exists(agent, session, cwd)
+
+    def _composite_create(agent, session, cwd):
+        return acp_create_session(agent, session, cwd)
+
+    def _composite_send(agent, session, cwd, prompt_path, output_log_path=None, **kw):
+        return acp_send_prompt(
+            agent, session, cwd, prompt_path, output_log_path=output_log_path, **kw
+        )
+
+    monkeypatch.setattr(_acp_ops, "acpx_session_exists", _composite_exists)
+    monkeypatch.setattr(_acp_ops, "acpx_create_session", _composite_create)
+    monkeypatch.setattr(_acp_ops, "acpx_send_prompt", _composite_send)
+    monkeypatch.setattr(_acp_ops, "acpx_session_status", acp_session_status)
 
 
 def test_task_store_create_and_list(tmp_path: Path) -> None:
@@ -115,32 +145,89 @@ def test_run_task_from_spec_starts_coding_session(
         },
     )
     launched: list[str] = []
-    repo_dir = tmp_path / "demo" / "repo.git"
-    main_dir = tmp_path / "demo" / "main"
+    # New layout: project_dir IS main worktree, repo is project_dir/.git.
+    project_dir = tmp_path / "demo"
+    repo_dir = project_dir / ".git"
+    worktrees_dir = project_dir / "worktrees"
     repo_dir.mkdir(parents=True, exist_ok=True)
-    main_dir.mkdir(parents=True, exist_ok=True)
+    worktrees_dir.mkdir(parents=True, exist_ok=True)
 
     def _fake_start_feature(**kwargs):
+        # Feature worktrees now live under <project>/worktrees/<feat-slug>/.
         feature_dir = (
-            Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+            Path(kwargs["base_dir"])
+            / kwargs["project_name"]
+            / "worktrees"
+            / kwargs["feature"].replace("/", "-")
         )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
     _patch_session_launch(
         monkeypatch,
         start_feature=_fake_start_feature,
-        tmux_new_session=lambda session, cwd, command: launched.append(
-            f"{session}:{cwd}:{command}"
+        acp_create_session=lambda agent, session, cwd: launched.append(
+            f"{agent}:{session}:{cwd}"
         ),
     )
 
     task = run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db")
     assert task.state == TaskState.RUNNING
     assert launched
-    assert "bash -lc" in launched[0]
-    feature_dir = tmp_path / "demo" / "feat_run"
+    assert "codex" in launched[0]  # agent subcommand
+    feature_dir = tmp_path / "demo" / "worktrees" / "feat_run"
     assert (feature_dir / ".agvv" / "rendered_prompt.md").exists()
     assert (feature_dir / ".agvv" / "input_snapshot.json").exists()
+
+
+def test_run_task_from_spec_marks_done_when_session_exits_immediately(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    spec_path = _write_spec(
+        tmp_path / "task-immediate-done.md",
+        {
+            "task_id": "task_immediate_done",
+            "project_name": "demo",
+            "feature": "feat_immediate_done",
+            "agent_cmd": "echo run",
+            "base_dir": str(tmp_path),
+        },
+    )
+    project_dir = tmp_path / "demo"
+    (project_dir / ".git").mkdir(parents=True, exist_ok=True)
+    (project_dir / "worktrees").mkdir(parents=True, exist_ok=True)
+
+    def _fake_start_feature(**kwargs):
+        feature_dir = (
+            Path(kwargs["base_dir"])
+            / kwargs["project_name"]
+            / "worktrees"
+            / kwargs["feature"].replace("/", "-")
+        )
+        feature_dir.mkdir(parents=True, exist_ok=True)
+
+    def _status_dead(_agent, _session, _cwd):
+        import agvv.orchestration.acp_ops as _acp_ops
+
+        return _acp_ops.AcpSessionStatus(
+            state="dead",
+            pid=None,
+            session_id=_session,
+            uptime=None,
+            last_prompt=None,
+            last_exit="0",
+        )
+
+    _patch_session_launch(
+        monkeypatch,
+        start_feature=_fake_start_feature,
+        acp_session_status=_status_dead,
+    )
+
+    task = run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db")
+    assert task.state == TaskState.DONE
+    assert task.started_at is not None
+    assert task.finished_at is not None
 
 
 def test_run_task_from_spec_applies_agent_overrides(
@@ -157,25 +244,30 @@ def test_run_task_from_spec_applies_agent_overrides(
             "base_dir": str(tmp_path),
         },
     )
-    launched: list[str] = []
-    piped: list[str] = []
-    repo_dir = tmp_path / "demo" / "repo.git"
-    main_dir = tmp_path / "demo" / "main"
+    created: list[str] = []
+    prompted: list[str] = []
+    # New layout: project_dir IS main worktree, repo is project_dir/.git.
+    project_dir = tmp_path / "demo"
+    repo_dir = project_dir / ".git"
+    worktrees_dir = project_dir / "worktrees"
     repo_dir.mkdir(parents=True, exist_ok=True)
-    main_dir.mkdir(parents=True, exist_ok=True)
+    worktrees_dir.mkdir(parents=True, exist_ok=True)
 
     def _fake_start_feature(**kwargs):
         feature_dir = (
-            Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+            Path(kwargs["base_dir"])
+            / kwargs["project_name"]
+            / "worktrees"
+            / kwargs["feature"].replace("/", "-")
         )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
     _patch_session_launch(
         monkeypatch,
         start_feature=_fake_start_feature,
-        tmux_new_session=lambda _session, _cwd, command: launched.append(command),
-        tmux_pipe_pane=lambda _session, output_log_path: piped.append(
-            str(output_log_path)
+        acp_create_session=lambda agent, session, cwd: created.append(agent),
+        acp_send_prompt=lambda agent, session, cwd, prompt_path, **kwargs: (
+            prompted.append(str(prompt_path))
         ),
     )
 
@@ -185,13 +277,12 @@ def test_run_task_from_spec_applies_agent_overrides(
         agent_provider="codex",
     )
     assert task.state == TaskState.RUNNING
-    assert len(launched) == 1
-    assert launched[0].startswith("bash -lc ")
-    assert "codex" in launched[0]
-    assert "rendered_prompt.md" in launched[0]
-    assert "tee -a" not in launched[0]
-    assert len(piped) == 1
-    assert piped[0].endswith("agent_output.log")
+    assert len(created) == 1
+    assert created[0] == "codex"  # acpx subcommand
+    assert len(prompted) == 1
+    assert "rendered_prompt.md" in prompted[0]
+    feature_dir = tmp_path / "demo" / "worktrees" / "feat_override"
+    assert (feature_dir / ".agvv" / "input_snapshot.json").exists()
     assert task.spec.agent == "codex"
     assert task.spec.agent_model is None
 
@@ -253,14 +344,20 @@ def test_run_task_from_spec_ignores_spec_base_dir(
 
     def _fake_init_project(project_name: str, base_dir: Path):
         seen["base_dir"] = base_dir
-        repo_dir = base_dir / project_name / "repo.git"
-        main_dir = base_dir / project_name / "main"
+        # New layout: project_dir IS main worktree, .git/ inside it.
+        project_dir = base_dir / project_name
+        repo_dir = project_dir / ".git"
         repo_dir.mkdir(parents=True, exist_ok=True)
-        main_dir.mkdir(parents=True, exist_ok=True)
+        (repo_dir / "config").write_text(
+            "[core]\n", encoding="utf-8"
+        )  # minimal git repo
 
     def _fake_start_feature(**kwargs):
         feature_dir = (
-            Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+            Path(kwargs["base_dir"])
+            / kwargs["project_name"]
+            / "worktrees"
+            / kwargs["feature"].replace("/", "-")
         )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
@@ -289,14 +386,20 @@ def test_run_task_from_spec_auto_inits_project_when_missing(
 
     def _fake_init_project(project_name: str, base_dir: Path):
         started["init"] = True
-        repo_dir = base_dir / project_name / "repo.git"
-        main_dir = base_dir / project_name / "main"
+        # New layout: project_dir IS main worktree, .git/ inside it.
+        project_dir = base_dir / project_name
+        repo_dir = project_dir / ".git"
+        worktrees_dir = project_dir / "worktrees"
         repo_dir.mkdir(parents=True, exist_ok=True)
-        main_dir.mkdir(parents=True, exist_ok=True)
+        (repo_dir / "config").write_text("[core]\n", encoding="utf-8")
+        worktrees_dir.mkdir(parents=True, exist_ok=True)
 
     def _fake_start_feature(**kwargs):
         feature_dir = (
-            Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+            Path(kwargs["base_dir"])
+            / kwargs["project_name"]
+            / "worktrees"
+            / kwargs["feature"].replace("/", "-")
         )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
@@ -330,22 +433,34 @@ def test_run_task_from_spec_auto_adopts_existing_project(
     def _fake_adopt_project(existing_repo: Path, project_name: str, base_dir: Path):
         adopted["called"] = True
         assert existing_repo == source_repo.resolve()
-        repo_dir = base_dir / project_name / "repo.git"
-        main_dir = base_dir / project_name / "main"
+        # New layout: project_dir IS main worktree, repo is project_dir/.git.
+        project_dir = base_dir / project_name
+        repo_dir = project_dir / ".git"
+        worktrees_dir = project_dir / "worktrees"
         repo_dir.mkdir(parents=True, exist_ok=True)
-        main_dir.mkdir(parents=True, exist_ok=True)
+        (repo_dir / "config").write_text("[core]\n", encoding="utf-8")
+        worktrees_dir.mkdir(parents=True, exist_ok=True)
         return (
             type(
                 "L",
                 (),
-                {"repo_dir": repo_dir, "main_dir": main_dir, "feature_dir": None},
+                {
+                    "project_dir": project_dir,
+                    "repo_dir": repo_dir,
+                    "main_dir": project_dir,
+                    "worktrees_dir": worktrees_dir,
+                    "feature_dir": None,
+                },
             )(),
             "main",
         )
 
     def _fake_start_feature(**kwargs):
         feature_dir = (
-            Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+            Path(kwargs["base_dir"])
+            / kwargs["project_name"]
+            / "worktrees"
+            / kwargs["feature"].replace("/", "-")
         )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
@@ -379,7 +494,7 @@ def test_retry_task_relaunches_when_session_missing(
         last_error="boom",
         finished_at="2026-03-03T00:00:00+00:00",
     )
-    (tmp_path / "demo" / "feat_retry").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "demo" / "worktrees" / "feat_retry").mkdir(parents=True, exist_ok=True)
 
     _patch_session_launch(monkeypatch)
 
@@ -406,19 +521,29 @@ def test_retry_task_force_restart_kills_existing_session(
     store.update_task(
         created.id, state=TaskState.RUNNING, started_at="2026-03-03T00:00:00+00:00"
     )
-    (tmp_path / "demo" / "feat_retry_force").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "demo" / "worktrees" / "feat_retry_force").mkdir(
+        parents=True, exist_ok=True
+    )
 
     called: dict[str, bool] = {"killed": False}
     session_live: dict[str, bool] = {"value": True}
+
+    def _fake_session_exists(agent, session, cwd):
+        return session_live["value"]
+
+    def _fake_close_session(agent, session, cwd):
+        called.__setitem__("killed", True)
+        session_live.__setitem__("value", False)
+
     _patch_session_launch(
-        monkeypatch, tmux_session_exists=lambda _session: session_live["value"]
+        monkeypatch,
+        acp_session_exists=_fake_session_exists,
+        acp_create_session=lambda *a, **k: None,
+        acp_send_prompt=lambda *a, **k: None,
     )
     monkeypatch.setattr(
-        "agvv.orchestration.tmux_kill_session",
-        lambda _session: (
-            called.__setitem__("killed", True),
-            session_live.__setitem__("value", False),
-        ),
+        "agvv.orchestration.acp_ops.acpx_close_session",
+        _fake_close_session,
     )
 
     retried = retry_task(
@@ -461,7 +586,8 @@ def test_cleanup_task_marks_cleaned(
     )
     store.create_task(spec)
     monkeypatch.setattr(
-        "agvv.orchestration.tmux_session_exists", lambda _session: False
+        "agvv.orchestration.acp_ops.acpx_session_exists",
+        lambda _agent, _session, _cwd: False,
     )
     monkeypatch.setattr(
         "agvv.orchestration.cleanup_feature",
@@ -486,7 +612,8 @@ def test_cleanup_task_preserves_last_error_for_history(
     created = store.create_task(spec)
     store.update_task(created.id, state=TaskState.FAILED, last_error="session timeout")
     monkeypatch.setattr(
-        "agvv.orchestration.tmux_session_exists", lambda _session: False
+        "agvv.orchestration.acp_ops.acpx_session_exists",
+        lambda _agent, _session, _cwd: False,
     )
     monkeypatch.setattr(
         "agvv.orchestration.cleanup_feature",
@@ -525,7 +652,8 @@ def test_cleanup_task_force_deletes_branch(
         captured["delete_branch"] = delete_branch
 
     monkeypatch.setattr(
-        "agvv.orchestration.tmux_session_exists", lambda _session: False
+        "agvv.orchestration.acp_ops.acpx_session_exists",
+        lambda _agent, _session, _cwd: False,
     )
     monkeypatch.setattr("agvv.orchestration.cleanup_feature_force", _fake_cleanup_force)
 

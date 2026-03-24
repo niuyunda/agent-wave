@@ -34,13 +34,11 @@ def test_cli_task_run_invokes_tasking(
         db_path: Path | None,
         *,
         agent_provider: str | None = None,
-        agent_non_interactive: bool | None = None,
         project_dir: Path | None = None,
     ):
         captured["spec_path"] = str(spec_path)
         captured["db_path"] = str(db_path)
         captured["agent_provider"] = agent_provider
-        captured["agent_non_interactive"] = str(agent_non_interactive)
         captured["project_dir"] = str(project_dir) if project_dir is not None else None
         return _FakeTask(
             id="task-1",
@@ -61,7 +59,6 @@ def test_cli_task_run_invokes_tasking(
     assert "Task started: task-1" in result.stdout
     assert str(spec.resolve()) == captured["spec_path"]
     assert captured["agent_provider"] is None
-    assert captured["agent_non_interactive"] == "True"
     assert captured["project_dir"] is None
 
 
@@ -83,11 +80,9 @@ def test_cli_task_run_forwards_agent_overrides(
         db_path: Path | None,
         *,
         agent_provider: str | None = None,
-        agent_non_interactive: bool | None = None,
         project_dir: Path | None = None,
     ):
         captured["agent_provider"] = agent_provider
-        captured["agent_non_interactive"] = str(agent_non_interactive)
         captured["project_dir"] = str(project_dir) if project_dir is not None else None
         return _FakeTask(
             id="task-2",
@@ -116,7 +111,6 @@ def test_cli_task_run_forwards_agent_overrides(
     assert result.exit_code == 0
     assert "Task started: task-2" in result.stdout
     assert captured["agent_provider"] == "codex"
-    assert captured["agent_non_interactive"] == "True"
     assert captured["project_dir"] is None
 
 
@@ -138,10 +132,8 @@ def test_cli_task_run_forwards_project_dir(
         db_path: Path | None,
         *,
         agent_provider: str | None = None,
-        agent_non_interactive: bool | None = None,
         project_dir: Path | None = None,
     ):
-        captured["agent_non_interactive"] = str(agent_non_interactive)
         captured["project_dir"] = str(project_dir) if project_dir is not None else None
         return _FakeTask(
             id="task-3",
@@ -169,48 +161,7 @@ def test_cli_task_run_forwards_project_dir(
         ],
     )
     assert result.exit_code == 0
-    assert captured["agent_non_interactive"] == "True"
     assert captured["project_dir"] == str(project_dir.resolve())
-
-
-def test_cli_task_run_can_disable_non_interactive(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    @dataclass
-    class _FakeTask:
-        id: str
-        state: TaskState
-        project_name: str
-        feature: str
-        session: str
-
-    captured: dict[str, str | None] = {}
-
-    def _fake_run_task_from_spec(
-        spec_path: Path,
-        db_path: Path | None,
-        *,
-        agent_provider: str | None = None,
-        agent_non_interactive: bool | None = None,
-        project_dir: Path | None = None,
-    ):
-        captured["agent_non_interactive"] = str(agent_non_interactive)
-        return _FakeTask(
-            id="task-4",
-            state=TaskState.RUNNING,
-            project_name="demo",
-            feature="feat-d",
-            session="sess-4",
-        )
-
-    monkeypatch.setattr("agvv.cli.run_task_from_spec", _fake_run_task_from_spec)
-    spec = tmp_path / "task.md"
-    spec.write_text("{}", encoding="utf-8")
-    result = runner.invoke(
-        app, ["task", "run", "--spec", str(spec), "--agent-interactive"]
-    )
-    assert result.exit_code == 0
-    assert captured["agent_non_interactive"] == "False"
 
 
 def test_cli_task_status_no_tasks(

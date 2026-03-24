@@ -283,7 +283,7 @@ class TaskStore:
         return [self._row_to_snapshot(row) for row in rows]
 
     def update_task_session(self, task_id: str, session: str) -> TaskSnapshot:
-        """Update tmux session name for a task and return latest snapshot."""
+        """Update acpx session name for a task and return latest snapshot."""
         self.get_task(task_id)
         with self._connection() as conn:
             conn.execute(
