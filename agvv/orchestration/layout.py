@@ -128,17 +128,26 @@ def _resolve_adopt_source_repo(existing_repo: Path) -> Path:
     Handles:
     - Regular git repo: <project>/.git/
     - Bare repo: <project>.git/ (HEAD exists, no .git subdirectory)
-    - Git worktree: <project>/ with .git as a gitlink file
+    - Git worktree: <project>/ with .git as a gitlink file (rejected)
     """
     if not existing_repo.exists() or not existing_repo.is_dir():
         raise AgvvError(f"Project directory not found: {existing_repo}")
 
+    git_entry = existing_repo / ".git"
+
     # Regular git repo: .git is a subdirectory.
-    if (existing_repo / ".git").exists():
+    if git_entry.is_dir():
         return existing_repo
 
+    # Git worktree: .git is a gitlink file.
+    if git_entry.is_file():
+        raise AgvvError(
+            f"{existing_repo} appears to be a linked git worktree (.git is a file). "
+            "Pass the primary repository path via --project-dir."
+        )
+
     # Bare repo: HEAD exists but .git is not a subdirectory.
-    if (existing_repo / "HEAD").exists() and not (existing_repo / ".git").exists():
+    if (existing_repo / "HEAD").exists() and not git_entry.exists():
         return existing_repo
 
     first_level_git_entries = sorted(

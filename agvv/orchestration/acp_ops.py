@@ -1,4 +1,4 @@
-"""ACP session lifecycle operations for orchestration (replaces tmux_ops)."""
+"""ACP session lifecycle operations for orchestration."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ class AcpSessionStatus:
         last_prompt: str | None,
         last_exit: str | None,
     ):
+        """Store normalized acpx status fields for session lifecycle decisions."""
         self.state = state
         self.pid = pid
         self.session_id = session_id

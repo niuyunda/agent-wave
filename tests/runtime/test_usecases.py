@@ -78,10 +78,23 @@ def _patch_session_launch(
     acp_send_prompt=lambda _agent, _session, _cwd, _prompt_path, _output_log_path=None, **kwargs: (
         None
     ),
+    acp_session_status=None,
 ) -> None:
     monkeypatch.setattr("agvv.orchestration.start_feature", start_feature)
     # Patch the acp_ops module directly (not via import path)
     import agvv.orchestration.acp_ops as _acp_ops
+
+    if acp_session_status is None:
+
+        def acp_session_status(_agent, _session, _cwd):
+            return _acp_ops.AcpSessionStatus(
+                state="running",
+                pid=123,
+                session_id=_session,
+                uptime="1s",
+                last_prompt=None,
+                last_exit=None,
+            )
 
     def _composite_exists(agent, session, cwd):
         return acp_session_exists(agent, session, cwd)
@@ -97,6 +110,7 @@ def _patch_session_launch(
     monkeypatch.setattr(_acp_ops, "acpx_session_exists", _composite_exists)
     monkeypatch.setattr(_acp_ops, "acpx_create_session", _composite_create)
     monkeypatch.setattr(_acp_ops, "acpx_send_prompt", _composite_send)
+    monkeypatch.setattr(_acp_ops, "acpx_session_status", acp_session_status)
 
 
 def test_task_store_create_and_list(tmp_path: Path) -> None:
@@ -163,6 +177,57 @@ def test_run_task_from_spec_starts_coding_session(
     feature_dir = tmp_path / "demo" / "worktrees" / "feat_run"
     assert (feature_dir / ".agvv" / "rendered_prompt.md").exists()
     assert (feature_dir / ".agvv" / "input_snapshot.json").exists()
+
+
+def test_run_task_from_spec_marks_done_when_session_exits_immediately(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    spec_path = _write_spec(
+        tmp_path / "task-immediate-done.md",
+        {
+            "task_id": "task_immediate_done",
+            "project_name": "demo",
+            "feature": "feat_immediate_done",
+            "agent_cmd": "echo run",
+            "base_dir": str(tmp_path),
+        },
+    )
+    project_dir = tmp_path / "demo"
+    (project_dir / ".git").mkdir(parents=True, exist_ok=True)
+    (project_dir / "worktrees").mkdir(parents=True, exist_ok=True)
+
+    def _fake_start_feature(**kwargs):
+        feature_dir = (
+            Path(kwargs["base_dir"])
+            / kwargs["project_name"]
+            / "worktrees"
+            / kwargs["feature"].replace("/", "-")
+        )
+        feature_dir.mkdir(parents=True, exist_ok=True)
+
+    def _status_dead(_agent, _session, _cwd):
+        import agvv.orchestration.acp_ops as _acp_ops
+
+        return _acp_ops.AcpSessionStatus(
+            state="dead",
+            pid=None,
+            session_id=_session,
+            uptime=None,
+            last_prompt=None,
+            last_exit="0",
+        )
+
+    _patch_session_launch(
+        monkeypatch,
+        start_feature=_fake_start_feature,
+        acp_session_status=_status_dead,
+    )
+
+    task = run_task_from_spec(spec_path=spec_path, db_path=tmp_path / "tasks.db")
+    assert task.state == TaskState.DONE
+    assert task.started_at is not None
+    assert task.finished_at is not None
 
 
 def test_run_task_from_spec_applies_agent_overrides(

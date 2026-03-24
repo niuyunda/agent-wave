@@ -86,6 +86,7 @@ def launch_coding_session(
     fresh_setup: bool,
 ) -> TaskSnapshot:
     """Ensure feature worktree exists and launch acpx coding session."""
+    launch_started_at = now_iso()
     try:
         worktree = feature_worktree_path(task)
         if fresh_setup:
@@ -110,22 +111,54 @@ def launch_coding_session(
             store, task, "task.launch", f"Failed to launch coding session: {exc}"
         )
 
-    store.add_event(
-        task.id,
-        "info",
-        "task.launch",
-        "Coding session started",
-        {
-            "session": task.session,
-            "prompt_path": str(artifacts["prompt_path"]),
-            "input_snapshot_path": str(artifacts["input_snapshot_path"]),
-            "output_log_path": str(artifacts["output_log_path"]),
-        },
-    )
+    from agvv.orchestration import acp_ops
+
+    agent_subcmd = acp_agent_subcommand(task.agent or "codex")
+    session_status = acp_ops.acpx_session_status(agent_subcmd, task.session, worktree)
+
+    event_meta = {
+        "session": task.session,
+        "prompt_path": str(artifacts["prompt_path"]),
+        "input_snapshot_path": str(artifacts["input_snapshot_path"]),
+        "output_log_path": str(artifacts["output_log_path"]),
+        "session_state": session_status.state,
+    }
+
+    # acpx prompt send waits for agent execution; if the session already ended,
+    # persist terminal DONE immediately instead of waiting for daemon reconciliation.
+    if session_status.state in ("dead", "no_session"):
+        store.add_event(
+            task.id, "info", "session.done", "Coding session ended", event_meta
+        )
+        return store.update_task(
+            task.id,
+            state=TaskState.DONE,
+            started_at=launch_started_at,
+            finished_at=now_iso(),
+            last_error=None,
+        )
+
+    if session_status.state is None:
+        store.add_event(
+            task.id,
+            "warning",
+            "task.launch.status_unknown",
+            "Coding session status is unknown; keeping task in RUNNING state.",
+            event_meta,
+        )
+    else:
+        store.add_event(
+            task.id,
+            "info",
+            "task.launch",
+            "Coding session started",
+            event_meta,
+        )
+
     return store.update_task(
         task.id,
         state=TaskState.RUNNING,
-        started_at=now_iso(),
+        started_at=launch_started_at,
         finished_at=None,
         last_error=None,
     )

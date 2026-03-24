@@ -193,6 +193,18 @@ def test_adopt_project_fails_when_source_has_no_commits(tmp_path: Path) -> None:
         adopt_project(src, "adopted-empty", tmp_path)
 
 
+def test_adopt_project_rejects_git_worktree_path_source(tmp_path: Path) -> None:
+    src = _create_existing_repo(tmp_path / "src-main", branch="main")
+    linked_worktree = tmp_path / "src-linked-worktree"
+    _git(
+        ["worktree", "add", str(linked_worktree), "-b", "feat-linked-worktree"],
+        cwd=src,
+    )
+
+    with pytest.raises(AgvvError, match="linked git worktree"):
+        adopt_project(linked_worktree, "adopted-from-worktree", tmp_path)
+
+
 def test_start_feature_creates_worktree_metadata_and_dirs(tmp_path: Path) -> None:
     init_project("demo", tmp_path)
     paths = start_feature(

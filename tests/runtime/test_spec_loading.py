@@ -223,6 +223,38 @@ def test_load_task_spec_rejects_invalid_yaml_mapping_line(tmp_path: Path) -> Non
         load_task_spec(spec_path)
 
 
+def test_load_task_spec_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task-dup-key.md"
+    spec_path.write_text(
+        "---\nproject_name: demo\nproject_name: dup\nfeature: feat_dup\n---\n\nTask body\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(AgvvError, match="Duplicate YAML key 'project_name'"):
+        load_task_spec(spec_path)
+
+
+def test_load_task_spec_rejects_nested_mapping_blocks(tmp_path: Path) -> None:
+    spec_path = tmp_path / "task-nested-mapping.md"
+    spec_path.write_text(
+        "---\nproject_name: demo\nfeature: feat_nested\nconstraints:\n  key: value\n---\n\nTask body\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(AgvvError, match="only list items are supported"):
+        load_task_spec(spec_path)
+
+
+def test_load_task_spec_rejects_unterminated_quote_in_inline_list(
+    tmp_path: Path,
+) -> None:
+    spec_path = tmp_path / "task-inline-list-bad-quote.md"
+    spec_path.write_text(
+        '---\nproject_name: demo\nfeature: feat_inline_bad_quote\nagent_extra_args: ["--model, gpt-5]\nrequirements: run\n---\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(AgvvError, match="unterminated double-quoted scalar"):
+        load_task_spec(spec_path)
+
+
 def test_load_task_spec_treats_comment_only_scalar_as_null(tmp_path: Path) -> None:
     spec_path = tmp_path / "task-comment-null.md"
     spec_path.write_text(
@@ -501,3 +533,22 @@ def test_taskspec_normalized_session_preserves_explicit_session() -> None:
         }
     )
     assert spec.normalized_session() == "agvv-custom"
+
+
+def test_taskspec_generated_task_id_is_collision_resistant() -> None:
+    first = TaskSpec.from_payload(
+        {
+            "project_name": "demo",
+            "feature": "feat_collision_resistant",
+            "requirements": "Implement feature.",
+        }
+    )
+    second = TaskSpec.from_payload(
+        {
+            "project_name": "demo",
+            "feature": "feat_collision_resistant",
+            "requirements": "Implement feature.",
+        }
+    )
+    assert first.task_id != second.task_id
+    assert first.task_id.startswith("demo-feat_collision_resistant-")

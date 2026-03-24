@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from pydantic import (
     BaseModel,
@@ -28,16 +29,17 @@ _AGENT_PROVIDER_ALIASES = {
 
 
 def _generate_task_id(project_name: str, feature: str) -> str:
-    """Generate a timestamped task identifier for a project/feature pair."""
-    stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S")
-    return f"{project_name}-{feature}-{stamp}"
+    """Generate a collision-resistant task identifier for a project/feature pair."""
+    stamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    suffix = uuid4().hex[:8]
+    return f"{project_name}-{feature}-{stamp}-{suffix}"
 
 
 class TaskState(str, Enum):
     """Lifecycle states for the task state machine."""
 
     PENDING = "pending"  # created, not yet launched
-    RUNNING = "running"  # tmux session active
+    RUNNING = "running"  # acpx session active
     DONE = "done"  # agent session ended cleanly
     FAILED = "failed"  # error during setup or launch
     TIMED_OUT = "timed_out"  # session exceeded timeout
@@ -191,7 +193,7 @@ class TaskSpec(BaseModel):
         return self
 
     def normalized_session(self) -> str:
-        """Return a deterministic tmux session name for the task."""
+        """Return a deterministic acpx session name for the task."""
         return self.session or f"agvv-{self.task_id}"
 
     def to_payload(self) -> dict[str, Any]:

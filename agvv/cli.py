@@ -150,13 +150,13 @@ def task_retry(
         str | None, typer.Option("--db-path", help="Path to SQLite task DB.")
     ] = None,
     session: Annotated[
-        str | None, typer.Option("--session", help="Override tmux session.")
+        str | None, typer.Option("--session", help="Override acpx session.")
     ] = None,
     force_restart: Annotated[
         bool,
         typer.Option(
             "--force-restart",
-            help="Kill existing tmux session when task is currently running, then relaunch.",
+            help="Close existing acpx session when task is currently running, then relaunch.",
         ),
     ] = False,
 ) -> None:
