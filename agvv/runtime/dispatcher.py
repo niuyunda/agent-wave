@@ -9,11 +9,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
-import agvv.orchestration as orch
 from agvv.runtime.models import TERMINAL_STATES, TaskState
 from agvv.runtime.session_lifecycle import launch_coding_session
 from agvv.runtime.store import TaskSnapshot, TaskStore, now_iso, parse_iso
-from agvv.runtime.task_helpers import mark_failed
+from agvv.runtime.task_helpers import feature_worktree_path, mark_failed
+from agvv.orchestration import acp_ops
 from agvv.shared.errors import AgvvError
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,6 +33,11 @@ def _handle_pending(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
 
 def _handle_running(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
     """Check whether the coding session is still alive; transition when it ends."""
+    from agvv.runtime.models import acp_agent_subcommand
+
+    worktree = feature_worktree_path(task)
+    agent_subcmd = acp_agent_subcommand(task.agent or "codex")
+
     if _session_timed_out(task):
         message = (
             f"Coding session exceeded timeout ({task.spec.timeout_minutes} minutes)."
@@ -45,13 +50,13 @@ def _handle_running(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
             {"session": task.session, "timeout_minutes": task.spec.timeout_minutes},
         )
         try:
-            orch.tmux_kill_session(task.session)
+            acp_ops.acpx_close_session(agent_subcmd, task.session, worktree)
         except Exception as exc:
             store.add_event(
                 task.id,
                 "warning",
                 "session.timeout.kill",
-                f"Failed to kill timed-out session: {exc}",
+                f"Failed to close timed-out session: {exc}",
                 {"session": task.session},
             )
         return store.update_task(
@@ -61,7 +66,7 @@ def _handle_running(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
             finished_at=now_iso(),
         )
 
-    if orch.tmux_session_exists(task.session):
+    if acp_ops.acpx_session_running(agent_subcmd, task.session, worktree):
         return task  # still running, nothing to do
 
     # Session ended — mark done

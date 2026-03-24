@@ -10,7 +10,7 @@ from agvv.orchestration.layout import (
     start_feature,
 )
 from agvv.orchestration.models import LayoutPaths
-from agvv.orchestration.tmux_ops import (
+from agvv.orchestration.tmux_ops_deprecated import (
     tmux_kill_session,
     tmux_new_session,
     tmux_pipe_pane,

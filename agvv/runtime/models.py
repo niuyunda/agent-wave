@@ -65,6 +65,18 @@ def normalize_agent_provider(value: str | None) -> str:
     return provider
 
 
+# Map internal provider names to acpx subcommand names
+ACP_AGENT_SUBCMD = {
+    "claude_code": "claude",
+    "codex": "codex",
+}
+
+
+def acp_agent_subcommand(provider: str) -> str:
+    """Return the acpx subcommand name for a normalized provider."""
+    return ACP_AGENT_SUBCMD.get(provider, provider)
+
+
 def build_agent_command(provider: str, model: str | None, extra_args: list[str]) -> str:
     """Build a shell-safe command line for the configured coding agent."""
     if provider == "codex":

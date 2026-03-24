@@ -11,7 +11,9 @@ from agvv.runtime.models import (
     TaskState,
     normalize_agent_provider,
     build_agent_command,
+    acp_agent_subcommand,
 )
+from agvv.orchestration import acp_ops
 from agvv.runtime.session_lifecycle import launch_coding_session
 from agvv.runtime.spec import load_task_spec
 from agvv.runtime.store import TaskSnapshot, TaskStore, now_iso
@@ -117,16 +119,18 @@ def retry_task(
     if task.state not in RECOVERABLE_RETRY_STATES:
         raise AgvvError(f"Cannot retry task in state: {task.state.value}")
 
-    session_exists = orch.tmux_session_exists(task.session)
+    worktree = feature_worktree_path(task)
+    agent_subcmd = acp_agent_subcommand(task.agent or "codex")
+    session_exists = acp_ops.acpx_session_exists(agent_subcmd, task.session, worktree)
     if session_exists and not force_restart:
         raise AgvvError(f"Task is already running in session: {task.session}")
     if session_exists and force_restart:
-        orch.tmux_kill_session(task.session)
+        acp_ops.acpx_close_session(agent_subcmd, task.session, worktree)
         store.add_event(
             task.id,
             "warning",
             "task.retry.force_restart",
-            "Killed existing tmux session before retry relaunch.",
+            "Closed existing acpx session before retry relaunch.",
             {"session": task.session, "state": task.state.value},
         )
 
@@ -139,8 +143,8 @@ def retry_task(
             {"session": session},
         )
         task = store.update_task_session(task.id, session)
+        worktree = feature_worktree_path(task)
 
-    worktree = feature_worktree_path(task)
     return launch_coding_session(store, task, fresh_setup=not worktree.exists())
 
 
@@ -154,8 +158,10 @@ def cleanup_task(
     task = store.get_task(task_id)
 
     try:
-        if orch.tmux_session_exists(task.session):
-            orch.tmux_kill_session(task.session)
+        worktree = feature_worktree_path(task)
+        agent_subcmd = acp_agent_subcommand(task.agent or "codex")
+        if acp_ops.acpx_session_exists(agent_subcmd, task.session, worktree):
+            acp_ops.acpx_close_session(agent_subcmd, task.session, worktree)
 
         if force:
             orch.cleanup_feature_force(
