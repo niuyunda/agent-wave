@@ -32,7 +32,8 @@ def test_daemon_run_once_marks_running_done_when_session_ends(
     )
 
     monkeypatch.setattr(
-        "agvv.orchestration.tmux_session_exists", lambda _session: False
+        "agvv.orchestration.acp_ops.acpx_session_running",
+        lambda _agent, _session, _cwd: False,
     )
 
     results = daemon_run_once(tmp_path / "tasks.db")
@@ -193,8 +194,10 @@ def test_daemon_run_once_marks_timed_out_when_session_exceeds_timeout(
     ).isoformat()
     store.update_task(created.id, state=TaskState.RUNNING, started_at=past)
 
-    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: True)
-    monkeypatch.setattr("agvv.orchestration.tmux_kill_session", lambda _session: None)
+    monkeypatch.setattr(
+        "agvv.orchestration.acp_ops.acpx_close_session",
+        lambda _agent, _session, _cwd: None,
+    )
 
     results = daemon_run_once(tmp_path / "tasks.db")
     assert len(results) == 1
@@ -221,10 +224,9 @@ def test_daemon_run_once_marks_timed_out_even_when_kill_raises(
     ).isoformat()
     store.update_task(created.id, state=TaskState.RUNNING, started_at=past)
 
-    monkeypatch.setattr("agvv.orchestration.tmux_session_exists", lambda _session: True)
     monkeypatch.setattr(
-        "agvv.orchestration.tmux_kill_session",
-        lambda _session: (_ for _ in ()).throw(RuntimeError("kill failed")),
+        "agvv.orchestration.acp_ops.acpx_close_session",
+        lambda _agent, _session, _cwd: (_ for _ in ()).throw(RuntimeError("kill failed")),
     )
 
     results = daemon_run_once(tmp_path / "tasks.db")
