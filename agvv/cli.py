@@ -72,8 +72,10 @@ def task_run(
     project_dir: Annotated[
         str | None,
         typer.Option(
-            "--project-dir",
-            help="Path to an existing local git project. If set, task run auto-adopts it before launch.",
+            "--dir",
+            "-d",
+            help="Project directory. If it does not exist it will be created. "
+                 "If set, task run auto-adopts or auto-inits the project before launch.",
         ),
     ] = None,
 ) -> None:

@@ -37,6 +37,7 @@ def layout_paths(
         repo_dir=project_dir / ".git",
         main_dir=project_dir,  # main worktree IS the project root
         worktrees_dir=project_dir / "worktrees",
+        docs_dir=project_dir / "docs",
         feature_dir=(project_dir / "worktrees" / _feature_to_dirname(feature))
         if feature
         else None,
@@ -174,15 +175,25 @@ def _resolve_adopt_source_repo(existing_repo: Path) -> Path:
     )
 
 
-def _exclude_worktrees(main_dir: Path) -> None:
-    """Add /worktrees/ to .git/info/exclude in the main worktree."""
-    exclude_path = main_dir / ".git" / "info" / "exclude"
-    if not exclude_path.exists():
-        return
-    marker = "/worktrees/\n"
-    content = exclude_path.read_text(encoding="utf-8")
-    if marker not in content:
-        exclude_path.write_text(content + marker, encoding="utf-8")
+def _setup_conventions(project_dir: Path) -> None:
+    """Create worktrees/docs directories and write .gitignore / .gitattributes."""
+    worktrees_dir = project_dir / "worktrees"
+    docs_dir = project_dir / "docs"
+
+    worktrees_dir.mkdir(parents=True, exist_ok=True)
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    gitignore_path = project_dir / ".gitignore"
+    gitignore_marker = "/worktrees/\n"
+    existing = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
+    if gitignore_marker not in existing:
+        gitignore_path.write_text(existing + gitignore_marker, encoding="utf-8")
+
+    gitattributes_path = project_dir / ".gitattributes"
+    gitattr_marker = "* text=auto eol=lf\n"
+    existing_attr = gitattributes_path.read_text(encoding="utf-8") if gitattributes_path.exists() else ""
+    if gitattr_marker not in existing_attr:
+        gitattributes_path.write_text(existing_attr + gitattr_marker, encoding="utf-8")
 
 
 def init_project(project_name: str, base_dir: Path) -> LayoutPaths:
@@ -190,13 +201,17 @@ def init_project(project_name: str, base_dir: Path) -> LayoutPaths:
 
     The project directory itself becomes the main worktree (no nested main/).
     Feature worktrees live under <project>/worktrees/<feat-slug>/.
+    Task specs and documentation live under <project>/docs/.
 
     Sequence:
         mkdir <project>
         git init -b main <project>
-        mkdir <project>/worktrees
-        printf "/worktrees/\n" >> .git/info/exclude
-        [optional initial commit]
+        mkdir worktrees/ docs/
+        echo "/worktrees/" >> .gitignore
+        echo "* text=auto eol=lf" >> .gitattributes
+        touch README.md
+        git add .
+        git commit -m "initial project scaffold"
     """
     _ensure_layout_name(project_name, "Project name")
     paths = layout_paths(project_name, base_dir)
@@ -225,24 +240,25 @@ def init_project(project_name: str, base_dir: Path) -> LayoutPaths:
         )
         run_git(["-C", str(paths.project_dir), "config", "user.name", "Agent Wave"])
 
-    # Create initial commit if the repo is still empty (no HEAD).
-    if not run_git_success(
-        ["-C", str(paths.project_dir), "rev-parse", "--verify", "HEAD"]
-    ):
-        run_git(
-            [
-                "-C",
-                str(paths.project_dir),
-                "commit",
-                "--allow-empty",
-                "-m",
-                "init: project setup",
-            ]
-        )
+    # Create worktrees/ and docs/ directories + workspace convention files.
+    _setup_conventions(paths.project_dir)
 
-    # Create worktrees/ directory and exclude it from the main worktree.
-    paths.worktrees_dir.mkdir(parents=True, exist_ok=True)
-    _exclude_worktrees(paths.main_dir)
+    # Touch README.md and commit everything.
+    readme = paths.project_dir / "README.md"
+    readme.touch()
+    gitignore = paths.project_dir / ".gitignore"
+    gitattributes = paths.project_dir / ".gitattributes"
+    run_git(["-C", str(paths.project_dir), "add",
+             str(readme), str(gitignore), str(gitattributes)])
+    run_git(
+        [
+            "-C",
+            str(paths.project_dir),
+            "commit",
+            "-m",
+            "initial project scaffold",
+        ]
+    )
 
     return paths
 
@@ -294,9 +310,8 @@ def adopt_project(
 
     branch = _default_branch(paths.repo_dir)
 
-    # Create worktrees/ directory and exclude it from the main worktree.
-    paths.worktrees_dir.mkdir(parents=True, exist_ok=True)
-    _exclude_worktrees(paths.main_dir)
+    # Create worktrees/ and docs/ directories + workspace convention files.
+    _setup_conventions(paths.project_dir)
 
     return paths, branch
 

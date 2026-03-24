@@ -173,7 +173,15 @@ class TaskStore:
                     {"state": TaskState.PENDING.value},
                 )
             except sqlite3.IntegrityError as exc:
-                raise AgvvError(f"Task id already exists: {spec.task_id}") from exc
+                # Distinguish duplicate-key from other constraint failures so the
+                # error message is actionable rather than always saying "task id
+                # already exists" (the most common alternative is NOT NULL on a
+                # column such as repo).
+                msg = str(exc)
+                if "UNIQUE constraint failed: tasks.id" in msg or "PRIMARY KEY" in msg:
+                    raise AgvvError(f"Task id already exists: {spec.task_id}") from exc
+                raise AgvvError(f"Cannot create task ({msg}). Check required fields "
+                                 f"in the task spec (e.g. repo, project_name, feature).") from exc
         return self.get_task(spec.task_id)
 
     @staticmethod

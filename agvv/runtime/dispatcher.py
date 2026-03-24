@@ -27,8 +27,16 @@ def _session_timed_out(task: TaskSnapshot) -> bool:
 
 
 def _handle_pending(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
-    """Launch a fresh coding session for pending tasks."""
-    return launch_coding_session(store, task, fresh_setup=True)
+    """Launch a fresh coding session for pending tasks.
+
+    If a worktree already exists (e.g. from a previous failed launch attempt)
+    the worktree is reused rather than recreated — fresh_setup=False.
+    """
+    worktree = feature_worktree_path(task)
+    # A worktree left behind from a previous failed launch is identifiable by
+    # having a .agvv/ directory.  Re-use it rather than failing.
+    fresh = not (worktree.exists() and (worktree / ".agvv").exists())
+    return launch_coding_session(store, task, fresh_setup=fresh)
 
 
 def _handle_running(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
