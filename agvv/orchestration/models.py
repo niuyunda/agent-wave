@@ -12,10 +12,12 @@ class LayoutPaths:
 
     Layout:
         <project>/
-            # project files (main/default worktree lives directly here)
             .git/                # git repository metadata
             worktrees/           # extra task worktrees only
                 feat-<slug>/    # one feature worktree per task
+            docs/                # task specs and project documentation
+            .gitignore          # excludes /worktrees/
+            .gitattributes       # normalised line endings
     """
 
     project_dir: Path
@@ -26,5 +28,7 @@ class LayoutPaths:
     """Main worktree directory (equals project_dir)."""
     worktrees_dir: Path
     """Directory containing all feature worktrees."""
+    docs_dir: Path
+    """Directory containing task specs and project documentation."""
     feature_dir: Path | None = None
     """Feature worktree directory, under worktrees_dir when set."""

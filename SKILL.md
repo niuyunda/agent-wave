@@ -13,7 +13,7 @@ Follow it exactly to avoid invalid specs, broken sessions, or stuck task states.
 Use only these commands (from installed binary or source tree):
 
 ```bash
-agvv task run --spec <path> [--db-path <path>] [--agent <provider>] [--project-dir <path>]
+agvv task run --spec <path> [--db-path <path>] [--agent <provider>] [--dir|-d <path>]
 agvv task status [--db-path <path>] [--task-id <id>] [--state <pending|running|done|failed|timed_out|cleaned>]
 agvv task retry --task-id <id> [--db-path <path>] [--session <name>] [--force-restart]
 agvv task cleanup --task-id <id> [--db-path <path>] [--force]
@@ -75,12 +75,13 @@ Implement the requested coding task.
 
 1. Validate files and naming rules.
 2. Decide run mode:
-   - Existing repo: use `--project-dir /abs/path/to/repo`
-   - New managed project: do not pass `--project-dir`
+   - Existing repo: use `--dir /abs/path/to/repo` (repo must exist)
+   - New project at specific location: use `--dir /abs/path/to/project` (will be auto-created)
+   - New managed project in cwd: do not pass `--dir`; project created at `<cwd>/<project_name>`
 3. Start task:
 
 ```bash
-agvv task run --spec ./task.md [--project-dir ...] [--agent codex|claude]
+agvv task run --spec ./task.md [--dir|-d <path>] [--agent codex|claude]
 ```
 
 4. Record the `task_id` from command output.

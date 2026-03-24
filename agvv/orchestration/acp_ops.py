@@ -171,6 +171,59 @@ def acpx_close_session(
         pass  # ignore if already closed
 
 
+def acpx_delete_session(
+    agent: str,
+    session: str,
+    cwd: Path,
+) -> None:
+    """Hard-delete an acpx session: close it and remove its files from ~/.acpx/sessions/.
+
+    Idempotent: safe to call even if the session is already gone.
+    """
+    # Best-effort soft-close (may fail if process already exited).
+    try:
+        acpx_close_session(agent, session, cwd)
+    except Exception:
+        pass
+
+    # Find and delete session files from ~/.acpx/sessions/.
+    sessions_dir = Path.home() / ".acpx" / "sessions"
+    index_path = sessions_dir / "index.json"
+
+    if not index_path.exists():
+        return
+
+    try:
+        index_data = json.loads(index_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+
+    entries = index_data.get("entries") or []
+    kept_entries = []
+    deleted = False
+
+    for entry in entries:
+        if entry.get("name") == session and str(cwd) in entry.get("cwd", ""):
+            # Delete the session .json and .stream.ndjson files.
+            file_id = entry.get("file") or ""
+            for suffix in ("", ".stream.ndjson"):
+                file_path = sessions_dir / (file_id + suffix)
+                if file_path.exists():
+                    file_path.unlink(missing_ok=True)
+            deleted = True
+        else:
+            kept_entries.append(entry)
+
+    # Rewrite index without the deleted entry.
+    if deleted:
+        index_data["entries"] = kept_entries
+        index_data["files"] = [e.get("file") for e in kept_entries if e.get("file")]
+        try:
+            index_path.write_text(json.dumps(index_data, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+
 def acpx_send_prompt(
     agent: str,
     session: str,

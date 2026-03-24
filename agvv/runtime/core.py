@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import agvv.orchestration as orch
@@ -70,15 +71,22 @@ def run_task_from_spec(
 
     if project_dir is not None:
         source_repo = project_dir.expanduser().resolve()
-        if not source_repo.exists():
-            raise AgvvError(f"Project directory not found: {source_repo}")
         layout = orch.layout_paths(spec.project_name, spec.base_dir)
-        if not layout.repo_dir.exists() or not layout.main_dir.exists():
-            orch.adopt_project(
-                existing_repo=source_repo,
-                project_name=spec.project_name,
-                base_dir=spec.base_dir,
-            )
+        if source_repo.exists():
+            # --dir points to an existing directory: adopt it.
+            if not layout.repo_dir.exists() or not layout.main_dir.exists():
+                orch.adopt_project(
+                    existing_repo=source_repo,
+                    project_name=spec.project_name,
+                    base_dir=spec.base_dir,
+                )
+        else:
+            # --dir points to a non-existent path: create the project there.
+            if not layout.repo_dir.exists() or not layout.main_dir.exists():
+                orch.init_project(
+                    project_name=spec.project_name,
+                    base_dir=spec.base_dir,
+                )
     else:
         layout = orch.layout_paths(spec.project_name, spec.base_dir)
         if not layout.repo_dir.exists() or not layout.main_dir.exists():
@@ -90,6 +98,19 @@ def run_task_from_spec(
             f"Project repository is not initialized at {layout.repo_dir}. "
             "Automatic project setup failed during task startup."
         )
+
+    # Copy task spec into docs/ so it becomes part of the project git history.
+    # Skip if the spec is already inside the project directory.
+    # Idempotent: only copy if docs/ was created by init_project/adopt_project.
+    project_root = layout.docs_dir.parent.resolve()
+    if not str(spec_path.resolve()).startswith(str(project_root) + "/"):
+        dest = layout.docs_dir / spec_path.name
+        try:
+            layout.docs_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(spec_path.resolve(), dest)
+        except OSError:
+            # docs/ not available yet (e.g. tests with mocked init); skip gracefully.
+            pass
 
     store = TaskStore(db_path)
     task = store.create_task(spec)
@@ -116,12 +137,12 @@ def retry_task(
     if session_exists and not force_restart:
         raise AgvvError(f"Task is already running in session: {task.session}")
     if session_exists and force_restart:
-        acp_ops.acpx_close_session(agent_subcmd, task.session, worktree)
+        acp_ops.acpx_delete_session(agent_subcmd, task.session, worktree)
         store.add_event(
             task.id,
             "warning",
             "task.retry.force_restart",
-            "Closed existing acpx session before retry relaunch.",
+            "Deleted existing acpx session before retry relaunch.",
             {"session": task.session, "state": task.state.value},
         )
 
@@ -151,8 +172,9 @@ def cleanup_task(
     try:
         worktree = feature_worktree_path(task)
         agent_subcmd = acp_agent_subcommand(task.agent or "codex")
-        if acp_ops.acpx_session_exists(agent_subcmd, task.session, worktree):
-            acp_ops.acpx_close_session(agent_subcmd, task.session, worktree)
+        # Hard-delete the acpx session: close it and remove its files.
+        # Safe to call even if the session already finished or the worktree is gone.
+        acp_ops.acpx_delete_session(agent_subcmd, task.session, worktree)
 
         if force:
             orch.cleanup_feature_force(

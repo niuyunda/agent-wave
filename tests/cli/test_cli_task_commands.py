@@ -156,7 +156,7 @@ def test_cli_task_run_forwards_project_dir(
             "run",
             "--spec",
             str(spec),
-            "--project-dir",
+            "--dir",
             str(project_dir),
         ],
     )
