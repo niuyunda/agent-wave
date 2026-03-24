@@ -137,12 +137,12 @@ def retry_task(
     if session_exists and not force_restart:
         raise AgvvError(f"Task is already running in session: {task.session}")
     if session_exists and force_restart:
-        acp_ops.acpx_close_session(agent_subcmd, task.session, worktree)
+        acp_ops.acpx_delete_session(agent_subcmd, task.session, worktree)
         store.add_event(
             task.id,
             "warning",
             "task.retry.force_restart",
-            "Closed existing acpx session before retry relaunch.",
+            "Deleted existing acpx session before retry relaunch.",
             {"session": task.session, "state": task.state.value},
         )
 
@@ -172,8 +172,9 @@ def cleanup_task(
     try:
         worktree = feature_worktree_path(task)
         agent_subcmd = acp_agent_subcommand(task.agent or "codex")
-        if acp_ops.acpx_session_exists(agent_subcmd, task.session, worktree):
-            acp_ops.acpx_close_session(agent_subcmd, task.session, worktree)
+        # Hard-delete the acpx session: close it and remove its files.
+        # Safe to call even if the session already finished or the worktree is gone.
+        acp_ops.acpx_delete_session(agent_subcmd, task.session, worktree)
 
         if force:
             orch.cleanup_feature_force(

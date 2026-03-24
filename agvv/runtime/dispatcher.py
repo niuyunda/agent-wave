@@ -58,13 +58,13 @@ def _handle_running(store: TaskStore, task: TaskSnapshot) -> TaskSnapshot:
             {"session": task.session, "timeout_minutes": task.spec.timeout_minutes},
         )
         try:
-            acp_ops.acpx_close_session(agent_subcmd, task.session, worktree)
+            acp_ops.acpx_delete_session(agent_subcmd, task.session, worktree)
         except Exception as exc:
             store.add_event(
                 task.id,
                 "warning",
                 "session.timeout.kill",
-                f"Failed to close timed-out session: {exc}",
+                f"Failed to delete timed-out session: {exc}",
                 {"session": task.session},
             )
         return store.update_task(
