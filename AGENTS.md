@@ -28,9 +28,9 @@ Do not develop directly in the main workspace.
 
 Required loop:
 
-1. Create task inputs (`task.md` + `task.json`).
+1. Create task input (`task.md`).
 2. Start task with `agvv task run` (use `--project-dir` for existing repo).
-3. Develop inside the new feature worktree created by `agvv`.
+3. Develop inside the new feature worktree under `worktrees/<feat-slug>/`.
 4. Run checks/tests continuously while developing.
 5. If any issue appears while using `agvv`, record it immediately (see section 4).
 6. Reconcile state with `agvv daemon run --once` and inspect `agvv task status`.
@@ -38,6 +38,38 @@ Required loop:
 8. After completion, clean up with `agvv task cleanup`.
 
 This is a strict operational rule: develop by using `agvv`, not beside `agvv`.
+
+## Project Layout
+
+```
+<project>/
+  .git/                  # git repository metadata
+  worktrees/             # feature worktrees (excluded from git)
+    feat-<slug>/        # one per task
+  # project files live directly in <project>/
+```
+
+- The project directory itself is the main worktree (no `main/` subdirectory).
+- Feature worktrees live under `worktrees/<feat-slug>/`.
+- `worktrees/` is declared in `.git/info/exclude` so git ignores it.
+- Feature names allow `/` for branch-style naming (`feat/demo`); directory name converts `/` to `-`.
+- Reserved feature names: `main`, `worktrees`.
+
+### Feature Branch Naming
+
+- Branch names: `feat/<slug>`, `fix/<slug>`, `refactor/<slug>`, `chore/<slug>`
+- Worktree directories: `feat-<slug>`, `fix-<slug>`, etc. (slash -> hyphen)
+
+### Conflict & Recovery
+
+If `git worktree add` fails or the target branch already exists, **do not attempt automatic recovery**. Stop and report to the orchestrator with the output of:
+
+```bash
+git worktree list
+git branch -v
+```
+
+The orchestrator decides whether to force-remove a stale worktree, delete and restart the branch, or resume existing work. Subagents do not make structural decisions about the repo.
 
 ## 4) Problem Logging (Required)
 

@@ -69,13 +69,6 @@ def task_run(
     agent: Annotated[
         str | None, typer.Option("--agent", help="Override agent provider.")
     ] = None,
-    agent_non_interactive: Annotated[
-        bool,
-        typer.Option(
-            "--agent-non-interactive/--agent-interactive",
-            help="Prefer non-interactive agent invocation when supported.",
-        ),
-    ] = True,
     project_dir: Annotated[
         str | None,
         typer.Option(
@@ -90,7 +83,6 @@ def task_run(
             spec_path=Path(spec).expanduser().resolve(),
             db_path=_resolve_path(db_path),
             agent_provider=agent,
-            agent_non_interactive=agent_non_interactive,
             project_dir=_resolve_path(project_dir),
         )
     except AgvvError as exc:

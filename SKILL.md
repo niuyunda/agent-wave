@@ -13,7 +13,7 @@ Follow it exactly to avoid invalid specs, broken sessions, or stuck task states.
 Use only these commands (from installed binary or source tree):
 
 ```bash
-agvv task run --spec <path> [--db-path <path>] [--agent <provider>] [--agent-non-interactive|--agent-interactive] [--project-dir <path>]
+agvv task run --spec <path> [--db-path <path>] [--agent <provider>] [--project-dir <path>]
 agvv task status [--db-path <path>] [--task-id <id>] [--state <pending|running|done|failed|timed_out|cleaned>]
 agvv task retry --task-id <id> [--db-path <path>] [--session <name>] [--force-restart]
 agvv task cleanup --task-id <id> [--db-path <path>] [--force]
@@ -46,8 +46,8 @@ Implement the requested coding task.
 ### Validation rules (strict)
 
 - `project_name` must match: `^[A-Za-z0-9_-]+$`
-- `feature` must match: `^[A-Za-z0-9_-]+$`
-- `feature` cannot be `main` or `repo.git`
+- `feature` must match: `^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$` (slashes allowed; directory converts `/` to `-`)
+- `feature` cannot be `main` or `worktrees`
 - `task.md` must start with YAML front matter delimited by `---`
 - Requirement text must be present:
   - preferred: Markdown body (below front matter)
@@ -57,7 +57,7 @@ Implement the requested coding task.
 
 - `repo` (string)
 - `from_branch` (default `main`)
-- `session` (custom tmux session name)
+- `session` (custom acpx session name)
 - `ticket`
 - `constraints` (string list)
 - `timeout_minutes` (int, default `240`)
@@ -69,6 +69,7 @@ Implement the requested coding task.
 - `agent` and `agent_model` in spec are reset by runtime.
 - To select provider, use CLI `--agent` (`codex` default; `claude` and `claude_code` are equivalent inputs).
 - When `task run` executes, `base_dir` from spec is overridden by runtime.
+- Sessions are managed by `acpx`; crash reconnect is handled automatically.
 
 ## 3) Execution Protocol
 
@@ -101,7 +102,7 @@ Repeat step 5 until state is one of: `done`, `failed`, `timed_out`, `cleaned`.
 agvv task retry --task-id <task_id>
 ```
 
-   - If a stale running tmux session exists, use:
+   - If a stale acpx session exists, use:
 
 ```bash
 agvv task retry --task-id <task_id> --force-restart
@@ -117,8 +118,10 @@ If cleanup is blocked by uncommitted changes in feature worktree, use `--force`.
 
 ## 4) Guardrails
 
-- For `feature` and `project_name`, do not use spaces, slashes, or punctuation except underscore (`_`) and hyphen (`-`).
+- For `project_name`, do not use spaces, slashes, or punctuation except underscore (`_`) and hyphen (`-`).
+- For `feature`, slashes are allowed for branch-style naming (`feat/demo`); the directory uses `-` as separator.
 - Do not use non-Markdown files as `--spec`; use `task.md`.
 - Do not rely on spec-level `agent` fields for provider selection.
 - Always run `daemon run --once`; without it, background state may not advance.
 - Do not manually delete managed worktrees; use `task cleanup`.
+- If `git worktree add` fails during setup, stop and report to the orchestrator — do not attempt automatic recovery.

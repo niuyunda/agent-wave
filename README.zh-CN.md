@@ -1,12 +1,12 @@
 # Agent Wave (`agvv`)
 
 `agvv` 是一个面向编码 Agent 的轻量任务编排工具。
-它为每个任务创建隔离的 git worktree，在后台 tmux 会话中运行 agent，并把任务状态持久化到 SQLite。
+它为每个任务创建隔离的 git worktree，通过 `acpx` 启动 agent 会话，并将任务状态持久化到 SQLite。
 
 ## 它能做什么
 
-- 用 `git worktree` 隔离任务改动（`main` + 每个 feature 独立工作树）。
-- 用 `tmux` 后台运行 agent，关闭终端后任务仍可继续。
+- 用 `git worktree` 隔离任务改动（主工作树 + 每个 feature 独立工作树）。
+- 通过 `acpx` 启动 agent（`codex` 或 `claude`），并在 `.agvv/` 写入启动产物。
 - 用 SQLite 持久化任务状态/事件（`pending`、`running`、`done`、`failed`、`timed_out`、`cleaned`）。
 - 提供统一命令：`task run/status/retry/cleanup` 与 `daemon run`。
 
@@ -14,7 +14,7 @@
 
 - Python `>=3.10`
 - `git`
-- `tmux`
+- `acpx`
 - `PATH` 中可用的编码 agent 命令：
   - `codex`（默认）
   - `claude`（使用 `--agent claude` 或 `--agent claude_code` 时）
@@ -23,7 +23,7 @@
 Agent provider 说明：
 
 - `--agent claude` 与 `--agent claude_code` 是等价输入。
-- 两者都会归一化到内部 provider `claude_code`，实际调用的命令都是 `claude` 可执行文件。
+- 两者都会归一化到内部 provider `claude_code`，实际调用 `claude` 可执行文件。
 
 ## 安装
 
@@ -50,7 +50,7 @@ uv run agvv --help
 ```md
 ---
 project_name: demo
-feature: feat_demo
+feature: feat/demo
 repo: owner/repo
 constraints:
   - 保持现有 API 兼容性。
@@ -60,7 +60,7 @@ constraints:
 实现所需功能并补充测试。
 ```
 
-front matter 对应原来的 `task.json` 字段；Markdown 正文对应任务需求描述。
+Markdown 正文会作为主需求文本。
 
 ### 2）启动任务
 
@@ -82,8 +82,6 @@ agvv task run --spec ./task.md
 agvv task run --spec ./task.md --agent claude
 ```
 
-`--agent claude_code` 也可用，行为与 `--agent claude` 相同。
-
 ### 3）查看与推进状态
 
 ```bash
@@ -91,7 +89,7 @@ agvv task status
 agvv daemon run --once
 ```
 
-需要重复执行 `daemon run --once`，状态才会从 `running` 推进到 `done/timed_out`。
+重复执行 `daemon run --once` 以推进活跃任务状态。
 
 ### 4）重试与清理
 
@@ -101,7 +99,7 @@ agvv daemon run --once
 agvv task retry --task-id <task_id>
 ```
 
-重试时强制重启已有 tmux 会话：
+重试时强制重启已有会话：
 
 ```bash
 agvv task retry --task-id <task_id> --force-restart
@@ -124,34 +122,36 @@ agvv task cleanup --task-id <task_id> --force
 ### 必填字段
 
 - 由 `---` 包裹的 YAML front matter
-- `project_name`：匹配 `^[A-Za-z0-9_-]+$`
-- `feature`：匹配 `^[A-Za-z0-9_-]+$`，且不能是 `main` 或 `repo.git`
+- `project_name`：`^[A-Za-z0-9_-]+$`
+- `feature`：`^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$`
+  - 支持 `feat/demo` 这类带斜杠命名
+  - 保留值：`main`、`worktrees`
 - 需求文本必须存在：
-  - 推荐：front matter 下方的 Markdown 正文
-  - 兜底：front matter 里的 `requirements`（非空字符串）
+  - 推荐：Markdown 正文
+  - 兜底：front matter 的 `requirements`（非空字符串）
 
 ### 常用可选字段
 
 - `repo`：可选仓库标识
 - `from_branch`：feature 工作树基线分支（默认 `main`）
-- `session`：自定义 tmux 会话名
-- `ticket`：可选工单标识（任务元数据）
+- `session`：自定义 `acpx` 会话名
+- `ticket`：可选工单标识（仅元数据）
 - `constraints`：额外约束列表
 - `timeout_minutes`：会话超时分钟数（默认 `240`）
-- `agent_extra_args`：传给 agent 命令的额外参数
+- `agent_extra_args`：传给所选 agent 命令的额外参数
 
 ### 关键运行时行为
 
-- `task_id` 由运行时生成，front matter 中的同名字段会被忽略。
-- front matter 内的 `agent`/`agent_model` 会被运行时重置；如需切换 provider，请用 CLI `--agent`。
-- front matter 内 `base_dir` 会被运行时覆盖：
+- `task_id` 由运行时生成，front matter 中同名字段会被忽略。
+- front matter 的 `agent`/`agent_model` 会被运行时重置；切换 provider 请使用 CLI `--agent`。
+- front matter 的 `base_dir` 会被运行时覆盖：
   - 不传 `--project-dir`：使用当前工作目录
   - 传 `--project-dir`：使用该目录的父目录
 
 ## CLI 命令速查
 
 ```bash
-agvv task run --spec <path> [--db-path <path>] [--agent <codex|claude|claude_code>] [--agent-non-interactive|--agent-interactive] [--project-dir <path>]
+agvv task run --spec <path> [--db-path <path>] [--agent <codex|claude|claude_code>] [--project-dir <path>]
 agvv task status [--db-path <path>] [--task-id <id>] [--state <pending|running|done|failed|timed_out|cleaned>]
 agvv task retry --task-id <id> [--db-path <path>] [--session <name>] [--force-restart]
 agvv task cleanup --task-id <id> [--db-path <path>] [--force]
@@ -166,12 +166,12 @@ agvv daemon run [--db-path <path>] [--once] [--interval-seconds <n>] [--max-loop
 
 ```text
 <runtime_base>/<project_name>/
-  repo.git/      # 裸仓库
-  main/          # 主工作树
-  <feature>/     # 某个任务的 feature 工作树
+  .git/                  # git 仓库元数据
+  worktrees/             # feature 工作树（通过 .git/info/exclude 忽略）
+    feat-<slug>/         # 每个 feature 一个工作树（"/" -> "-"）
 ```
 
 ## 说明
 
-- `daemon run --once` 是后台任务状态流转的必要步骤。
-- `task cleanup` 会删除 feature 工作树，并在受管仓库中删除该 feature 分支。
+- `daemon run --once` 会将活跃任务（`pending`/`running`）推进到最新状态。
+- `task cleanup` 默认会删除 feature 工作树并删除对应分支。

@@ -131,14 +131,20 @@ def test_run_task_from_spec_starts_coding_session(
         },
     )
     launched: list[str] = []
-    repo_dir = tmp_path / "demo" / "repo.git"
-    main_dir = tmp_path / "demo" / "main"
+    # New layout: project_dir IS main worktree, repo is project_dir/.git.
+    project_dir = tmp_path / "demo"
+    repo_dir = project_dir / ".git"
+    worktrees_dir = project_dir / "worktrees"
     repo_dir.mkdir(parents=True, exist_ok=True)
-    main_dir.mkdir(parents=True, exist_ok=True)
+    worktrees_dir.mkdir(parents=True, exist_ok=True)
 
     def _fake_start_feature(**kwargs):
+        # Feature worktrees now live under <project>/worktrees/<feat-slug>/.
         feature_dir = (
-            Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+            Path(kwargs["base_dir"])
+            / kwargs["project_name"]
+            / "worktrees"
+            / kwargs["feature"].replace("/", "-")
         )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
@@ -154,7 +160,7 @@ def test_run_task_from_spec_starts_coding_session(
     assert task.state == TaskState.RUNNING
     assert launched
     assert "codex" in launched[0]  # agent subcommand
-    feature_dir = tmp_path / "demo" / "feat_run"
+    feature_dir = tmp_path / "demo" / "worktrees" / "feat_run"
     assert (feature_dir / ".agvv" / "rendered_prompt.md").exists()
     assert (feature_dir / ".agvv" / "input_snapshot.json").exists()
 
@@ -175,14 +181,19 @@ def test_run_task_from_spec_applies_agent_overrides(
     )
     created: list[str] = []
     prompted: list[str] = []
-    repo_dir = tmp_path / "demo" / "repo.git"
-    main_dir = tmp_path / "demo" / "main"
+    # New layout: project_dir IS main worktree, repo is project_dir/.git.
+    project_dir = tmp_path / "demo"
+    repo_dir = project_dir / ".git"
+    worktrees_dir = project_dir / "worktrees"
     repo_dir.mkdir(parents=True, exist_ok=True)
-    main_dir.mkdir(parents=True, exist_ok=True)
+    worktrees_dir.mkdir(parents=True, exist_ok=True)
 
     def _fake_start_feature(**kwargs):
         feature_dir = (
-            Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+            Path(kwargs["base_dir"])
+            / kwargs["project_name"]
+            / "worktrees"
+            / kwargs["feature"].replace("/", "-")
         )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
@@ -205,7 +216,7 @@ def test_run_task_from_spec_applies_agent_overrides(
     assert created[0] == "codex"  # acpx subcommand
     assert len(prompted) == 1
     assert "rendered_prompt.md" in prompted[0]
-    feature_dir = tmp_path / "demo" / "feat_override"
+    feature_dir = tmp_path / "demo" / "worktrees" / "feat_override"
     assert (feature_dir / ".agvv" / "input_snapshot.json").exists()
     assert task.spec.agent == "codex"
     assert task.spec.agent_model is None
@@ -268,14 +279,20 @@ def test_run_task_from_spec_ignores_spec_base_dir(
 
     def _fake_init_project(project_name: str, base_dir: Path):
         seen["base_dir"] = base_dir
-        repo_dir = base_dir / project_name / "repo.git"
-        main_dir = base_dir / project_name / "main"
+        # New layout: project_dir IS main worktree, .git/ inside it.
+        project_dir = base_dir / project_name
+        repo_dir = project_dir / ".git"
         repo_dir.mkdir(parents=True, exist_ok=True)
-        main_dir.mkdir(parents=True, exist_ok=True)
+        (repo_dir / "config").write_text(
+            "[core]\n", encoding="utf-8"
+        )  # minimal git repo
 
     def _fake_start_feature(**kwargs):
         feature_dir = (
-            Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+            Path(kwargs["base_dir"])
+            / kwargs["project_name"]
+            / "worktrees"
+            / kwargs["feature"].replace("/", "-")
         )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
@@ -304,14 +321,20 @@ def test_run_task_from_spec_auto_inits_project_when_missing(
 
     def _fake_init_project(project_name: str, base_dir: Path):
         started["init"] = True
-        repo_dir = base_dir / project_name / "repo.git"
-        main_dir = base_dir / project_name / "main"
+        # New layout: project_dir IS main worktree, .git/ inside it.
+        project_dir = base_dir / project_name
+        repo_dir = project_dir / ".git"
+        worktrees_dir = project_dir / "worktrees"
         repo_dir.mkdir(parents=True, exist_ok=True)
-        main_dir.mkdir(parents=True, exist_ok=True)
+        (repo_dir / "config").write_text("[core]\n", encoding="utf-8")
+        worktrees_dir.mkdir(parents=True, exist_ok=True)
 
     def _fake_start_feature(**kwargs):
         feature_dir = (
-            Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+            Path(kwargs["base_dir"])
+            / kwargs["project_name"]
+            / "worktrees"
+            / kwargs["feature"].replace("/", "-")
         )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
@@ -345,22 +368,34 @@ def test_run_task_from_spec_auto_adopts_existing_project(
     def _fake_adopt_project(existing_repo: Path, project_name: str, base_dir: Path):
         adopted["called"] = True
         assert existing_repo == source_repo.resolve()
-        repo_dir = base_dir / project_name / "repo.git"
-        main_dir = base_dir / project_name / "main"
+        # New layout: project_dir IS main worktree, repo is project_dir/.git.
+        project_dir = base_dir / project_name
+        repo_dir = project_dir / ".git"
+        worktrees_dir = project_dir / "worktrees"
         repo_dir.mkdir(parents=True, exist_ok=True)
-        main_dir.mkdir(parents=True, exist_ok=True)
+        (repo_dir / "config").write_text("[core]\n", encoding="utf-8")
+        worktrees_dir.mkdir(parents=True, exist_ok=True)
         return (
             type(
                 "L",
                 (),
-                {"repo_dir": repo_dir, "main_dir": main_dir, "feature_dir": None},
+                {
+                    "project_dir": project_dir,
+                    "repo_dir": repo_dir,
+                    "main_dir": project_dir,
+                    "worktrees_dir": worktrees_dir,
+                    "feature_dir": None,
+                },
             )(),
             "main",
         )
 
     def _fake_start_feature(**kwargs):
         feature_dir = (
-            Path(kwargs["base_dir"]) / kwargs["project_name"] / kwargs["feature"]
+            Path(kwargs["base_dir"])
+            / kwargs["project_name"]
+            / "worktrees"
+            / kwargs["feature"].replace("/", "-")
         )
         feature_dir.mkdir(parents=True, exist_ok=True)
 
@@ -394,7 +429,7 @@ def test_retry_task_relaunches_when_session_missing(
         last_error="boom",
         finished_at="2026-03-03T00:00:00+00:00",
     )
-    (tmp_path / "demo" / "feat_retry").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "demo" / "worktrees" / "feat_retry").mkdir(parents=True, exist_ok=True)
 
     _patch_session_launch(monkeypatch)
 
@@ -421,7 +456,9 @@ def test_retry_task_force_restart_kills_existing_session(
     store.update_task(
         created.id, state=TaskState.RUNNING, started_at="2026-03-03T00:00:00+00:00"
     )
-    (tmp_path / "demo" / "feat_retry_force").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "demo" / "worktrees" / "feat_retry_force").mkdir(
+        parents=True, exist_ok=True
+    )
 
     called: dict[str, bool] = {"killed": False}
     session_live: dict[str, bool] = {"value": True}

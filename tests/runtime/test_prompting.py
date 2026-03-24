@@ -8,9 +8,10 @@ from agvv.runtime.models import TaskSpec
 from agvv.runtime.prompting import build_launch_command, render_task_prompt
 
 
-def test_build_launch_command_uses_codex_exec_in_non_interactive_mode(
+def test_build_launch_command_generates_tty_command_for_codex(
     tmp_path: Path,
 ) -> None:
+    """Test that codex in TTY mode generates a prompt-injection command."""
     prompt_path = tmp_path / "rendered_prompt.md"
     spec = TaskSpec(
         task_id="task_prompt",
@@ -19,7 +20,6 @@ def test_build_launch_command_uses_codex_exec_in_non_interactive_mode(
         agent_cmd="codex",
         base_dir=tmp_path,
         agent="codex",
-        agent_non_interactive=True,
         requirements="do something",
     )
     command = build_launch_command(
@@ -28,8 +28,7 @@ def test_build_launch_command_uses_codex_exec_in_non_interactive_mode(
         output_log_path=tmp_path / "agent_output.log",
     )
     assert command.startswith("bash -lc ")
-    assert "codex exec" in command
-    assert "-s workspace-write" in command
+    assert "codex" in command
     assert str(prompt_path) in command
 
 

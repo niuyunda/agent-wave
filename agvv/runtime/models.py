@@ -99,7 +99,7 @@ class TaskSpec(BaseModel):
     )
 
     project_name: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
-    feature: str = Field(pattern=r"^[A-Za-z0-9_-]+$")
+    feature: str = Field(pattern=r"^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$")
     repo: str | None = None  # optional GitHub owner/repo slug for the agent's use
     base_dir: Path = Field(default_factory=Path.cwd)
     from_branch: str = "main"
@@ -126,7 +126,7 @@ class TaskSpec(BaseModel):
         if v is None or str(v).strip() == "":
             raise ValueError("Must be a non-empty string")
         v_str = str(v).strip()
-        if v_str in ("main", "repo.git"):
+        if v_str in ("main", "repo.git", "worktrees"):
             raise ValueError(f"Value '{v_str}' is reserved.")
         return v_str
 

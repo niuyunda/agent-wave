@@ -226,7 +226,9 @@ def test_daemon_run_once_marks_timed_out_even_when_kill_raises(
 
     monkeypatch.setattr(
         "agvv.orchestration.acp_ops.acpx_close_session",
-        lambda _agent, _session, _cwd: (_ for _ in ()).throw(RuntimeError("kill failed")),
+        lambda _agent, _session, _cwd: (_ for _ in ()).throw(
+            RuntimeError("kill failed")
+        ),
     )
 
     results = daemon_run_once(tmp_path / "tasks.db")

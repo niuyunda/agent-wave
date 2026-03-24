@@ -1,12 +1,12 @@
 # Agent Wave (`agvv`)
 
 `agvv` is a lightweight task orchestrator for coding agents.
-It gives each task an isolated git worktree, runs the agent in a detached tmux session, and tracks lifecycle state in SQLite.
+It gives each task an isolated git worktree, launches the agent via `acpx`, and tracks lifecycle state in SQLite.
 
 ## What It Does
 
-- Isolates task changes with `git worktree` (`main` + per-feature worktrees).
-- Runs agent sessions in background `tmux` so work continues after terminal disconnect.
+- Isolates task changes with `git worktree` (main worktree + per-feature worktrees).
+- Launches agent sessions through `acpx` (`codex` or `claude`) and writes launch artifacts to `.agvv/`.
 - Persists task state/events in SQLite (`pending`, `running`, `done`, `failed`, `timed_out`, `cleaned`).
 - Provides operational commands: `task run/status/retry/cleanup` and `daemon run`.
 
@@ -14,7 +14,7 @@ It gives each task an isolated git worktree, runs the agent in a detached tmux s
 
 - Python `>=3.10`
 - `git`
-- `tmux`
+- `acpx`
 - A coding agent CLI in `PATH`:
   - `codex` (default)
   - `claude` (used when `--agent claude` or `--agent claude_code`)
@@ -23,7 +23,7 @@ It gives each task an isolated git worktree, runs the agent in a detached tmux s
 Agent provider note:
 
 - `--agent claude` and `--agent claude_code` are equivalent inputs.
-- Both normalize to the internal provider `claude_code` and invoke the `claude` CLI binary.
+- Both normalize to internal provider `claude_code` and invoke the `claude` CLI binary.
 
 ## Install
 
@@ -50,7 +50,7 @@ uv run agvv --help
 ```md
 ---
 project_name: demo
-feature: feat_demo
+feature: feat/demo
 repo: owner/repo
 constraints:
   - Keep existing API compatibility.
@@ -60,7 +60,7 @@ constraints:
 Implement the required feature and tests.
 ```
 
-Front matter maps to previous `task.json` fields; Markdown body is the task requirement text.
+The Markdown body is treated as primary requirements text.
 
 ### 2) Start a task
 
@@ -82,8 +82,6 @@ Use Claude Code instead of Codex:
 agvv task run --spec ./task.md --agent claude
 ```
 
-`--agent claude_code` is also valid and behaves the same as `--agent claude`.
-
 ### 3) Monitor and reconcile state
 
 ```bash
@@ -91,7 +89,7 @@ agvv task status
 agvv daemon run --once
 ```
 
-Run `daemon run --once` repeatedly to move states forward (`running -> done/timed_out`).
+Run `daemon run --once` repeatedly to reconcile active tasks.
 
 ### 4) Retry or cleanup
 
@@ -101,7 +99,7 @@ Retry:
 agvv task retry --task-id <task_id>
 ```
 
-Force restart an existing tmux session during retry:
+Force restart an existing session during retry:
 
 ```bash
 agvv task retry --task-id <task_id> --force-restart
@@ -125,33 +123,35 @@ agvv task cleanup --task-id <task_id> --force
 
 - YAML front matter enclosed by `---` delimiters
 - `project_name`: `^[A-Za-z0-9_-]+$`
-- `feature`: `^[A-Za-z0-9_-]+$`, and must not be `main` or `repo.git`
-- Requirement text must be present:
-  - preferred: Markdown body (below front matter)
+- `feature`: `^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$`
+  - allows slash-separated names like `feat/demo`
+  - reserved values: `main`, `worktrees`
+- Requirements text must be present:
+  - preferred: Markdown body
   - fallback: front matter `requirements` (non-empty string)
 
 ### Common optional fields
 
 - `repo`: optional repository slug/identifier
 - `from_branch`: base branch for feature worktree (default: `main`)
-- `session`: custom tmux session name
-- `ticket`: optional ticket identifier (for task metadata)
+- `session`: custom `acpx` session name
+- `ticket`: optional ticket identifier (metadata only)
 - `constraints`: list of extra constraints
 - `timeout_minutes`: session timeout in minutes (default: `240`)
-- `agent_extra_args`: extra args passed to the agent command
+- `agent_extra_args`: extra args passed to the selected agent command
 
 ### Important runtime behavior
 
-- `task_id` is generated at runtime; user-provided `task_id` in front matter is ignored.
-- `agent`/`agent_model` in front matter are reset by runtime; choose provider via CLI `--agent`.
+- `task_id` is generated at runtime; front matter `task_id` is ignored.
+- Front matter `agent`/`agent_model` are reset by runtime; switch provider via CLI `--agent`.
 - `base_dir` in front matter is overridden by runtime:
-  - no `--project-dir`: current working directory
+  - without `--project-dir`: current working directory
   - with `--project-dir`: parent directory of that project
 
 ## CLI Summary
 
 ```bash
-agvv task run --spec <path> [--db-path <path>] [--agent <codex|claude|claude_code>] [--agent-non-interactive|--agent-interactive] [--project-dir <path>]
+agvv task run --spec <path> [--db-path <path>] [--agent <codex|claude|claude_code>] [--project-dir <path>]
 agvv task status [--db-path <path>] [--task-id <id>] [--state <pending|running|done|failed|timed_out|cleaned>]
 agvv task retry --task-id <id> [--db-path <path>] [--session <name>] [--force-restart]
 agvv task cleanup --task-id <id> [--db-path <path>] [--force]
@@ -166,12 +166,12 @@ agvv daemon run [--db-path <path>] [--once] [--interval-seconds <n>] [--max-loop
 
 ```text
 <runtime_base>/<project_name>/
-  repo.git/      # bare repository
-  main/          # main worktree
-  <feature>/     # feature worktree for one task
+  .git/                  # git repository metadata
+  worktrees/             # feature worktrees (git-ignored via .git/info/exclude)
+    feat-<slug>/         # one worktree per feature ("/" -> "-")
 ```
 
 ## Notes
 
-- `daemon run --once` is required to reconcile background task state.
-- `task cleanup` removes the feature worktree and deletes the feature branch in managed repo.
+- `daemon run --once` reconciles active tasks (`pending`/`running`) into latest state.
+- `task cleanup` removes the feature worktree and deletes the feature branch by default.

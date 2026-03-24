@@ -1,4 +1,12 @@
-"""Project/worktree layout and lifecycle operations."""
+"""Project/worktree layout and lifecycle operations.
+
+Layout convention:
+    <project>/
+        # project files (main/default worktree lives directly here)
+        .git/                 # git repository metadata
+        worktrees/             # extra task worktrees only
+            feat-<slug>/      # feature worktree directories
+"""
 
 from __future__ import annotations
 
@@ -11,41 +19,75 @@ from agvv.orchestration.executor import run_git, run_git_success
 from agvv.orchestration.models import LayoutPaths
 from agvv.shared.errors import AgvvError
 
-_SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_FEATURE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$")
+_RESERVED_FEATURE_NAMES = frozenset({"main", "worktrees"})
 
 
 def layout_paths(
     project_name: str, base_dir: Path, feature: str | None = None
 ) -> LayoutPaths:
-    """Construct canonical path objects for a project and optional feature."""
+    """Construct canonical path objects for a project and optional feature.
+
+    The project directory IS the main worktree root. Feature worktrees live
+    under <project>/worktrees/<feat-slug>/.
+    """
     project_dir = base_dir / project_name
     return LayoutPaths(
         project_dir=project_dir,
-        repo_dir=project_dir / "repo.git",
-        main_dir=project_dir / "main",
-        feature_dir=(project_dir / feature) if feature else None,
+        repo_dir=project_dir / ".git",
+        main_dir=project_dir,  # main worktree IS the project root
+        worktrees_dir=project_dir / "worktrees",
+        feature_dir=(project_dir / "worktrees" / _feature_to_dirname(feature))
+        if feature
+        else None,
     )
 
 
+def _feature_to_dirname(feature: str) -> str:
+    """Convert a feature name to a safe directory name (use - instead of /)."""
+    return feature.replace("/", "-")
+
+
 def _ensure_layout_name(value: str, label: str) -> None:
-    """Ensure a project/feature name is safe for this layout."""
+    """Ensure a project name is safe for this layout."""
     if not value:
         raise AgvvError(f"{label} cannot be empty.")
-    if "/" in value or "\\" in value:
-        raise AgvvError(f"{label} '{value}' must not contain path separators.")
+    if "\\" in value:
+        raise AgvvError(f"{label} '{value}' must not contain backslashes.")
     if ".." in Path(value).parts:
-        raise AgvvError(f"{label} '{value}' must not contain path traversal segments.")
-    if _SAFE_NAME_RE.fullmatch(value) is None:
+        raise AgvvError(f"{label} '{value}' must not contain '..'.")
+    if not re.match(r"^[A-Za-z0-9_-]+$", value):
         raise AgvvError(
-            f"{label} '{value}' contains invalid characters. Use only letters, numbers, hyphens, and underscores."
+            f"{label} '{value}' contains invalid characters. "
+            "Use only letters, numbers, hyphens, and underscores."
         )
 
 
 def _ensure_feature_name(feature: str) -> None:
-    """Validate that the feature name is safe and not reserved by layout internals."""
-    _ensure_layout_name(feature, "Feature branch name")
-    if feature in {"main", "repo.git"}:
-        raise AgvvError(f"Feature branch name '{feature}' is reserved in this layout.")
+    """Validate that the feature name is safe and not reserved by layout internals.
+
+    Allows slash-separated compound names (e.g. feat/demo) for the branch-style
+    naming convention, but reserves layout directory names.
+    """
+    if not feature:
+        raise AgvvError("Feature branch name cannot be empty.")
+    if "\\" in feature:
+        raise AgvvError(
+            f"Feature branch name '{feature}' must not contain backslashes."
+        )
+    if ".." in Path(feature).parts:
+        raise AgvvError(f"Feature branch name '{feature}' must not contain '..'.")
+    if _FEATURE_NAME_RE.fullmatch(feature) is None:
+        raise AgvvError(
+            f"Feature branch name '{feature}' contains invalid characters. "
+            "Use only letters, numbers, hyphens, underscores, and slashes "
+            "(e.g. feat/demo or fix-bug)."
+        )
+    if feature in _RESERVED_FEATURE_NAMES:
+        raise AgvvError(
+            f"Feature branch name '{feature}' is reserved in this layout "
+            "(main worktree or worktrees directory)."
+        )
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -55,7 +97,7 @@ def _write_json(path: Path, data: dict) -> None:
 
 
 def _default_branch(repo_dir: Path) -> str:
-    """Choose the default branch from a bare repo, preferring main/master."""
+    """Choose the default branch from a repo, preferring main/master."""
     head_branch: str | None = None
     if run_git_success(
         ["-C", str(repo_dir), "symbolic-ref", "--quiet", "--short", "HEAD"]
@@ -71,7 +113,7 @@ def _default_branch(repo_dir: Path) -> str:
     ).stdout
     branches = [line.strip() for line in branches_raw.splitlines() if line.strip()]
     if not branches:
-        raise AgvvError("No branches found in bare repo.")
+        raise AgvvError("No branches found in repository.")
     if head_branch and head_branch in branches:
         return head_branch
     for preferred in ("main", "master"):
@@ -80,27 +122,23 @@ def _default_branch(repo_dir: Path) -> str:
     return branches[0]
 
 
-def _is_bare_repo(path: Path) -> bool:
-    """Return True when path is an accessible bare git repository."""
-    if not path.exists() or not path.is_dir():
-        return False
-    if not run_git_success(["-C", str(path), "rev-parse", "--is-bare-repository"]):
-        return False
-    return (
-        run_git(["-C", str(path), "rev-parse", "--is-bare-repository"]).stdout.strip()
-        == "true"
-    )
-
-
 def _resolve_adopt_source_repo(existing_repo: Path) -> Path:
-    """Resolve adopt source repository path from user-provided existing_repo."""
+    """Resolve adopt source repository path from user-provided existing_repo.
+
+    Handles:
+    - Regular git repo: <project>/.git/
+    - Bare repo: <project>.git/ (HEAD exists, no .git subdirectory)
+    - Git worktree: <project>/ with .git as a gitlink file
+    """
     if not existing_repo.exists() or not existing_repo.is_dir():
         raise AgvvError(f"Project directory not found: {existing_repo}")
 
+    # Regular git repo: .git is a subdirectory.
     if (existing_repo / ".git").exists():
         return existing_repo
 
-    if _is_bare_repo(existing_repo):
+    # Bare repo: HEAD exists but .git is not a subdirectory.
+    if (existing_repo / "HEAD").exists() and not (existing_repo / ".git").exists():
         return existing_repo
 
     first_level_git_entries = sorted(
@@ -109,7 +147,7 @@ def _resolve_adopt_source_repo(existing_repo: Path) -> Path:
     if not first_level_git_entries:
         raise AgvvError(
             f"{existing_repo} is not a git repository. "
-            "No '*.git' entry found in the first-level directory."
+            "No '.git' entry found in the first-level directory."
         )
     if len(first_level_git_entries) > 1:
         candidates = ", ".join(entry.name for entry in first_level_git_entries)
@@ -118,73 +156,84 @@ def _resolve_adopt_source_repo(existing_repo: Path) -> Path:
             "Pass a specific repository path via --project-dir."
         )
     candidate = first_level_git_entries[0]
-    if not _is_bare_repo(candidate):
-        raise AgvvError(
-            f"Found first-level '*.git' entry at {candidate}, but it is not a bare git repository."
-        )
-    return candidate
+    # Regular .git directory.
+    if (candidate / "HEAD").exists():
+        return candidate.parent
+    raise AgvvError(
+        f"Found '*.git' entry at {candidate}, but it does not appear "
+        "to be a valid git repository (no HEAD file)."
+    )
+
+
+def _exclude_worktrees(main_dir: Path) -> None:
+    """Add /worktrees/ to .git/info/exclude in the main worktree."""
+    exclude_path = main_dir / ".git" / "info" / "exclude"
+    if not exclude_path.exists():
+        return
+    marker = "/worktrees/\n"
+    content = exclude_path.read_text(encoding="utf-8")
+    if marker not in content:
+        exclude_path.write_text(content + marker, encoding="utf-8")
 
 
 def init_project(project_name: str, base_dir: Path) -> LayoutPaths:
-    """Initialize a project as bare repository plus main worktree."""
+    """Initialize a project as a regular git repository.
+
+    The project directory itself becomes the main worktree (no nested main/).
+    Feature worktrees live under <project>/worktrees/<feat-slug>/.
+
+    Sequence:
+        mkdir <project>
+        git init -b main <project>
+        mkdir <project>/worktrees
+        printf "/worktrees/\n" >> .git/info/exclude
+        [optional initial commit]
+    """
     _ensure_layout_name(project_name, "Project name")
     paths = layout_paths(project_name, base_dir)
+
+    if paths.repo_dir.exists():
+        # Already initialized.
+        return paths
+
     paths.project_dir.mkdir(parents=True, exist_ok=True)
 
-    if not paths.repo_dir.exists():
-        run_git(["init", "--bare", str(paths.repo_dir)])
+    # Initialize a regular git repo; the project dir IS the main worktree.
+    run_git(["init", "-b", "main", str(paths.project_dir)])
 
-    if not paths.main_dir.exists():
-        if run_git_success(
-            [
-                "-C",
-                str(paths.repo_dir),
-                "show-ref",
-                "--verify",
-                "--quiet",
-                "refs/heads/main",
-            ]
-        ):
-            run_git(
-                [
-                    "-C",
-                    str(paths.repo_dir),
-                    "worktree",
-                    "add",
-                    str(paths.main_dir),
-                    "main",
-                ]
-            )
-        else:
-            run_git(
-                [
-                    "-C",
-                    str(paths.repo_dir),
-                    "worktree",
-                    "add",
-                    "-b",
-                    "main",
-                    str(paths.main_dir),
-                ]
-            )
-
+    # Configure identity if not already set.
     if not run_git_success(
-        ["-C", str(paths.main_dir), "rev-parse", "--verify", "HEAD"]
+        ["-C", str(paths.project_dir), "config", "--get", "user.email"]
     ):
         run_git(
-            ["-C", str(paths.main_dir), "config", "user.email", "agvv@example.invalid"]
+            [
+                "-C",
+                str(paths.project_dir),
+                "config",
+                "user.email",
+                "agvv@example.invalid",
+            ]
         )
-        run_git(["-C", str(paths.main_dir), "config", "user.name", "Agent Wave"])
+        run_git(["-C", str(paths.project_dir), "config", "user.name", "Agent Wave"])
+
+    # Create initial commit if the repo is still empty (no HEAD).
+    if not run_git_success(
+        ["-C", str(paths.project_dir), "rev-parse", "--verify", "HEAD"]
+    ):
         run_git(
             [
                 "-C",
-                str(paths.main_dir),
+                str(paths.project_dir),
                 "commit",
                 "--allow-empty",
                 "-m",
-                "init: bare repo setup",
+                "init: project setup",
             ]
         )
+
+    # Create worktrees/ directory and exclude it from the main worktree.
+    paths.worktrees_dir.mkdir(parents=True, exist_ok=True)
+    _exclude_worktrees(paths.main_dir)
 
     return paths
 
@@ -192,21 +241,30 @@ def init_project(project_name: str, base_dir: Path) -> LayoutPaths:
 def adopt_project(
     existing_repo: Path, project_name: str, base_dir: Path
 ) -> tuple[LayoutPaths, str]:
-    """Adopt an existing repository into Agent Wave layout."""
+    """Adopt an existing regular git repository into Agent Wave layout.
+
+    The existing repository's history is cloned into the new project directory.
+    The project directory becomes the main worktree. If the existing directory
+    is itself a git worktree (has .git gitlink), this is a conflict — stop
+    and report to orchestrator.
+    """
     _ensure_layout_name(project_name, "Project name")
     source_repo = _resolve_adopt_source_repo(existing_repo)
 
     paths = layout_paths(project_name, base_dir)
-    paths.project_dir.mkdir(parents=True, exist_ok=True)
 
-    if paths.repo_dir.exists() or paths.main_dir.exists():
+    if paths.repo_dir.exists():
         raise AgvvError(
-            f"Target project already initialized at {paths.project_dir}. "
-            "Use a different project name or clean target first."
+            f"Target project already initialized (.git exists) at {paths.project_dir}. "
+            "Use a different project name or clean the target first."
         )
 
-    run_git(["clone", "--bare", str(source_repo), str(paths.repo_dir)])
+    paths.project_dir.mkdir(parents=True, exist_ok=True)
 
+    # Clone the source repo into project_dir (regular clone, not bare).
+    run_git(["clone", str(source_repo), str(paths.project_dir)])
+
+    # Transfer remote origin if present on source.
     if run_git_success(
         ["-C", str(source_repo), "config", "--get", "remote.origin.url"]
     ):
@@ -217,7 +275,7 @@ def adopt_project(
             run_git(
                 [
                     "-C",
-                    str(paths.repo_dir),
+                    str(paths.project_dir),
                     "remote",
                     "set-url",
                     "origin",
@@ -226,7 +284,11 @@ def adopt_project(
             )
 
     branch = _default_branch(paths.repo_dir)
-    run_git(["-C", str(paths.repo_dir), "worktree", "add", str(paths.main_dir), branch])
+
+    # Create worktrees/ directory and exclude it from the main worktree.
+    paths.worktrees_dir.mkdir(parents=True, exist_ok=True)
+    _exclude_worktrees(paths.main_dir)
+
     return paths, branch
 
 
@@ -249,7 +311,7 @@ def start_feature(
             f"Internal error: missing feature directory for project={project_name}, feature={feature}."
         )
 
-    if not paths.repo_dir.exists() or not paths.main_dir.exists():
+    if not paths.repo_dir.exists():
         init_project(project_name, base_dir)
 
     if paths.feature_dir.exists():
@@ -365,7 +427,7 @@ def _remove_feature_worktree(paths: LayoutPaths, *, allow_dirty: bool) -> None:
 def _remove_feature_branch(
     paths: LayoutPaths, feature: str, *, delete_branch: bool
 ) -> None:
-    """Delete the feature branch in the bare repo when deletion is requested."""
+    """Delete the feature branch in the repo when deletion is requested."""
     if not delete_branch:
         return
     if run_git_success(
