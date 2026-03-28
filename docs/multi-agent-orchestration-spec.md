@@ -1,102 +1,130 @@
 # Checkpoint-First Multi-Agent Orchestration Spec
 
-## Document Purpose
+## Purpose
 
 This document is the implementation specification for coding agents modifying `agent-wave` (`agvv`).
 
-It replaces the earlier session-centric multi-agent proposal with a more durable design:
+It replaces the earlier task/session-centric design with a checkpoint-first orchestration model that is meant to be implemented directly from this file, without relying on prior chat context.
 
-- `agvv` must orchestrate multiple tasks in parallel
-- each task may go through multiple coding and verification cycles
-- any runtime session may crash or become unavailable
-- work must continue from durable checkpoints rather than depending on chat history
-- the first implementation remains local-first and ACP-backed
-- the architecture must still leave a clean extension point for future cloud runtimes
+This spec is written for coding agents. It is deliberately operational. It defines:
 
-This document is intentionally operational. A coding agent should be able to implement the design from this file alone, without prior chat context.
+- the required domain model
+- the required storage model
+- the required lifecycle rules
+- the required checkpoint rules
+- the required recovery behavior
+- the required compatibility constraints for the existing `agvv` CLI and runtime
+
+## Executive Summary
+
+`agvv` must evolve from a single-task runner into a project-oriented orchestrator.
+
+The new system must:
+
+- ingest work from different sources such as human messages or Linear issues
+- normalize that work into durable internal work items
+- run multiple work items in parallel
+- allow multiple runs to exist for the same work item over time
+- treat coding and testing as different sessions
+- treat testing as a fresh session every time
+- preserve isolated local workspaces for code execution in the first implementation
+- create repository checkpoints that allow later runs to continue without prior chat history
+- recover from stalled or dead sessions without losing continuity
+- expose a project-level operator snapshot for status and scheduling
+
+The central design decision is:
+
+**Correctness must depend on repository checkpoints plus durable runtime metadata, not on keeping the same runtime session alive.**
+
+Resuming the same session is allowed only as an optimization. It must never be a correctness dependency.
+
+## What This Spec Optimizes For
+
+Every design choice in this document should improve at least one of:
+
+- isolation
+- recoverability
+- observability
+- auditability
+- implementation clarity
+- compatibility with the existing local-first `agvv` runtime
+
+## Non-Goals
+
+The first implementation must not attempt:
+
+- arbitrary DAG orchestration across external systems
+- autonomous merge conflict resolution
+- automatic destructive recovery after ambiguous git state
+- provider-specific prompt optimization beyond role templates and project policy
+- replacing ACP in phase 1
+- building a cloud-native execution fabric before the local-first model is stable
 
 ## First-Principles Problem Statement
 
-`agvv` is currently effective as a single-task runner:
+The current system assumes:
 
-- one task creates or reuses one worktree
-- one task launches one coding session
-- one task stores one current runtime identity
-- one daemon loop reconciles `pending` and `running`
+- one task
+- one worktree
+- one coding session
+- one terminal outcome
 
-That model fails once real orchestration begins. In a real multi-agent workflow:
+That model is too small for real orchestration.
 
-- one project may have multiple tasks in flight at once
-- coding and testing are different agents and therefore different sessions
-- a completed coding step must be verified before the task is considered done
-- failed verification must route back to the original coding line of work
-- any session may hang, die, or become unrecoverable
-- the orchestrator still needs enough history to continue the job safely
+In real use:
 
-From first principles, the system must always answer four questions:
+- a project may contain multiple work items
+- new work items may arrive over time
+- each work item may require multiple coding and verification cycles
+- any session may stall or die
+- verification must influence what happens next
+- the orchestrator must retain enough context to continue even when the previous run is gone
 
-1. What work exists?
-2. What has been tried for each unit of work?
-3. What code workspace is currently authoritative for that work?
-4. If the current runtime disappears, what durable state is sufficient to continue?
+From first principles, the orchestrator must always be able to answer these questions durably:
 
-If `agvv` cannot answer those four questions from durable state plus the repository contents, it is not yet a reliable orchestrator.
+1. What work exists for this project?
+2. What has been tried for each work item?
+3. What code state is currently authoritative for each work item?
+4. What repository checkpoint allows a new run to continue if the current run disappears?
+5. What is the overall project status and recommended next action?
+
+If the system cannot answer those questions from durable state plus repository contents, it is not yet a reliable orchestrator.
 
 ## Core Design Thesis
 
-The system must be **checkpoint-first**, not **session-first**.
+The system is **project-driven**, **checkpoint-first**, and **run-aware**.
 
 That means:
 
-- correctness must not depend on resuming the same runtime session
-- any phase boundary that matters for future decisions must create a durable checkpoint
-- work continuity must come from repository state, checkpoint artifacts, and durable metadata
-- resuming the same session is only a speed optimization when it is safe and useful
+- `Project` is the scheduling scope
+- `WorkItem` is the durable unit of work
+- `Run` is one execution attempt against a work item
+- `Workspace` is an execution environment, usually a git worktree in phase 1
+- `Checkpoint` is the handoff contract between runs
+- `ProjectSnapshot` is the orchestrator's derived global view
 
-The controlling idea is:
+The most important correctness rule is:
 
-**A session may disappear at any time. A task must still be able to continue and close the loop.**
+**A later run must be able to continue from the latest repository checkpoint even if it has no access to earlier chat history or runtime state.**
 
-## What Must Be Preserved
+## Terminology and Required Mappings
 
-The design should preserve only the structures required for reliable orchestration:
+This spec uses new domain terms. The implementation must still preserve compatibility with the current code and CLI.
 
-1. `Workflow`
-   A top-level container for a coordinated run across one repository.
+### Project
 
-2. `Task`
-   A business unit of work such as a feature, bugfix, or refactor.
-
-3. `Attempt`
-   One execution attempt by one role against one task.
-
-4. `Session`
-   The runtime session actually used by an attempt.
-
-5. `Worktree`
-   The code workspace allocated to the task in the first implementation.
-
-6. `Checkpoint`
-   A durable stage artifact that allows a later attempt to continue the task without previous chat history.
-
-Everything else is secondary and must serve these primitives.
-
-## Terminology
-
-### Workflow
-
-A workflow is a project-level orchestration run. It groups related tasks and gives the orchestrator a durable top-level object.
+Top-level orchestration container.
 
 Examples:
 
-- implement feature A, feature B, refactor C, and bugfix D in one repository
-- run a batch of coding tasks and close each one through verification
+- `project_a`
+- `agent-wave-docs-refresh`
 
-The workflow abstraction is useful and should exist, but the first implementation should keep it simple. The essential behavior lives in task, attempt, worktree, and checkpoint handling.
+A project is not a fixed backlog snapshot. New work items may be added over time.
 
-### Task
+### WorkItem
 
-A task is the durable definition of what needs to be accomplished.
+Durable internal unit of work.
 
 Examples:
 
@@ -105,819 +133,827 @@ Examples:
 - refactor subsystem C
 - fix bug D
 
-A task is **not** a session and **not** a single execution. A task is complete only after its required verification loop succeeds.
+A work item is the durable business object that the orchestrator tries to move to `done`.
 
-### Attempt
+### Run
 
-An attempt is one role-specific execution attempt for one task.
+One execution attempt by one agent role for one work item.
 
 Examples:
 
-- coding attempt #1 for feature A
-- testing attempt #1 for feature A
-- coding fix attempt #2 for feature A after failed testing
+- implement run
+- repair run
+- review run
+- test run
+- analyze run
 
-`Attempt` exists because the orchestrator must reason about execution history independently from runtime session identity.
+`Run` is the execution unit. It is not the same thing as a session.
 
-### Session
+### AgentSession
 
-A session is the runtime identity used by an attempt.
+The runtime identity used by a run.
 
-For ACP-backed local runtimes this may include:
+In the first implementation this is ACP-backed and local-first.
+
+An agent session captures:
 
 - provider
 - model
 - normalized command
-- session name
-- session id
-- heartbeat metadata
-- last observed runtime status
+- runtime session name or id
+- last heartbeat
+- runtime status
+- resumability metadata
 
-`Session` is not equivalent to `Attempt`.
+### Workspace
 
-An attempt answers:
+Execution environment for a run.
 
-- what role was being executed
-- which task lifecycle step this execution belonged to
-- whether this execution succeeded, failed, or timed out
-- whether it was a retry or a fix continuation
-
-A session answers:
-
-- where the execution was running
-- which runtime/provider was used
-- whether the underlying session is alive
-- whether resume is possible
-
-In practice, one attempt often uses one session, but they are not the same abstraction. A later attempt may continue the same task from the latest checkpoint while using a completely new session.
-
-### Worktree
-
-For the first implementation, a worktree is the authoritative local code workspace for a task.
-
-Its duties are:
-
-- provide isolation between coding tasks
-- preserve the exact filesystem view that verification must inspect
-- remain available across multiple attempts of the same task
-- be cleaned only when no active work still depends on it
-
-The first implementation should remain local-first and use git worktrees. The design should still preserve a future upgrade path to more generic workspaces.
+In phase 1 this is usually a git worktree. The model should still remain generic enough that a future runtime can provide another workspace implementation.
 
 ### Checkpoint
 
-A checkpoint is the durable handoff point that allows work to continue after a session ends or crashes.
+Repository-backed handoff artifact for a completed or meaningful run boundary.
 
-Primary rule:
+A checkpoint always has:
 
-**Every completed session produces a checkpoint.**
+- a repository path
+- a commit hash
+- a checkpoint type
+- a producing run
+- a work item
+- a summary of the state at that point
 
-Examples:
+The checkpoint is not optional metadata. It is the continuity mechanism.
 
-- a coding session finishes and declares the implementation complete
-- a testing session finishes and writes a test report
-- a bugfix coding session finishes and writes the repair summary
-- a final verification session passes
-- a merge step completes
+### ProjectSnapshot
 
-The checkpoint is not only a database row. It must create a durable artifact in the repository.
+Derived read model used by the orchestrator and status surfaces.
 
-## Non-Goals
+This is not the source of truth. Durable tables plus repository checkpoints remain authoritative.
 
-The first implementation must not try to solve everything:
+### Legacy Compatibility Mapping
 
-- general arbitrary DAG scheduling across external systems
-- autonomous merge conflict resolution
-- forcing branch or worktree recovery after ambiguous git failures
-- perfect provider-specific prompt optimization
-- a full cloud runtime implementation in phase 1
-- replacing ACP before the local checkpoint-first model is proven
+The current codebase already has a `tasks` table and `TaskSpec`/`TaskSnapshot` models.
 
-## Design Requirements
+For phase 1 migration:
 
-The implementation must satisfy all of the following:
+- the existing `tasks` table may remain physically named `tasks`
+- each `tasks` row should evolve semantically into a `WorkItem`
+- the existing `task_events` table may remain as the event log table
+- the existing `task run/status/retry/cleanup` CLI must continue to work
+- single-task commands should implicitly create or attach a `Project` and one `WorkItem`
 
-1. Multiple tasks can run in parallel.
-2. Each task can go through multiple coding and verification cycles.
-3. Coding and testing are different agents and therefore different sessions.
-4. A completed coding session does not mean the task is complete.
-5. Every completed session creates a checkpoint artifact.
-6. If a session dies, a new session can continue from the latest checkpoint.
-7. Verification runs against the same authoritative code worktree that coding produced.
-8. The orchestrator can inspect the complete work record needed to decide the next action.
-9. The first implementation works locally with ACP.
-10. The runtime layer is modular enough that future providers can plug in cleanly.
+The implementation should use the clearer domain language internally even if table names remain temporarily compatible.
 
-## The Real Unit of Orchestration
+## Repository-Owned Policy Contract
 
-The orchestrator is not merely managing a list of tasks. It is managing multiple independent **closed work loops**:
+The system should load a repository-owned policy file, preferably `WORKFLOW.md`, to define:
 
-`task definition -> coding attempt -> verification attempt -> fix attempt -> verification attempt -> completion`
+- prompt templates by run purpose
+- scheduling defaults
+- verification requirements
+- runtime defaults
+- workspace bootstrap rules
 
-For example, for four project tasks:
+Minimum precedence order:
 
-- feature A
-- feature B
-- refactor C
-- bugfix D
+1. explicit CLI override
+2. repository policy file
+3. built-in defaults
 
-the orchestrator may initially start three or four coding attempts in parallel. Each task then evolves independently. One task may be waiting for verification while another is in fix mode and another is still in its first coding run.
+The resolved policy used for a project must be stored durably on the project row by path, digest, and resolved spec JSON.
 
-This is why task, attempt, session, and worktree must be separated.
+## Source of Truth and Continuity Model
 
-## Closed-Loop Execution Model
+The system has two different durable layers and both are required.
 
-The standard lifecycle for a task is:
+### Layer 1: Runtime Truth
 
-1. create task
-2. allocate or attach worktree
-3. start coding attempt
-4. coding session completes
-5. create coding checkpoint
-6. start verification attempt in a new session
-7. verification session completes
-8. create verification checkpoint
-9. if verification failed, request a fix and start a new coding attempt
-10. if verification passed, mark task completed
-11. optionally merge and clean up
+Stored in SQLite.
 
-The crucial rule is:
+This captures:
 
-**Verification is always a new session.**
+- projects
+- work items
+- runs
+- sessions
+- workspaces
+- checkpoint metadata
+- events
 
-Reasons:
+This layer is used for scheduling, status, and recovery planning.
 
-- the coding agent and the testing/review agent are not the same agent
-- verification should not inherit implementation bias
-- verification must inspect the resulting code state, not continue the coding conversation
+### Layer 2: Repository Continuity
 
-Therefore:
+Stored in the repository as checkpoint documents and corresponding commits.
 
-- a coding session may optionally be resumed while it is still the active coding attempt
-- a testing session always starts as a new session
-- a review session also starts as a new session
-- every cross-role handoff is checkpoint-based
+This captures:
 
-## Checkpoint-First Continuity Model
+- what a run accomplished
+- what code state it operated on
+- what remains to be done
+- what the next run should do
 
-### Why Checkpoints, Not Chat History
+This layer is used for handoff and continuity when a new run starts without prior chat history.
 
-Chat history is not a reliable continuity layer:
+### Required Rule
 
-- context windows are limited
-- providers differ in retention and resume behavior
-- long conversations accumulate noise
-- old reasoning may become stale
-- a runtime crash may make the entire session unavailable
+Runtime truth and repository continuity must point at each other:
 
-By contrast, a checkpoint can be designed to be:
+- the database must reference the latest checkpoint id and commit hash
+- each checkpoint document must identify the producing run and prior checkpoint
 
-- durable
-- explicit
-- role-neutral
-- easy to inspect
-- safe to hand off to a brand new session
+Neither layer is sufficient alone.
 
-This is why the system's correctness must depend on checkpoints, not on session survival.
+## Required Domain Model
 
-### What a Checkpoint Must Preserve
+### 1. Project
 
-Each checkpoint must preserve the minimum durable facts required for a fresh session to continue:
-
-- task identity
-- workflow identity
-- role that produced the checkpoint
-- attempt identity
-- current worktree
-- current branch or ref
-- stage reached
-- summary of completed work
-- summary of current verification result if one exists
-- unresolved issues
-- recommended next action
-- timestamp
-
-### Checkpoint Types
-
-Suggested checkpoint types:
-
-- `coding_complete`
-- `verification_report`
-- `fix_complete`
-- `verification_passed`
-- `merge_complete`
-- `attempt_interrupted` (optional best-effort artifact; not required for correctness)
-
-### Where Checkpoints Live
-
-Each checkpoint must have:
-
-- a durable metadata record in SQLite
-- a repository artifact written to a stable path
-
-Suggested repository path:
-
-- `docs/agvv-checkpoints/<task-id>/<ordinal>-<checkpoint-type>.md`
-
-The exact directory can change, but it must be stable, predictable, and committed with the task work.
-
-### Checkpoint Content Template
-
-Each checkpoint artifact should contain:
-
-- task id
-- workflow id
-- attempt id
-- role
-- session id or session name when available
-- worktree path
-- branch name
-- status summary
-- completed work summary
-- verification summary
-- open issues
-- recommended next action
-
-If the checkpoint was produced after a failure or interruption, also include:
-
-- failure summary
-- whether the current code state is believed to be usable
-- whether to retry on the same worktree
-- whether a fresh worktree may be needed
-
-## Code Persistence Policy
-
-Three concepts must be kept separate:
-
-1. `checkpoint`
-   A stage boundary has been reached.
-
-2. `code snapshot`
-   The current code state has been durably saved.
-
-3. `promotion`
-   The current code state has been accepted as the version eligible for merge.
-
-The correct policy is:
-
-- every completed coding session creates a checkpoint
-- if that session modified code, it must also create a commit on the task branch
-- verification sessions usually create reports rather than code commits
-- only code that has passed required verification is promoted to an accepted candidate
-- only an accepted candidate may be merged
-
-In other words:
-
-**Every coding checkpoint should be committed. Not every coding checkpoint should be merged.**
-
-This policy is required so that:
-
-- crash recovery does not depend on dirty worktree state
-- later sessions can continue from a known commit plus checkpoint artifact
-- unverified code remains isolated on the task branch
-
-## Attempt, Session, and Resume Semantics
-
-### Why Attempt and Session Are Separate
-
-An attempt is part of the task lifecycle.
-
-A session is a runtime carrier.
-
-That separation is necessary because:
-
-- a failed attempt may end with a dead session
-- a new attempt may continue the same task from the latest checkpoint
-- a resumed session may still belong to the same attempt
-
-The orchestrator should always reason in terms of attempts first and sessions second.
-
-### Resume Is an Optimization, Not a Dependency
-
-`resume_same_session` still has value:
-
-- it may preserve useful short-term working memory
-- it may reduce restart cost inside an ongoing coding phase
-- it may be faster than creating a new session
-
-But it must never be the primary correctness path.
-
-The orchestrator must assume:
-
-- a session can disappear at any time
-- a fresh session can always continue from the latest checkpoint
-
-Therefore the rule is:
-
-**`restart_from_checkpoint` is the default continuity path. `resume_same_session` is an optional optimization when safe and useful.**
-
-### When Resume Is Valid
-
-Resume may be used only when all of the following hold:
-
-- the session still exists
-- the runtime reports it as resumable
-- the task is still in the same role and same lifecycle phase
-- there is reason to believe the remaining short-term context is valuable
-- the session history has not become so large that it is now mostly noise
-
-Resume is most appropriate for an interrupted coding phase that has not yet reached its next checkpoint.
-
-### When a New Session Is Required
-
-A new session is required when:
-
-- the role changes from coding to verification
-- the role changes from verification back to coding fix work
-- the previous session is missing or unrecoverable
-- the orchestrator intentionally restarts from the latest checkpoint
-- the runtime provider changes
-- the execution location changes
-
-Testing always uses a new session. This rule is mandatory.
-
-## Role Model
-
-The first implementation should support these roles:
-
-- `coding`
-- `testing`
-- `review` (optional in MVP but supported by the model)
-
-`testing` and `review` are both verification roles. They are intentionally separate sessions from coding.
-
-Minimum behavior:
-
-- coding produces code and coding checkpoints
-- testing produces verification reports and pass/fail results
-- review produces acceptance findings and pass/fail results
-- failed verification requests a new coding attempt
-
-If MVP complexity must be reduced, review can be deferred and testing can be the first implemented verification role. The data model must still leave room for both.
-
-## Worktree Model
-
-### Why Worktree Matters
-
-The authoritative code view for a task must remain stable across multiple attempts.
-
-Without that stability:
-
-- verification may inspect the wrong code
-- a new coding attempt may not know where to continue
-- cleanup may delete code that still matters
-
-### Phase 1 Worktree Rules
-
-For the first implementation:
-
-- every coding task gets its own dedicated git worktree
-- all coding attempts for that task reuse the same worktree unless the worktree is declared bad
-- testing and review run against the same worktree in separate sessions
-- verification must not silently allocate a different worktree for the same task
-
-This is the required behavior for task correctness.
-
-### Future Workspace Generalization
-
-The internal design should preserve a later migration path from local worktrees to more general workspaces, such as:
-
-- remote containers
-- cloud-hosted repositories
-- provider-specific remote workspaces
-
-The first implementation may still use names like `worktree` in the user interface because that is the actual phase 1 behavior.
-
-## Orchestrator Visibility Requirements
-
-The orchestrator cannot make reliable decisions if it only sees the current session.
-
-It must be able to inspect the full durable work record needed for scheduling and recovery.
-
-At minimum, the orchestrator must be able to answer:
-
-- which tasks exist
-- each task's current lifecycle state
-- how many attempts each task has had
-- the role and outcome of each attempt
-- the currently active session, if any
-- the current worktree for each task
-- the latest checkpoint for each task
-- the latest verification result for each task
-- the current blocker, if any
-- the recommended next action
-
-This does not require replaying full raw logs. It requires a stable operator snapshot projection built from durable state.
-
-## Operator Snapshot Model
-
-The system should maintain a derived snapshot for status commands and supervising agents.
-
-The snapshot should include:
-
-- workflow summary
-- task summary
-- latest attempt per task
-- active session per task
-- current worktree occupancy
-- latest checkpoint summary
-- latest verification result
-- recommended next action
-- latest error or blocker summary
-
-The snapshot is not the source of truth. SQLite rows and repository artifacts remain authoritative. The snapshot is the decision surface.
-
-## Durable Data Model
-
-The following tables or equivalent storage structures are required.
-
-### `workflows`
-
-Suggested columns:
+Project fields should include at least:
 
 - `id TEXT PRIMARY KEY`
-- `project_name TEXT NOT NULL`
-- `repo TEXT`
-- `state TEXT NOT NULL`
-- `created_at TEXT NOT NULL`
-- `updated_at TEXT NOT NULL`
-- `started_at TEXT`
-- `finished_at TEXT`
-- `last_error TEXT`
-
-The workflow row should remain simple in phase 1.
-
-### `tasks`
-
-Suggested columns:
-
-- `id TEXT PRIMARY KEY`
-- `workflow_id TEXT NOT NULL`
 - `name TEXT NOT NULL`
-- `kind TEXT NOT NULL`
+- `goal TEXT`
 - `state TEXT NOT NULL`
-- `priority INTEGER`
-- `worktree_id TEXT`
-- `accepted_commit TEXT`
-- `result_summary TEXT`
+- `policy_path TEXT`
+- `policy_digest TEXT`
+- `policy_json TEXT`
 - `created_at TEXT NOT NULL`
 - `updated_at TEXT NOT NULL`
-- `completed_at TEXT`
-- `last_error TEXT`
 
-Suggested `kind` values:
+Project states:
 
-- `feature`
-- `bugfix`
-- `refactor`
-
-Suggested task states:
-
-- `planned`
-- `ready`
-- `running`
-- `awaiting_verification`
-- `fix_requested`
+- `active`
+- `blocked`
 - `completed`
-- `failed`
 - `canceled`
-- `cleaned`
 
-### `attempts`
+### 2. InputRecord
 
-This is a required table. It is the core execution-history table.
-
-Suggested columns:
+Input record fields should include at least:
 
 - `id TEXT PRIMARY KEY`
-- `task_id TEXT NOT NULL`
-- `role TEXT NOT NULL`
-- `ordinal INTEGER NOT NULL`
-- `status TEXT NOT NULL`
-- `continuation_mode TEXT NOT NULL`
-- `parent_attempt_id TEXT`
-- `resume_from_attempt_id TEXT`
-- `session_id TEXT`
-- `worktree_id TEXT`
-- `started_at TEXT`
-- `finished_at TEXT`
+- `project_id TEXT NOT NULL`
+- `source_type TEXT NOT NULL`
+- `source_ref TEXT`
+- `raw_payload_json TEXT NOT NULL`
+- `normalized_work_item_id TEXT`
+- `created_at TEXT NOT NULL`
+
+Supported source types in phase 1:
+
+- `human_message`
+- `linear_issue`
+
+### 3. WorkItem
+
+Work item fields should include at least:
+
+- `id TEXT PRIMARY KEY`
+- `project_id TEXT NOT NULL`
+- `title TEXT NOT NULL`
+- `description TEXT`
+- `kind TEXT NOT NULL`
+- `priority INTEGER NOT NULL`
+- `state TEXT NOT NULL`
+- `acceptance_criteria_json TEXT`
+- `source_type TEXT`
+- `source_ref TEXT`
+- `primary_workspace_id TEXT`
+- `authoritative_commit TEXT`
+- `latest_impl_checkpoint_id TEXT`
+- `latest_verification_checkpoint_id TEXT`
 - `result_summary TEXT`
-- `failure_summary TEXT`
-- `created_checkpoint_id TEXT`
 - `created_at TEXT NOT NULL`
 - `updated_at TEXT NOT NULL`
 
-Suggested role values:
-
-- `coding`
-- `testing`
-- `review`
-
-Suggested attempt statuses:
+Work item states:
 
 - `queued`
-- `launching`
-- `running`
-- `succeeded`
-- `failed`
-- `timed_out`
+- `implementing`
+- `verifying`
+- `blocked`
+- `done`
 - `canceled`
 
-Suggested continuation modes:
+### 4. Run
 
-- `fresh_start`
-- `restart_from_checkpoint`
-- `resume_same_session`
-
-### `sessions`
-
-Suggested columns:
+Run fields should include at least:
 
 - `id TEXT PRIMARY KEY`
-- `attempt_id TEXT NOT NULL`
-- `runtime_adapter TEXT NOT NULL`
-- `provider TEXT`
-- `model TEXT`
-- `session_name TEXT`
-- `external_session_id TEXT`
-- `host TEXT`
-- `working_directory TEXT`
-- `status TEXT NOT NULL`
-- `supports_resume INTEGER NOT NULL DEFAULT 0`
+- `project_id TEXT NOT NULL`
+- `work_item_id TEXT NOT NULL`
+- `purpose TEXT NOT NULL`
+- `target_type TEXT NOT NULL`
+- `target_ref TEXT`
+- `workspace_id TEXT`
+- `session_id TEXT`
+- `state TEXT NOT NULL`
+- `parent_run_id TEXT`
+- `resume_from_run_id TEXT`
+- `observed_start_revision TEXT`
+- `observed_end_revision TEXT`
+- `result TEXT`
+- `result_summary TEXT`
+- `failure_reason TEXT`
+- `started_at TEXT`
+- `finished_at TEXT`
 - `last_heartbeat_at TEXT`
 - `last_event_at TEXT`
 - `last_event_summary TEXT`
 - `runtime_meta_json TEXT`
+
+Run purposes in phase 1:
+
+- `implement`
+- `repair`
+- `review`
+- `test`
+- `analyze`
+
+Run target types in phase 1:
+
+- `workspace`
+- `checkpoint`
+
+Run states:
+
+- `running`
+- `succeeded`
+- `failed`
+- `stalled`
+- `canceled`
+
+### 5. AgentSession
+
+Agent session fields should include at least:
+
+- `id TEXT PRIMARY KEY`
+- `provider TEXT NOT NULL`
+- `model TEXT`
+- `command TEXT NOT NULL`
+- `runtime_session_name TEXT`
+- `runtime_session_id TEXT`
+- `state TEXT NOT NULL`
+- `resumable INTEGER NOT NULL`
+- `host TEXT`
+- `last_seen_at TEXT`
+- `runtime_meta_json TEXT`
+
+Session states:
+
+- `starting`
+- `running`
+- `stalled`
+- `finished`
+- `dead`
+
+### 6. Workspace
+
+Workspace fields should include at least:
+
+- `id TEXT PRIMARY KEY`
+- `project_id TEXT NOT NULL`
+- `work_item_id TEXT NOT NULL`
+- `kind TEXT NOT NULL`
+- `path TEXT NOT NULL`
+- `branch TEXT`
+- `base_commit TEXT`
+- `head_commit TEXT`
+- `state TEXT NOT NULL`
 - `created_at TEXT NOT NULL`
 - `updated_at TEXT NOT NULL`
 
-Suggested session statuses:
+Workspace kinds in phase 1:
 
-- `launching`
-- `running`
-- `completed`
-- `failed`
-- `timed_out`
-- `lost`
+- `primary`
+- `derived`
+- `recovery`
 
-### `worktrees`
+Workspace states:
 
-Suggested columns:
+- `healthy`
+- `suspect`
+- `quarantined`
+- `retired`
+
+### 7. Checkpoint
+
+Checkpoint fields should include at least:
 
 - `id TEXT PRIMARY KEY`
-- `workflow_id TEXT NOT NULL`
-- `task_id TEXT NOT NULL`
-- `branch TEXT NOT NULL`
-- `path TEXT NOT NULL`
-- `base_dir TEXT NOT NULL`
-- `from_branch TEXT NOT NULL`
+- `project_id TEXT NOT NULL`
+- `work_item_id TEXT NOT NULL`
+- `run_id TEXT NOT NULL`
+- `checkpoint_type TEXT NOT NULL`
+- `parent_checkpoint_id TEXT`
+- `target_checkpoint_id TEXT`
+- `workspace_id TEXT`
+- `commit_hash TEXT NOT NULL`
+- `doc_path TEXT NOT NULL`
+- `summary TEXT`
 - `status TEXT NOT NULL`
 - `created_at TEXT NOT NULL`
-- `updated_at TEXT NOT NULL`
-- `released_at TEXT`
-- `cleaned_at TEXT`
 
-Suggested worktree statuses:
+Checkpoint types:
 
-- `active`
-- `released`
-- `cleaned`
-- `failed`
+- `implementation`
+- `verification`
 
-### `checkpoints`
+Checkpoint status values:
 
-Suggested columns:
+- `created`
+- `superseded`
 
-- `id TEXT PRIMARY KEY`
-- `workflow_id TEXT NOT NULL`
-- `task_id TEXT NOT NULL`
-- `attempt_id TEXT NOT NULL`
-- `role TEXT NOT NULL`
-- `checkpoint_type TEXT NOT NULL`
-- `ordinal INTEGER NOT NULL`
-- `artifact_path TEXT NOT NULL`
-- `git_commit TEXT`
-- `summary TEXT NOT NULL`
-- `verification_result TEXT`
-- `next_action TEXT`
-- `created_at TEXT NOT NULL`
+### 8. Event Log
 
-Suggested verification result values:
+The existing `task_events` table may remain in phase 1, but it must evolve to carry project/work item/run/checkpoint identifiers.
 
-- `passed`
-- `failed`
-- `partial`
-- `not_applicable`
+Required event payload identity:
 
-`partial` should remain an attempt/checkpoint-level result, not a separate task lifecycle state.
+- `project_id`
+- `work_item_id`
+- `run_id`
+- `workspace_id`
+- `session_id`
+- `checkpoint_id`
 
-### `task_dependencies`
+### 9. ProjectSnapshot
 
-Suggested columns:
+This may be stored as a cached projection or rebuilt on demand.
 
-- `task_id TEXT NOT NULL`
-- `depends_on_task_id TEXT NOT NULL`
-- `PRIMARY KEY (task_id, depends_on_task_id)`
+At minimum it must expose:
 
-### `events`
+- project summary
+- work item counts by state
+- active runs
+- stalled runs
+- latest checkpoint per work item
+- workspace health summary
+- recommended next actions
 
-Keep or extend the existing event log. It should provide audit history, not replace the structured tables above.
+## Run Purpose Rules
 
-Required event examples:
+### Implement Run
 
-- task created
-- attempt queued
-- attempt launched
-- session created
-- session resumed
-- session lost
-- checkpoint created
-- verification failed
-- fix requested
-- worktree created
-- worktree cleaned
-- merge completed
+Purpose:
 
-## Scheduling Model
+- create or advance code for a work item
 
-### Scheduler Responsibilities
+Requirements:
 
-The scheduler must:
+- may modify product code
+- must produce an implementation checkpoint when a meaningful handoff state is reached
 
-- find ready tasks
-- create coding attempts
-- create verification attempts after coding checkpoints
-- route failed verification back to a new coding attempt
-- avoid duplicate launches for the same task role
-- update task state only from durable attempt and checkpoint outcomes
+### Repair Run
 
-### Daemon Responsibilities
+Purpose:
 
-The daemon must become the single background reconciliation authority.
+- modify code after a failed review or test
 
-It must:
+Requirements:
 
-- reconcile active sessions
-- detect clean completion, timeout, or loss
-- finalize attempts
-- record checkpoints
-- promote task states
-- start downstream verification attempts
-- request fix attempts after failed verification
-- update the operator snapshot
+- same as implement run
+- must cite the verification checkpoints it is addressing
 
-The daemon must not rely on transient process memory to understand the system.
+### Review Run
 
-### Required Task Transition Rules
+Purpose:
 
-1. When a coding attempt succeeds:
-   - create a coding checkpoint
-   - set task state to `awaiting_verification`
-   - queue a testing attempt in a new session
+- inspect the current implementation from a review perspective
 
-2. When a testing attempt succeeds and reports pass:
-   - create a verification checkpoint
-   - mark task `completed`
+Requirements:
 
-3. When a testing attempt succeeds and reports fail or partial:
-   - create a verification checkpoint
-   - mark task `fix_requested`
-   - queue a new coding attempt
+- must use a fresh session
+- must produce a verification checkpoint
+- must not be treated as completion by itself
 
-4. When a review attempt is enabled and fails:
-   - create a review checkpoint
-   - mark task `fix_requested`
-   - queue a new coding attempt
+### Test Run
 
-5. When an active coding session is lost before the next checkpoint:
-   - mark the attempt failed or lost
-   - keep the task open
-   - queue a new coding attempt with `restart_from_checkpoint`
+Purpose:
 
-## Verification Rules
+- validate behavior or other acceptance criteria
 
-Verification is not optional bookkeeping. It is part of the definition of completion.
+Requirements:
 
-Required rules:
+- must always use a fresh session
+- must produce a verification checkpoint
+- must record exactly what commit or checkpoint was tested
 
-- coding complete does not equal task complete
-- testing is always a new session
-- testing must inspect the same task worktree
-- failed testing creates a durable report
-- failed testing reopens coding through a new coding attempt
-- only a passing verification result can complete the task
+### Analyze Run
 
-If review is enabled, it follows the same session-separation rule.
+Purpose:
 
-## Runtime Adapter Architecture
+- perform supporting analysis without directly changing completion state
 
-The orchestration core must not hard-code ACP-specific behavior into task state transitions.
+Requirements:
 
-The runtime layer should be modular.
+- may create a verification checkpoint when its output is part of the durable decision trail
 
-### Required Adapter Boundary
+## Mandatory Session Rules
 
-Introduce a runtime adapter abstraction with operations similar to:
+### Coding and Testing Use Different Sessions
 
-- `launch_session(attempt, worktree, prompt_context)`
-- `resume_session(session)`
-- `poll_session(session)`
-- `cancel_session(session)`
-- `collect_terminal_summary(session)`
+This is required.
 
-### Required Capability Fields
+Do not reuse a coding session as a testing session.
 
-Each runtime adapter should expose capabilities such as:
+### Testing Always Starts a New Session
 
-- `supports_resume`
-- `supports_heartbeat`
-- `supports_streaming_events`
-- `supports_remote_workspace`
+This is required.
 
-### Phase 1 Runtime
+Every test run must create a new `AgentSession`, even when it is testing the same work item immediately after coding.
 
-The first implementation should use:
+### Review Also Defaults to a New Session
 
-- local ACP-backed runtime
-- local git worktrees
+Review should also use a new session in phase 1.
 
-Suggested adapter names:
+### `resume_same_session` Is Optional
 
-- `AcpLocalRuntimeAdapter`
-- `LocalGitWorktreeAdapter`
+Session resume is not part of correctness.
 
-This satisfies the immediate need while preserving the correct architectural seam for future cloud execution.
+The system may resume a coding or repair session when:
 
-## Prompt and Execution Context Rules
+- the runtime still exists
+- the session is known resumable
+- the workspace is still suitable
 
-Prompts must be generated from durable state, not from assumptions about old chat history.
+But if resume is not possible, the next run must continue from the latest checkpoint with a fresh session.
 
-### Coding Attempt Prompt Must Include
+## Workspace Rules
 
-- task goal
-- constraints
-- current worktree path
-- latest checkpoint summary
-- latest verification report when applicable
-- explicit next objective
+This spec intentionally does **not** impose a hard global rule that only one active run may exist on a workspace.
 
-### Testing Attempt Prompt Must Include
+The model must allow multiple active runs to exist concurrently when the orchestrator chooses to do so.
 
-- task goal
-- current authoritative worktree path
-- latest coding checkpoint summary
-- explicit instruction to verify rather than continue implementation
-- required test report format
+What the implementation must do is record enough context to avoid ambiguity:
 
-### Review Attempt Prompt Must Include
+- every run must record the target workspace or target checkpoint it started from
+- every run must record the revision it observed when it started
+- every run that matters for verification must record the exact revision or checkpoint it evaluated
 
-- task goal
-- current authoritative worktree path
-- latest coding checkpoint summary
-- acceptance criteria
-- explicit requirement to produce actionable findings
+The orchestrator remains responsible for deciding whether concurrent runs on the same workspace are sensible.
 
-Testing and review prompts must not be treated as a continuation of the coding session. They are separate verification sessions driven by checkpoint handoff.
+### Primary Workspace
 
-## Merge and Cleanup Policy
+Each work item should normally have one primary workspace that represents the main local code line for that work item.
 
-Merge is outside the core orchestration loop until a task is verified complete.
+### Derived or Recovery Workspaces
+
+The system may create additional workspaces when useful:
+
+- to replay from a checkpoint
+- to isolate recovery from a suspect workspace
+- to run an alternate attempt
+
+### Workspace Recovery Rule
+
+If a workspace becomes unreliable, recovery must start from the latest trustworthy checkpoint, not from chat history.
+
+## Checkpoint Rules
+
+Checkpoint design is the core of this spec.
+
+### Rule 1: Every Meaningful Run Boundary Produces a Repository Checkpoint
+
+If a run completes a meaningful step, its result must be materialized as a checkpoint in the repository and committed.
+
+### Rule 2: Two Checkpoint Types Must Exist
+
+#### Implementation Checkpoint
+
+Produced by:
+
+- implement runs
+- repair runs
+
+Purpose:
+
+- capture code progress
+- capture decisions
+- tell the next coding run what to do next
+
+#### Verification Checkpoint
+
+Produced by:
+
+- review runs
+- test runs
+- other authoritative validation runs
+
+Purpose:
+
+- capture what implementation checkpoint or commit was evaluated
+- capture pass/fail/inconclusive status
+- capture evidence and next action
+
+### Rule 3: Checkpoints Must Live in the Repository
+
+Recommended repository layout:
+
+`/.agvv/workitems/<work_item_id>/checkpoints/`
+
+Recommended file naming:
+
+- `0001-implement.md`
+- `0002-review.md`
+- `0003-test.md`
+- `0004-repair.md`
+
+### Rule 4: Checkpoint and Commit Must Stay Coupled
+
+When product code changes are part of the run output, the implementation checkpoint must be committed together with the code changes it describes.
+
+When verification output is the only repository change, the verification checkpoint commit may contain only files under `.agvv/`.
+
+Do not split checkpoint content and the code state it describes into unrelated commits.
+
+### Rule 5: A New Run Must Be Able to Continue from Checkpoint Alone
+
+The next run must not require:
+
+- previous chat history
+- previous terminal logs
+- the previous session still being alive
+
+Those may help, but the checkpoint chain must be sufficient.
+
+### Rule 6: Verification Checkpoints Must Cite Their Target
+
+A verification checkpoint must record:
+
+- target implementation checkpoint id
+- target commit hash
+- run purpose
+- result
+- evidence
+- next action
+
+### Rule 7: Materialization Flexibility Is Allowed
+
+For implementation runs, the agent will usually write checkpoint content directly in its execution workspace.
+
+For verification runs, the implementation may either:
+
+- let the verification run write the checkpoint file itself, or
+- let the orchestrator materialize the verification checkpoint from the run's structured result
+
+Both are acceptable as long as the end result is the same:
+
+- a repository checkpoint file exists
+- it is committed
+- it is linked to the producing run
+
+## Required Checkpoint Content
+
+### Implementation Checkpoint Template
+
+Every implementation checkpoint must contain at least:
+
+- work item id and title
+- producing run id
+- parent checkpoint id
+- current goal
+- what changed
+- files changed
+- key decisions
+- known risks or unfinished items
+- verification already performed
+- explicit next action
+- commit hash
+
+### Verification Checkpoint Template
+
+Every verification checkpoint must contain at least:
+
+- work item id and title
+- producing run id
+- target implementation checkpoint id
+- target commit hash
+- verification method
+- result: `pass`, `fail`, or `inconclusive`
+- evidence
+- concrete issues found
+- explicit next action
+- commit hash
+
+These templates must be stable and machine-addressable so that a new run can load them predictably.
+
+## Lifecycle Model
+
+Every work item follows the same closed loop:
+
+1. intake and normalization
+2. implementation
+3. implementation checkpoint
+4. verification
+5. verification checkpoint
+6. repair if needed
+7. further implementation checkpoint
+8. further verification
+9. done
+
+### Intake
+
+- create or update the project
+- create an input record
+- normalize input into a work item
+- queue the work item
+
+### Implementation Phase
+
+- orchestrator starts an implement run
+- the run may create or reuse a workspace
+- the run changes code
+- the run produces an implementation checkpoint
+
+### Verification Phase
+
+- orchestrator starts review and/or test runs according to policy
+- each verification run uses a fresh session
+- each verification run produces a verification checkpoint
+
+### Repair Phase
+
+- if verification fails, the orchestrator starts a repair run
+- the repair run must reference the failed verification checkpoints
+- the repair run produces a new implementation checkpoint
+
+### Completion
+
+A work item becomes `done` only after required verification succeeds against an implementation checkpoint.
+
+Implementation success alone is never enough.
+
+## WorkItem State Machine
+
+Required transitions:
+
+- `queued -> implementing`
+- `implementing -> verifying`
+- `verifying -> done`
+- `verifying -> implementing` when repair is needed
+- `implementing -> blocked` on unrecoverable runtime or workspace issues
+- `verifying -> blocked` on unrecoverable verification or recovery issues
+- any active state -> `canceled`
 
 Rules:
 
-- a task branch may contain multiple coding checkpoint commits
-- unverified commits stay on the task branch only
-- only the accepted candidate commit may be merged
-- worktree cleanup must never run while a non-terminal attempt still references the worktree
-- after merge, the worktree may be marked released and later cleaned
+- `implementing` means the next required action is an implement or repair run
+- `verifying` means the next required action is one or more verification runs
+- `blocked` means the orchestrator cannot safely continue automatically
 
-## Required Invariants
+## ProjectSnapshot Requirements
 
-The implementation must preserve these invariants:
+`ProjectSnapshot` must be a stable derived read model used by:
 
-1. A task may have many attempts.
-2. An attempt may have one session, but a session is not the unit of task history.
-3. Every completed session creates a checkpoint.
-4. Every coding checkpoint that changes code is committed to the task branch.
-5. Testing always runs in a new session.
-6. Testing and review inspect the same authoritative task worktree.
-7. Task completion requires passing verification, not merely coding completion.
-8. The orchestrator can recover from session loss using the latest checkpoint.
-9. Worktree cleanup cannot delete a worktree still referenced by active work.
-10. The operator snapshot can be reconstructed from durable state plus runtime inspection.
+- `agvv ... status`
+- future dashboards
+- supervising agents
+- scheduling logic
 
-## Backward Compatibility
+At minimum it must expose:
 
-The simple path must continue to work:
+- project id and summary
+- work item counts by state
+- all active runs
+- all stalled runs
+- latest checkpoint per work item
+- current authoritative commit per work item
+- workspace health summary
+- last significant event per work item
+- recommended next action per work item
 
-- one task
-- one coding worktree
-- one coding session
-- one checkpoint after coding completion
+`ProjectSnapshot` is not a repository checkpoint.
 
-But the implementation must internally move toward the checkpoint-first model even for the simple path.
+It is an orchestration view built from:
 
-The user-facing CLI can preserve commands such as:
+- durable database rows
+- current runtime inspection
+- latest checkpoint references
+
+## Scheduler Requirements
+
+The scheduler operates at the project level, not the single-run level.
+
+Each scheduling pass must:
+
+1. ingest new inputs
+2. normalize them into work items
+3. reconcile active runs and sessions
+4. refresh workspace status
+5. refresh the project snapshot
+6. select next actions
+7. launch new runs where appropriate
+
+Recommended priority order:
+
+1. handle stalled runs and suspect workspaces
+2. finish pending verification for existing implementation checkpoints
+3. launch repair runs for failed verification
+4. launch new implementation runs for queued work items
+
+The scheduler must not assume that one finished run means the work item is done.
+
+## Failure and Recovery Rules
+
+### Run Failure
+
+If a run returns a clear failure:
+
+- mark the run `failed`
+- record a structured failure reason
+- update the work item state according to run purpose
+
+Examples:
+
+- implement failed: work item usually remains `implementing`
+- review/test failed: work item returns to `implementing` for repair
+
+### Stalled Session
+
+If a session stops making progress:
+
+- mark the run `stalled`
+- update the session state
+- decide whether to resume or replace the session
+
+If resume is impossible, start a fresh run from the latest checkpoint.
+
+### Workspace Failure
+
+If the workspace is unreliable:
+
+- mark it `suspect` or `quarantined`
+- stop treating it as trustworthy for the next coding step
+- create a recovery workspace from the latest trustworthy checkpoint when needed
+
+### Missing Runtime History
+
+This is not fatal if the checkpoint chain is intact.
+
+The correct recovery path is:
+
+1. load latest checkpoint chain for the work item
+2. reconstruct intended next action
+3. create a fresh session and run
+4. continue from checkpoint
+
+## Local-First ACP Runtime Requirement
+
+Phase 1 must remain ACP-backed and local-first.
+
+The implementation must still preserve a clean boundary so that a future runtime adapter can replace ACP without rewriting the orchestration model.
+
+Required split:
+
+- orchestration model and scheduler are runtime-agnostic
+- ACP-specific session management remains in a runtime adapter layer
+- checkpoint creation rules are independent from ACP details
+
+Do not let ACP-specific assumptions leak into checkpoint semantics or work item state transitions.
+
+## Required Storage Plan
+
+The first implementation should use additive migration and compatibility-first schema changes.
+
+### Existing Tables to Keep
+
+- `tasks`
+- `task_events`
+- `task_reconcile_locks`
+
+### Required New Tables
+
+- `projects`
+- `input_records`
+- `runs`
+- `agent_sessions`
+- `workspaces`
+- `checkpoints`
+
+### Required Evolution of `tasks`
+
+The existing `tasks` table should evolve semantically into work items and gain fields such as:
+
+- `project_id`
+- `title`
+- `description`
+- `kind`
+- `priority`
+- `acceptance_criteria_json`
+- `primary_workspace_id`
+- `authoritative_commit`
+- `latest_impl_checkpoint_id`
+- `latest_verification_checkpoint_id`
+- `result_summary`
+
+Do not remove old compatibility fields immediately.
+
+## CLI Compatibility Requirements
+
+The following commands must continue to work:
 
 - `agvv task run`
 - `agvv task status`
@@ -925,101 +961,190 @@ The user-facing CLI can preserve commands such as:
 - `agvv task cleanup`
 - `agvv daemon run`
 
-Under the hood, those commands should operate on workflow, task, attempt, session, worktree, and checkpoint state rather than the old single-session task assumptions.
+### `task run`
 
-## Implementation Guidance for Coding Agents
+In the single-task path:
 
-Implement this refactor in phases. Do not attempt a single large rewrite.
+- create or resolve a project
+- create one work item
+- create the initial implement run
 
-### Phase 1: Add durable primitives
+### `task status`
 
-- add workflow, task, attempt, session, worktree, and checkpoint schema support
-- keep legacy task rows readable during migration
-- add serializers and typed models
+Must expose enough project/work item/run/checkpoint data to explain:
 
-### Phase 2: Introduce checkpoint creation
+- current work item state
+- active runs
+- latest checkpoints
+- current authoritative commit
+- workspace status
+- recommended next action
 
-- create checkpoint records and repository artifacts for completed sessions
-- create code commits for coding checkpoints
-- add status rendering for latest checkpoint
+### `task retry`
 
-### Phase 3: Split attempt and session lifecycle
+Must no longer be modeled as "rerun the same task session".
 
-- make attempts first-class
-- track session metadata separately
-- distinguish fresh start, resume, and restart from checkpoint
+It must decide whether to:
 
-### Phase 4: Enforce verification loop
+- resume a resumable coding session, or
+- start a fresh run from the latest checkpoint
 
-- coding success must queue testing
-- testing must always start a new session
-- failed testing must route back to coding
+### Future Commands
 
-### Phase 5: Add modular runtime adapters
+The architecture must not block later addition of:
 
-- keep ACP local as the first implementation
-- move runtime-specific logic behind adapter boundaries
+- `agvv project run`
+- `agvv project status`
+- `agvv project cleanup`
 
-### Phase 6: Improve status and operator surfaces
+## Required Event Types
 
-- add attempt history to status
-- expose active worktrees
-- expose latest checkpoint and next action
+At minimum the system must emit structured events for:
+
+- input received
+- work item created
+- run queued
+- run started
+- session started
+- session resumed
+- run succeeded
+- run failed
+- run stalled
+- workspace marked suspect
+- workspace quarantined
+- recovery workspace created
+- implementation checkpoint created
+- verification checkpoint created
+- verification passed
+- verification failed
+- work item done
+
+Each event must include stable identifiers for the relevant project, work item, run, workspace, session, and checkpoint.
+
+## Implementation Boundaries in the Current Codebase
+
+Coding agents implementing this spec should treat these areas as the primary modification surfaces:
+
+- [`agvv/runtime/models.py`](/home/yunda/projects/agent-wave/worktrees/chore-multi-agent-orchestration-spec-rewrite/agvv/runtime/models.py)
+- [`agvv/runtime/store.py`](/home/yunda/projects/agent-wave/worktrees/chore-multi-agent-orchestration-spec-rewrite/agvv/runtime/store.py)
+- [`agvv/runtime/core.py`](/home/yunda/projects/agent-wave/worktrees/chore-multi-agent-orchestration-spec-rewrite/agvv/runtime/core.py)
+- [`agvv/runtime/session_lifecycle.py`](/home/yunda/projects/agent-wave/worktrees/chore-multi-agent-orchestration-spec-rewrite/agvv/runtime/session_lifecycle.py)
+- [`agvv/runtime/dispatcher.py`](/home/yunda/projects/agent-wave/worktrees/chore-multi-agent-orchestration-spec-rewrite/agvv/runtime/dispatcher.py)
+- [`agvv/orchestration/layout.py`](/home/yunda/projects/agent-wave/worktrees/chore-multi-agent-orchestration-spec-rewrite/agvv/orchestration/layout.py)
+- [`agvv/orchestration/acp_ops.py`](/home/yunda/projects/agent-wave/worktrees/chore-multi-agent-orchestration-spec-rewrite/agvv/orchestration/acp_ops.py)
+
+Additional modules will likely be needed for:
+
+- project snapshot projection
+- checkpoint materialization
+- project policy loading
+- scheduler logic beyond the current task-only dispatcher
+
+## Recommended Implementation Order
+
+Keep the repository working after each step.
+
+### Phase 1: Schema and Domain Primitives
+
+- add project/run/workspace/session/checkpoint primitives
+- evolve `tasks` into work items semantically
+- preserve compatibility shims
+
+### Phase 2: Checkpoint Materialization
+
+- create repository checkpoint paths and templates
+- implement implementation checkpoint writing
+- implement verification checkpoint writing
+- link checkpoints durably in SQLite
+
+### Phase 3: Run- and Session-Aware Lifecycle
+
+- separate run identity from session identity
+- ensure testing always creates a fresh session
+- ensure fresh-run-from-checkpoint is the default recovery path
+
+### Phase 4: Project Snapshot and Scheduler
+
+- add project-level snapshot projection
+- upgrade daemon reconciliation to project-level scheduling
+- schedule implementation, verification, and repair loops
+
+### Phase 5: CLI and Docs Alignment
+
+- update CLI status surfaces
+- update README and operator-facing documentation
+- preserve single-task UX
 
 ## Testing Requirements
 
-The implementation must add or update tests in these areas.
-
 ### Schema and Model Tests
 
-- workflow, task, attempt, session, worktree, and checkpoint round-trip persistence
+- project/work item/run/workspace/checkpoint serialization
 - compatibility reads for legacy task rows
+- policy loading and validation
 
 ### Checkpoint Tests
 
-- completed coding session creates a checkpoint artifact
-- completed coding session that changed code creates a commit reference
-- completed testing session creates a verification checkpoint
+- implementation checkpoint path generation
+- verification checkpoint path generation
+- checkpoint commit linkage
+- checkpoint chain reconstruction
+- fresh-run continuation from checkpoint without previous session
 
-### Lifecycle Tests
+### Session and Runtime Tests
 
-- coding completion queues testing
-- testing always launches a new session
-- failed testing requests a new coding attempt
-- lost session triggers restart from latest checkpoint
+- coding session launch
+- test session always new
+- stalled session detection
+- resume optionality for coding runs
+- fresh session fallback from checkpoint
 
-### Worktree Tests
+### Workspace Tests
 
-- coding task gets a dedicated worktree
-- testing reuses the coding worktree
-- cleanup refuses to remove worktree while active attempts still reference it
+- primary workspace creation
+- recovery workspace creation from checkpoint
+- quarantined workspace handling
 
-### Status Tests
+### Scheduler Tests
 
-- status surfaces show task state, latest attempt, current session, current worktree, latest checkpoint, and next action
+- queued work item starts implementation
+- implementation checkpoint triggers verification
+- verification failure triggers repair
+- successful verification marks work item done
+- project snapshot reflects active and stalled runs correctly
 
-### Adapter Tests
+### CLI Tests
 
-- ACP local adapter launches and polls sessions
-- runtime adapter capabilities influence scheduling choices
+- legacy `task run/status/retry/cleanup` still work
+- status output includes checkpoint and project-level information
+- retry from checkpoint works when prior session is unavailable
 
 ## Acceptance Criteria
 
-This refactor is complete when all of the following are true:
+This spec is implemented only when all of the following are true:
 
-1. A project with multiple tasks can be represented durably.
-2. A task can survive more than one coding and testing cycle.
-3. Coding completion creates a checkpoint but does not complete the task.
-4. Testing always starts in a new session.
-5. Failed testing triggers a new coding attempt from the latest checkpoint.
-6. A lost coding session can be replaced by a new session without losing the task.
-7. Worktree reuse for verification is enforced.
-8. Operators can inspect the complete durable work record needed for orchestration.
-9. The first implementation works locally with ACP.
-10. The architecture preserves a clean path to future runtime plugins.
+1. A single-task `agvv task run` still works.
+2. The system can represent multiple work items in one project.
+3. The system can represent multiple runs for one work item.
+4. Coding and testing are persisted as different sessions.
+5. Testing always starts a new session.
+6. Every meaningful run produces a repository checkpoint and corresponding metadata row.
+7. A new run can continue from the latest checkpoint without access to prior chat history.
+8. Verification success, not coding completion, controls whether a work item becomes `done`.
+9. The project snapshot can explain current progress and next actions without scanning raw transcripts.
+10. The local-first ACP implementation works while keeping runtime adapter boundaries clean.
 
-## Final Rule
+## Coding-Agent Implementation Guidance
 
-If an implementation choice is ambiguous, prefer the option that makes the system easier to recover after a crash, easier to inspect from durable state, and easier for a fresh coding session to continue from the latest checkpoint.
+When implementing this spec:
 
-That is the core of this design.
+- prefer additive migrations over destructive renames
+- preserve old command behavior while changing the internal model
+- keep checkpoint templates explicit and machine-addressable
+- never encode correctness assumptions only in prompt text
+- persist all scheduling-relevant decisions in SQLite
+- treat repository checkpoints as first-class continuity artifacts
+- treat session resume as optional
+- assume the next run may start with zero chat history
+
+If you need to choose between a design that is elegant in runtime code and a design that makes checkpoint-based recovery explicit, prefer the recovery-explicit design.
