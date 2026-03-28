@@ -1,267 +1,535 @@
-# Multi-Agent Orchestration Refactor Spec
+# Checkpoint-First Multi-Agent Orchestration Spec
 
 ## Document Purpose
 
-This document is an implementation specification for coding agents modifying `agent-wave` (`agvv`).
+This document is the implementation specification for coding agents modifying `agent-wave` (`agvv`).
 
-Follow this spec to evolve `agvv` from a single-task runner into a workflow-oriented orchestrator that can:
+It replaces the earlier session-centric multi-agent proposal with a more durable design:
 
-- run multiple coding tasks in parallel
-- assign isolated git worktrees per coding task
-- track worker roles such as coding, test, and review
-- route failures back to the original coding worker
-- preserve durable state for retries, auditing, and cleanup
+- `agvv` must orchestrate multiple tasks in parallel
+- each task may go through multiple coding and verification cycles
+- any runtime session may crash or become unavailable
+- work must continue from durable checkpoints rather than depending on chat history
+- the first implementation remains local-first and ACP-backed
+- the architecture must still leave a clean extension point for future cloud runtimes
 
-This document is intentionally operational. It defines target behavior, data model changes, state transitions, implementation boundaries, and rollout order.
+This document is intentionally operational. A coding agent should be able to implement the design from this file alone, without prior chat context.
 
-## Current System Summary
+## First-Principles Problem Statement
 
-Today, `agvv` is a lightweight task runner:
+`agvv` is currently effective as a single-task runner:
 
-- one task creates or attaches one feature worktree
-- one task launches one ACP coding session
-- one task stores one current session in SQLite
-- one daemon loop reconciles `pending` and `running` tasks
+- one task creates or reuses one worktree
+- one task launches one coding session
+- one task stores one current runtime identity
+- one daemon loop reconciles `pending` and `running`
 
-Current behavior is documented in `README.md` and implemented mainly in:
+That model fails once real orchestration begins. In a real multi-agent workflow:
 
-- `agvv/runtime/models.py`
-- `agvv/runtime/store.py`
-- `agvv/runtime/core.py`
-- `agvv/runtime/session_lifecycle.py`
-- `agvv/runtime/dispatcher.py`
-- `agvv/orchestration/layout.py`
-- `agvv/orchestration/acp_ops.py`
+- one project may have multiple tasks in flight at once
+- coding and testing are different agents and therefore different sessions
+- a completed coding step must be verified before the task is considered done
+- failed verification must route back to the original coding line of work
+- any session may hang, die, or become unrecoverable
+- the orchestrator still needs enough history to continue the job safely
 
-This architecture is correct for "one task, one worker, one worktree". It is not sufficient for multi-agent orchestration.
+From first principles, the system must always answer four questions:
 
-## Problem Statement
+1. What work exists?
+2. What has been tried for each unit of work?
+3. What code workspace is currently authoritative for that work?
+4. If the current runtime disappears, what durable state is sufficient to continue?
 
-The current data model conflates these concerns:
+If `agvv` cannot answer those four questions from durable state plus the repository contents, it is not yet a reliable orchestrator.
 
-- task identity
-- feature branch identity
-- worktree allocation
-- worker role
-- ACP session identity
-- retry history
+## Core Design Thesis
 
-As a result, the current system cannot model the following well:
+The system must be **checkpoint-first**, not **session-first**.
 
-- a coding worker finishes and a test worker starts on the same worktree
-- a test worker fails and the system resumes or reassigns the original coding worker
-- multiple coding workers run in parallel on different worktrees for one higher-level workflow
-- review, test, and fix cycles are represented durably rather than inferred from logs
-- one task has more than one session attempt over time
+That means:
 
-The refactor must separate workflow, task, attempt, session, and worktree concerns.
+- correctness must not depend on resuming the same runtime session
+- any phase boundary that matters for future decisions must create a durable checkpoint
+- work continuity must come from repository state, checkpoint artifacts, and durable metadata
+- resuming the same session is only a speed optimization when it is safe and useful
 
-## Design Goals
+The controlling idea is:
 
-Every change in this refactor must improve at least one of these:
+**A session may disappear at any time. A task must still be able to continue and close the loop.**
 
-- isolation
-- reliability
-- recoverability
-- observability
-- orchestration clarity
+## What Must Be Preserved
 
-The resulting system must:
-
-- keep isolated worktrees as a first-class primitive
-- preserve explicit session lineage across retries and fix requests
-- make all state transitions durable in SQLite
-- load repository-owned workflow policy from a checked-in contract file
-- support role-specific workers
-- support dependency-aware scheduling
-- expose a coherent operator snapshot for status and debugging
-- remain usable for the simple case of a single coding task
-
-## Non-Goals
-
-This refactor must not attempt the following in the first implementation:
-
-- general DAG scheduling across arbitrary external systems
-- automatic Git merge conflict resolution
-- autonomous branch deletion or force recovery after ambiguous worktree failures
-- provider-specific prompt engineering beyond basic role templates
-- replacing ACP with a separate runtime
-
-## Repository Workflow Contract
-
-`agent-wave` should not encode all orchestration behavior only in Python code and ad hoc CLI flags.
-
-Add a repository-owned workflow contract file. A default file such as `WORKFLOW.md` is preferred because it can carry both structured configuration and prompt templates in one checked-in artifact.
-
-The workflow contract should define:
-
-- workflow-level defaults
-- role-specific prompt templates
-- role sequencing policy
-- optional dependency templates
-- verification and review requirements
-- ACP/runtime defaults
-- worktree bootstrap or validation hooks when needed
-
-The workflow contract must be:
-
-- versioned with the repository
-- reloadable without changing durable workflow history semantics
-- visible to coding agents as the policy source of truth
-- optional for legacy single-task usage, with safe defaults when omitted
-
-### Suggested contract shape
-
-The contract may use YAML front matter plus markdown prompt bodies, or a dedicated YAML/TOML file if the implementation prefers strict parsing.
-
-At minimum it should be able to express:
-
-- `roles.coding.prompt_template`
-- `roles.test.prompt_template`
-- `roles.review.prompt_template`
-- `scheduler.require_review`
-- `scheduler.require_test`
-- `scheduler.auto_create_review_task`
-- `scheduler.auto_create_test_task`
-- `runtime.agent_provider`
-- `runtime.agent_model`
-- `runtime.max_concurrent_attempts`
-- `worktree.bootstrap`
-
-### Contract precedence
-
-Use this precedence order:
-
-1. explicit CLI override
-2. workflow contract file
-3. built-in defaults
-
-The resolved contract used for a workflow should be recorded durably, at minimum by storing a digest and the resolved spec JSON on the workflow row.
-
-## Target Architecture
-
-The target model has five distinct concepts:
+The design should preserve only the structures required for reliable orchestration:
 
 1. `Workflow`
+   A top-level container for a coordinated run across one repository.
+
 2. `Task`
+   A business unit of work such as a feature, bugfix, or refactor.
+
 3. `Attempt`
-4. `WorktreeLease`
-5. `SessionBinding`
+   One execution attempt by one role against one task.
+
+4. `Session`
+   The runtime session actually used by an attempt.
+
+5. `Worktree`
+   The code workspace allocated to the task in the first implementation.
+
+6. `Checkpoint`
+   A durable stage artifact that allows a later attempt to continue the task without previous chat history.
+
+Everything else is secondary and must serve these primitives.
+
+## Terminology
 
 ### Workflow
 
-A workflow is the top-level orchestration unit. It represents a larger unit of work that may contain multiple tasks or steps.
+A workflow is a project-level orchestration run. It groups related tasks and gives the orchestrator a durable top-level object.
 
 Examples:
 
-- implement two features and one refactor for one repository
-- fix a bug, run tests, and merge after green
+- implement feature A, feature B, refactor C, and bugfix D in one repository
+- run a batch of coding tasks and close each one through verification
+
+The workflow abstraction is useful and should exist, but the first implementation should keep it simple. The essential behavior lives in task, attempt, worktree, and checkpoint handling.
 
 ### Task
 
-A task is a schedulable unit of business work. It is not the same thing as a session and not always the same thing as a worktree.
+A task is the durable definition of what needs to be accomplished.
 
 Examples:
 
-- implement feature A
-- implement feature B
-- refactor component C
-- run browser E2E on feature A
-- review coding result for feature B
+- add feature A
+- add feature B
+- refactor subsystem C
+- fix bug D
+
+A task is **not** a session and **not** a single execution. A task is complete only after its required verification loop succeeds.
 
 ### Attempt
 
-An attempt is one execution of one worker against one task.
+An attempt is one role-specific execution attempt for one task.
 
 Examples:
 
 - coding attempt #1 for feature A
-- test attempt #1 for feature A
-- coding fix attempt #2 for feature A after failed tests
+- testing attempt #1 for feature A
+- coding fix attempt #2 for feature A after failed testing
 
-Attempts are the proper home for session identity, runtime status, and retry lineage.
+`Attempt` exists because the orchestrator must reason about execution history independently from runtime session identity.
 
-### WorktreeLease
+### Session
 
-A worktree lease is a durable record for an allocated worktree resource.
+A session is the runtime identity used by an attempt.
 
-It owns:
-
-- branch name
-- filesystem path
-- lifecycle status
-
-Tasks and attempts may reference a worktree lease. Not every task creates its own lease.
-
-### SessionBinding
-
-A session binding represents the runtime identity associated with an attempt.
-
-For ACP-backed workers this includes:
+For ACP-backed local runtimes this may include:
 
 - provider
-- normalized agent command
+- model
+- normalized command
 - session name
-- session id when available
-- working directory
-- resumability metadata
-- worker host when relevant
-- last known runtime phase
-- last heartbeat timestamp
-- last event timestamp and summary
-- snapshot-ready runtime metadata
+- session id
+- heartbeat metadata
+- last observed runtime status
 
-## High-Level Behavioral Model
+`Session` is not equivalent to `Attempt`.
 
-The desired execution loop is:
+An attempt answers:
 
-1. create workflow
-2. create tasks and dependency edges
-3. scheduler selects ready tasks
-4. scheduler chooses worker role and worktree strategy
-5. scheduler creates an attempt
-6. runtime launches or resumes an ACP session for that attempt
-7. daemon reconciles attempt runtime state
-8. terminal attempt updates the owning task state
-9. scheduler creates downstream tasks or follow-up attempts
-10. workflow completes only after all required tasks reach terminal success
+- what role was being executed
+- which task lifecycle step this execution belonged to
+- whether this execution succeeded, failed, or timed out
+- whether it was a retry or a fix continuation
+
+A session answers:
+
+- where the execution was running
+- which runtime/provider was used
+- whether the underlying session is alive
+- whether resume is possible
+
+In practice, one attempt often uses one session, but they are not the same abstraction. A later attempt may continue the same task from the latest checkpoint while using a completely new session.
+
+### Worktree
+
+For the first implementation, a worktree is the authoritative local code workspace for a task.
+
+Its duties are:
+
+- provide isolation between coding tasks
+- preserve the exact filesystem view that verification must inspect
+- remain available across multiple attempts of the same task
+- be cleaned only when no active work still depends on it
+
+The first implementation should remain local-first and use git worktrees. The design should still preserve a future upgrade path to more generic workspaces.
+
+### Checkpoint
+
+A checkpoint is the durable handoff point that allows work to continue after a session ends or crashes.
+
+Primary rule:
+
+**Every completed session produces a checkpoint.**
+
+Examples:
+
+- a coding session finishes and declares the implementation complete
+- a testing session finishes and writes a test report
+- a bugfix coding session finishes and writes the repair summary
+- a final verification session passes
+- a merge step completes
+
+The checkpoint is not only a database row. It must create a durable artifact in the repository.
+
+## Non-Goals
+
+The first implementation must not try to solve everything:
+
+- general arbitrary DAG scheduling across external systems
+- autonomous merge conflict resolution
+- forcing branch or worktree recovery after ambiguous git failures
+- perfect provider-specific prompt optimization
+- a full cloud runtime implementation in phase 1
+- replacing ACP before the local checkpoint-first model is proven
+
+## Design Requirements
+
+The implementation must satisfy all of the following:
+
+1. Multiple tasks can run in parallel.
+2. Each task can go through multiple coding and verification cycles.
+3. Coding and testing are different agents and therefore different sessions.
+4. A completed coding session does not mean the task is complete.
+5. Every completed session creates a checkpoint artifact.
+6. If a session dies, a new session can continue from the latest checkpoint.
+7. Verification runs against the same authoritative code worktree that coding produced.
+8. The orchestrator can inspect the complete work record needed to decide the next action.
+9. The first implementation works locally with ACP.
+10. The runtime layer is modular enough that future providers can plug in cleanly.
+
+## The Real Unit of Orchestration
+
+The orchestrator is not merely managing a list of tasks. It is managing multiple independent **closed work loops**:
+
+`task definition -> coding attempt -> verification attempt -> fix attempt -> verification attempt -> completion`
+
+For example, for four project tasks:
+
+- feature A
+- feature B
+- refactor C
+- bugfix D
+
+the orchestrator may initially start three or four coding attempts in parallel. Each task then evolves independently. One task may be waiting for verification while another is in fix mode and another is still in its first coding run.
+
+This is why task, attempt, session, and worktree must be separated.
+
+## Closed-Loop Execution Model
+
+The standard lifecycle for a task is:
+
+1. create task
+2. allocate or attach worktree
+3. start coding attempt
+4. coding session completes
+5. create coding checkpoint
+6. start verification attempt in a new session
+7. verification session completes
+8. create verification checkpoint
+9. if verification failed, request a fix and start a new coding attempt
+10. if verification passed, mark task completed
+11. optionally merge and clean up
+
+The crucial rule is:
+
+**Verification is always a new session.**
+
+Reasons:
+
+- the coding agent and the testing/review agent are not the same agent
+- verification should not inherit implementation bias
+- verification must inspect the resulting code state, not continue the coding conversation
+
+Therefore:
+
+- a coding session may optionally be resumed while it is still the active coding attempt
+- a testing session always starts as a new session
+- a review session also starts as a new session
+- every cross-role handoff is checkpoint-based
+
+## Checkpoint-First Continuity Model
+
+### Why Checkpoints, Not Chat History
+
+Chat history is not a reliable continuity layer:
+
+- context windows are limited
+- providers differ in retention and resume behavior
+- long conversations accumulate noise
+- old reasoning may become stale
+- a runtime crash may make the entire session unavailable
+
+By contrast, a checkpoint can be designed to be:
+
+- durable
+- explicit
+- role-neutral
+- easy to inspect
+- safe to hand off to a brand new session
+
+This is why the system's correctness must depend on checkpoints, not on session survival.
+
+### What a Checkpoint Must Preserve
+
+Each checkpoint must preserve the minimum durable facts required for a fresh session to continue:
+
+- task identity
+- workflow identity
+- role that produced the checkpoint
+- attempt identity
+- current worktree
+- current branch or ref
+- stage reached
+- summary of completed work
+- summary of current verification result if one exists
+- unresolved issues
+- recommended next action
+- timestamp
+
+### Checkpoint Types
+
+Suggested checkpoint types:
+
+- `coding_complete`
+- `verification_report`
+- `fix_complete`
+- `verification_passed`
+- `merge_complete`
+- `attempt_interrupted` (optional best-effort artifact; not required for correctness)
+
+### Where Checkpoints Live
+
+Each checkpoint must have:
+
+- a durable metadata record in SQLite
+- a repository artifact written to a stable path
+
+Suggested repository path:
+
+- `docs/agvv-checkpoints/<task-id>/<ordinal>-<checkpoint-type>.md`
+
+The exact directory can change, but it must be stable, predictable, and committed with the task work.
+
+### Checkpoint Content Template
+
+Each checkpoint artifact should contain:
+
+- task id
+- workflow id
+- attempt id
+- role
+- session id or session name when available
+- worktree path
+- branch name
+- status summary
+- completed work summary
+- verification summary
+- open issues
+- recommended next action
+
+If the checkpoint was produced after a failure or interruption, also include:
+
+- failure summary
+- whether the current code state is believed to be usable
+- whether to retry on the same worktree
+- whether a fresh worktree may be needed
+
+## Code Persistence Policy
+
+Three concepts must be kept separate:
+
+1. `checkpoint`
+   A stage boundary has been reached.
+
+2. `code snapshot`
+   The current code state has been durably saved.
+
+3. `promotion`
+   The current code state has been accepted as the version eligible for merge.
+
+The correct policy is:
+
+- every completed coding session creates a checkpoint
+- if that session modified code, it must also create a commit on the task branch
+- verification sessions usually create reports rather than code commits
+- only code that has passed required verification is promoted to an accepted candidate
+- only an accepted candidate may be merged
+
+In other words:
+
+**Every coding checkpoint should be committed. Not every coding checkpoint should be merged.**
+
+This policy is required so that:
+
+- crash recovery does not depend on dirty worktree state
+- later sessions can continue from a known commit plus checkpoint artifact
+- unverified code remains isolated on the task branch
+
+## Attempt, Session, and Resume Semantics
+
+### Why Attempt and Session Are Separate
+
+An attempt is part of the task lifecycle.
+
+A session is a runtime carrier.
+
+That separation is necessary because:
+
+- a failed attempt may end with a dead session
+- a new attempt may continue the same task from the latest checkpoint
+- a resumed session may still belong to the same attempt
+
+The orchestrator should always reason in terms of attempts first and sessions second.
+
+### Resume Is an Optimization, Not a Dependency
+
+`resume_same_session` still has value:
+
+- it may preserve useful short-term working memory
+- it may reduce restart cost inside an ongoing coding phase
+- it may be faster than creating a new session
+
+But it must never be the primary correctness path.
+
+The orchestrator must assume:
+
+- a session can disappear at any time
+- a fresh session can always continue from the latest checkpoint
+
+Therefore the rule is:
+
+**`restart_from_checkpoint` is the default continuity path. `resume_same_session` is an optional optimization when safe and useful.**
+
+### When Resume Is Valid
+
+Resume may be used only when all of the following hold:
+
+- the session still exists
+- the runtime reports it as resumable
+- the task is still in the same role and same lifecycle phase
+- there is reason to believe the remaining short-term context is valuable
+- the session history has not become so large that it is now mostly noise
+
+Resume is most appropriate for an interrupted coding phase that has not yet reached its next checkpoint.
+
+### When a New Session Is Required
+
+A new session is required when:
+
+- the role changes from coding to verification
+- the role changes from verification back to coding fix work
+- the previous session is missing or unrecoverable
+- the orchestrator intentionally restarts from the latest checkpoint
+- the runtime provider changes
+- the execution location changes
+
+Testing always uses a new session. This rule is mandatory.
+
+## Role Model
+
+The first implementation should support these roles:
+
+- `coding`
+- `testing`
+- `review` (optional in MVP but supported by the model)
+
+`testing` and `review` are both verification roles. They are intentionally separate sessions from coding.
+
+Minimum behavior:
+
+- coding produces code and coding checkpoints
+- testing produces verification reports and pass/fail results
+- review produces acceptance findings and pass/fail results
+- failed verification requests a new coding attempt
+
+If MVP complexity must be reduced, review can be deferred and testing can be the first implemented verification role. The data model must still leave room for both.
+
+## Worktree Model
+
+### Why Worktree Matters
+
+The authoritative code view for a task must remain stable across multiple attempts.
+
+Without that stability:
+
+- verification may inspect the wrong code
+- a new coding attempt may not know where to continue
+- cleanup may delete code that still matters
+
+### Phase 1 Worktree Rules
+
+For the first implementation:
+
+- every coding task gets its own dedicated git worktree
+- all coding attempts for that task reuse the same worktree unless the worktree is declared bad
+- testing and review run against the same worktree in separate sessions
+- verification must not silently allocate a different worktree for the same task
+
+This is the required behavior for task correctness.
+
+### Future Workspace Generalization
+
+The internal design should preserve a later migration path from local worktrees to more general workspaces, such as:
+
+- remote containers
+- cloud-hosted repositories
+- provider-specific remote workspaces
+
+The first implementation may still use names like `worktree` in the user interface because that is the actual phase 1 behavior.
+
+## Orchestrator Visibility Requirements
+
+The orchestrator cannot make reliable decisions if it only sees the current session.
+
+It must be able to inspect the full durable work record needed for scheduling and recovery.
+
+At minimum, the orchestrator must be able to answer:
+
+- which tasks exist
+- each task's current lifecycle state
+- how many attempts each task has had
+- the role and outcome of each attempt
+- the currently active session, if any
+- the current worktree for each task
+- the latest checkpoint for each task
+- the latest verification result for each task
+- the current blocker, if any
+- the recommended next action
+
+This does not require replaying full raw logs. It requires a stable operator snapshot projection built from durable state.
 
 ## Operator Snapshot Model
 
-The system must expose a coherent runtime snapshot for operators and supervising agents.
+The system should maintain a derived snapshot for status commands and supervising agents.
 
-This snapshot is a derived read model. It is not the source of truth. SQLite rows remain authoritative, but status commands and dashboards should read from a stable projection rather than reimplementing orchestration logic in presentation code.
-
-At minimum the snapshot should include:
+The snapshot should include:
 
 - workflow summary
 - task summary
 - latest attempt per task
-- currently running attempts
-- retrying or backoff attempts
-- worktree lease occupancy
-- current session binding metadata
-- latest event and error summary
+- active session per task
+- current worktree occupancy
+- latest checkpoint summary
+- latest verification result
 - recommended next action
+- latest error or blocker summary
 
-### Snapshot requirements
+The snapshot is not the source of truth. SQLite rows and repository artifacts remain authoritative. The snapshot is the decision surface.
 
-- status surfaces must be able to answer "what is running now" without scanning raw event logs
-- the snapshot must make role, lineage, and lease reuse visible
-- the snapshot must degrade safely when runtime polling is temporarily stale
-- the snapshot must be reconstructable after process restart from durable state plus current runtime inspection
+## Durable Data Model
 
-## Data Model Refactor
-
-## Existing Tables
-
-Keep the existing `tasks`, `task_events`, and `task_reconcile_locks` tables for compatibility and migration support.
-
-However, the meaning of `tasks` must evolve.
-
-## New Core Tables
-
-Add the following tables.
+The following tables or equivalent storage structures are required.
 
 ### `workflows`
 
@@ -276,69 +544,48 @@ Suggested columns:
 - `started_at TEXT`
 - `finished_at TEXT`
 - `last_error TEXT`
-- `spec_json TEXT NOT NULL`
-- `workflow_contract_path TEXT`
-- `workflow_contract_digest TEXT`
 
-Suggested states:
-
-- `planned`
-- `running`
-- `completed`
-- `failed`
-- `timed_out`
-- `canceled`
-- `cleaned`
+The workflow row should remain simple in phase 1.
 
 ### `tasks`
 
-Retain the table name but change its semantic role.
+Suggested columns:
 
-Suggested additional columns:
-
+- `id TEXT PRIMARY KEY`
 - `workflow_id TEXT NOT NULL`
-- `role TEXT NOT NULL`
+- `name TEXT NOT NULL`
 - `kind TEXT NOT NULL`
-- `parent_task_id TEXT`
-- `worktree_lease_id TEXT`
-- `depends_on_count INTEGER NOT NULL DEFAULT 0`
 - `state TEXT NOT NULL`
+- `priority INTEGER`
+- `worktree_id TEXT`
+- `accepted_commit TEXT`
 - `result_summary TEXT`
-- `accepted_at TEXT`
-- `merged_at TEXT`
+- `created_at TEXT NOT NULL`
+- `updated_at TEXT NOT NULL`
+- `completed_at TEXT`
+- `last_error TEXT`
 
-Suggested role values:
-
-- `coding`
-- `test`
-- `review`
-
-Suggested kind values:
+Suggested `kind` values:
 
 - `feature`
 - `bugfix`
 - `refactor`
-- `verification`
-- `review`
 
 Suggested task states:
 
 - `planned`
 - `ready`
 - `running`
-- `awaiting_review`
-- `awaiting_test`
+- `awaiting_verification`
 - `fix_requested`
 - `completed`
-- `merged`
 - `failed`
-- `timed_out`
 - `canceled`
 - `cleaned`
 
-### `task_attempts`
+### `attempts`
 
-This is the most important new table.
+This is a required table. It is the core execution-history table.
 
 Suggested columns:
 
@@ -347,27 +594,24 @@ Suggested columns:
 - `role TEXT NOT NULL`
 - `ordinal INTEGER NOT NULL`
 - `status TEXT NOT NULL`
-- `agent_provider TEXT`
-- `agent_model TEXT`
-- `agent_cmd TEXT`
-- `session_name TEXT`
-- `session_id TEXT`
-- `worktree_lease_id TEXT`
-- `worktree_path TEXT`
-- `resume_from_attempt_id TEXT`
+- `continuation_mode TEXT NOT NULL`
 - `parent_attempt_id TEXT`
+- `resume_from_attempt_id TEXT`
+- `session_id TEXT`
+- `worktree_id TEXT`
 - `started_at TEXT`
 - `finished_at TEXT`
-- `last_error TEXT`
 - `result_summary TEXT`
-- `launch_meta_json TEXT`
-- `runtime_meta_json TEXT`
-- `worker_host TEXT`
-- `last_heartbeat_at TEXT`
-- `last_event_at TEXT`
-- `last_event_type TEXT`
-- `last_event_summary TEXT`
-- `runtime_snapshot_json TEXT`
+- `failure_summary TEXT`
+- `created_checkpoint_id TEXT`
+- `created_at TEXT NOT NULL`
+- `updated_at TEXT NOT NULL`
+
+Suggested role values:
+
+- `coding`
+- `testing`
+- `review`
 
 Suggested attempt statuses:
 
@@ -379,16 +623,52 @@ Suggested attempt statuses:
 - `timed_out`
 - `canceled`
 
-### `worktree_leases`
+Suggested continuation modes:
+
+- `fresh_start`
+- `restart_from_checkpoint`
+- `resume_same_session`
+
+### `sessions`
+
+Suggested columns:
+
+- `id TEXT PRIMARY KEY`
+- `attempt_id TEXT NOT NULL`
+- `runtime_adapter TEXT NOT NULL`
+- `provider TEXT`
+- `model TEXT`
+- `session_name TEXT`
+- `external_session_id TEXT`
+- `host TEXT`
+- `working_directory TEXT`
+- `status TEXT NOT NULL`
+- `supports_resume INTEGER NOT NULL DEFAULT 0`
+- `last_heartbeat_at TEXT`
+- `last_event_at TEXT`
+- `last_event_summary TEXT`
+- `runtime_meta_json TEXT`
+- `created_at TEXT NOT NULL`
+- `updated_at TEXT NOT NULL`
+
+Suggested session statuses:
+
+- `launching`
+- `running`
+- `completed`
+- `failed`
+- `timed_out`
+- `lost`
+
+### `worktrees`
 
 Suggested columns:
 
 - `id TEXT PRIMARY KEY`
 - `workflow_id TEXT NOT NULL`
-- `project_name TEXT NOT NULL`
-- `feature TEXT NOT NULL`
+- `task_id TEXT NOT NULL`
 - `branch TEXT NOT NULL`
-- `worktree_path TEXT NOT NULL`
+- `path TEXT NOT NULL`
 - `base_dir TEXT NOT NULL`
 - `from_branch TEXT NOT NULL`
 - `status TEXT NOT NULL`
@@ -396,14 +676,40 @@ Suggested columns:
 - `updated_at TEXT NOT NULL`
 - `released_at TEXT`
 - `cleaned_at TEXT`
-- `metadata_json TEXT`
 
-Suggested statuses:
+Suggested worktree statuses:
 
 - `active`
 - `released`
 - `cleaned`
 - `failed`
+
+### `checkpoints`
+
+Suggested columns:
+
+- `id TEXT PRIMARY KEY`
+- `workflow_id TEXT NOT NULL`
+- `task_id TEXT NOT NULL`
+- `attempt_id TEXT NOT NULL`
+- `role TEXT NOT NULL`
+- `checkpoint_type TEXT NOT NULL`
+- `ordinal INTEGER NOT NULL`
+- `artifact_path TEXT NOT NULL`
+- `git_commit TEXT`
+- `summary TEXT NOT NULL`
+- `verification_result TEXT`
+- `next_action TEXT`
+- `created_at TEXT NOT NULL`
+
+Suggested verification result values:
+
+- `passed`
+- `failed`
+- `partial`
+- `not_applicable`
+
+`partial` should remain an attempt/checkpoint-level result, not a separate task lifecycle state.
 
 ### `task_dependencies`
 
@@ -413,349 +719,205 @@ Suggested columns:
 - `depends_on_task_id TEXT NOT NULL`
 - `PRIMARY KEY (task_id, depends_on_task_id)`
 
-This provides explicit scheduling dependencies instead of inferring order from task state names.
+### `events`
 
-## Compatibility Strategy
+Keep or extend the existing event log. It should provide audit history, not replace the structured tables above.
 
-Do not remove legacy columns immediately.
+Required event examples:
 
-Use a compatibility approach:
+- task created
+- attempt queued
+- attempt launched
+- session created
+- session resumed
+- session lost
+- checkpoint created
+- verification failed
+- fix requested
+- worktree created
+- worktree cleaned
+- merge completed
 
-1. Add new tables and columns.
-2. Populate both old and new representations during a transition period.
-3. Move daemon and CLI reads onto the new tables.
-4. Keep legacy fields only until migration safety is proven.
+## Scheduling Model
 
-The first implementation should prefer additive migration over destructive migration.
+### Scheduler Responsibilities
 
-## Workflow Contract Loading
+The scheduler must:
 
-Add a workflow loader/store layer similar in spirit to a config cache:
+- find ready tasks
+- create coding attempts
+- create verification attempts after coding checkpoints
+- route failed verification back to a new coding attempt
+- avoid duplicate launches for the same task role
+- update task state only from durable attempt and checkpoint outcomes
 
-- resolve the current workflow contract path
-- parse and validate it
-- retain the last known good contract for runtime use
-- expose typed accessors for scheduler and prompt generation
+### Daemon Responsibilities
 
-Required behavior:
+The daemon must become the single background reconciliation authority.
 
-- invalid contract changes must not corrupt running workflows
-- contract reload errors should be visible in status and logs
-- the workflow row should record the digest of the resolved contract used at creation time
-- workflows already created should not silently change semantics mid-run unless an explicit "reload policy" allows it
+It must:
 
-## Worktree Model
+- reconcile active sessions
+- detect clean completion, timeout, or loss
+- finalize attempts
+- record checkpoints
+- promote task states
+- start downstream verification attempts
+- request fix attempts after failed verification
+- update the operator snapshot
 
-## Required Behavior
+The daemon must not rely on transient process memory to understand the system.
 
-The system must support two worktree strategies:
+### Required Task Transition Rules
 
-### Strategy A: dedicated coding worktree
+1. When a coding attempt succeeds:
+   - create a coding checkpoint
+   - set task state to `awaiting_verification`
+   - queue a testing attempt in a new session
 
-Use for primary implementation tasks.
+2. When a testing attempt succeeds and reports pass:
+   - create a verification checkpoint
+   - mark task `completed`
 
-Behavior:
+3. When a testing attempt succeeds and reports fail or partial:
+   - create a verification checkpoint
+   - mark task `fix_requested`
+   - queue a new coding attempt
 
-- allocate a new feature branch and worktree lease
-- create worktree at `worktrees/<slug>/`
-- bind the lease to the coding task
-- bind coding attempts to the same lease
+4. When a review attempt is enabled and fails:
+   - create a review checkpoint
+   - mark task `fix_requested`
+   - queue a new coding attempt
 
-### Strategy B: shared verification worktree
+5. When an active coding session is lost before the next checkpoint:
+   - mark the attempt failed or lost
+   - keep the task open
+   - queue a new coding attempt with `restart_from_checkpoint`
 
-Use for review and test tasks that must validate coding output in-place.
+## Verification Rules
 
-Behavior:
+Verification is not optional bookkeeping. It is part of the definition of completion.
 
-- reuse the worktree lease of the target coding task
-- do not create a second branch or second worktree by default
-- preserve the exact filesystem view that the coding worker used
+Required rules:
 
-## Required Changes
+- coding complete does not equal task complete
+- testing is always a new session
+- testing must inspect the same task worktree
+- failed testing creates a durable report
+- failed testing reopens coding through a new coding attempt
+- only a passing verification result can complete the task
 
-`agvv/orchestration/layout.py` already has strong worktree lifecycle primitives. Keep them, but stop treating them as task-only behavior.
+If review is enabled, it follows the same session-separation rule.
 
-Required refactor:
+## Runtime Adapter Architecture
 
-- extract lease-aware functions from `start_feature()` and cleanup helpers
-- add explicit "create lease", "attach lease", "release lease", and "cleanup lease" APIs
-- preserve `context.json`, but add durable linkage to `worktree_leases`
+The orchestration core must not hard-code ACP-specific behavior into task state transitions.
 
-### New layout API shape
+The runtime layer should be modular.
 
-Add functions with behavior similar to:
+### Required Adapter Boundary
 
-- `create_worktree_lease(...)`
-- `attach_existing_worktree_lease(...)`
-- `cleanup_worktree_lease(...)`
-- `ensure_worktree_metadata(...)`
+Introduce a runtime adapter abstraction with operations similar to:
 
-Avoid automatic destructive recovery if branch or worktree conflict is ambiguous.
+- `launch_session(attempt, worktree, prompt_context)`
+- `resume_session(session)`
+- `poll_session(session)`
+- `cancel_session(session)`
+- `collect_terminal_summary(session)`
 
-## Session Model
+### Required Capability Fields
 
-## Current Problem
+Each runtime adapter should expose capabilities such as:
 
-`agvv` currently stores one session on the task and treats retry as another launch of the same task session.
+- `supports_resume`
+- `supports_heartbeat`
+- `supports_streaming_events`
+- `supports_remote_workspace`
 
-This is insufficient for:
+### Phase 1 Runtime
 
-- resuming the original coding worker after test failure
-- keeping coding and test sessions separate
-- auditing multiple attempts
+The first implementation should use:
 
-## Target Session Rules
+- local ACP-backed runtime
+- local git worktrees
 
-### For coding attempts
+Suggested adapter names:
 
-- prefer reusing the same worktree lease
-- prefer resuming the original session when the provider/runtime can support it
-- if resume is not possible, create a new session but preserve linkage to the prior attempt
+- `AcpLocalRuntimeAdapter`
+- `LocalGitWorktreeAdapter`
 
-### For test attempts
+This satisfies the immediate need while preserving the correct architectural seam for future cloud execution.
 
-- create a new attempt
-- use the same worktree lease as the target coding task
-- use a distinct session
-- never overwrite the coding attempt's session identity
+## Prompt and Execution Context Rules
 
-### For review attempts
+Prompts must be generated from durable state, not from assumptions about old chat history.
 
-- same rules as test attempts
-- allow review to be purely observational
+### Coding Attempt Prompt Must Include
 
-## Runtime Update Model
-
-The orchestrator must treat runtime updates as first-class input, not as log text to be interpreted later.
-
-Attempts should receive live runtime updates when available, including:
-
-- session started
-- prompt sent
-- heartbeat
-- notification or tool event summary
-- token usage or cost summary when available
-- terminal completion event
-- runtime failure event
-
-Required behavior:
-
-- update the latest attempt runtime fields during execution
-- preserve only compact summaries in primary attempt rows
-- store detailed runtime events in `task_events` or a dedicated attempt-event table
-- allow status output to show the latest known runtime phase and message without opening raw logs
-
-If the runtime does not support rich streaming events, fall back to heartbeat plus polling-based summaries.
-
-## Runtime Lifecycle Refactor
-
-## Current Problem
-
-`agvv/runtime/session_lifecycle.py` launches ACP in a blocking way. `acpx_send_prompt()` waits for completion. This is appropriate for a single synchronous task runner but incorrect for a real orchestrator.
-
-## Required Behavior
-
-Launching a worker must become a two-phase process:
-
-1. session bootstrap
-2. asynchronous execution monitoring
-
-### Phase 1: bootstrap
-
-Bootstrap must:
-
-- resolve worktree path
-- create launch artifacts
-- create or reuse ACP session identity
-- create an attempt row
-- record session metadata on the attempt
-- return immediately with attempt status `running` or `launching`
-
-### Phase 2: reconcile
-
-Daemon reconciliation must:
-
-- poll ACP session state
-- detect completion, timeout, or death
-- capture output summary and metadata
-- transition attempt state
-- trigger downstream task scheduling
-
-## Required Changes
-
-Refactor `agvv/runtime/session_lifecycle.py` to separate:
-
-- `prepare_attempt_launch(...)`
-- `start_or_resume_acp_session(...)`
-- `reconcile_attempt_runtime(...)`
-- `finalize_attempt(...)`
-
-`agvv/orchestration/acp_ops.py` must stop being treated as a single blocking command runner.
-
-Add APIs for:
-
-- create session if missing
-- inspect session
-- send prompt without collapsing attempt lineage
-- capture stable session id
-- soft close
-- hard delete
-
-Do not require `task run` or `task retry` to block until worker completion.
-
-## Continuation and Fresh-Start Policy
-
-The scheduler must distinguish between three follow-up modes:
-
-1. `resume_same_session`
-2. `new_attempt_same_lineage`
-3. `fresh_lineage`
-
-### `resume_same_session`
-
-Use when:
-
-- the prior coding session still exists
-- the runtime can resume safely
-- the worktree lease is healthy
-- the task is in a fix or continuation loop
-
-### `new_attempt_same_lineage`
-
-Use when:
-
-- the prior session cannot be resumed
-- the original coding lineage should remain the owner of the task
-- the same worktree lease should be reused
-
-This is the default fallback for fix requests.
-
-### `fresh_lineage`
-
-Use only when:
-
-- the prior lineage is invalid or unrecoverable
-- the worktree lease is corrupt, ambiguous, or explicitly replaced
-- the workflow policy requires a clean restart
-
-Fresh lineage creation must be explicit in durable state and visible in status output. It must not happen silently during ordinary retry handling.
-
-## Scheduler Refactor
-
-## Current Problem
-
-`agvv/runtime/dispatcher.py` only supports:
-
-- `pending -> launch`
-- `running -> done or timed_out`
-
-It does not schedule downstream tasks or make dependency decisions.
-
-## Required New Scheduler
-
-Add a workflow scheduler module, for example:
-
-- `agvv/runtime/workflow_scheduler.py`
-
-Responsibilities:
-
-- find `ready` tasks with satisfied dependencies
-- choose worktree strategy based on task role
-- create attempts
-- launch attempts
-- update task state based on latest attempts
-- schedule review and test tasks after coding completion
-- schedule fix attempts after failed verification
-
-## Scheduling Rules
-
-### Rule 1: coding task completion
-
-When a coding attempt succeeds:
-
-- if review is required, transition task to `awaiting_review`
-- if no review is required, transition task to `awaiting_test`
-- create dependent review/test tasks when configured
-
-### Rule 2: review success
-
-- transition owning task to `awaiting_test`
-- create or unlock test task
-
-### Rule 3: review failure
-
-- transition owning task to `fix_requested`
-- create a new coding attempt linked to the latest coding attempt
-
-### Rule 4: test success
-
-- transition owning task to `completed`
-
-### Rule 5: test failure
-
-- transition owning task to `fix_requested`
-- create a fix attempt for the original coding worker lineage
-
-## Attempt Routing Rules
-
-When `fix_requested` occurs, the system must route the next coding attempt to the original coding lineage.
-
-Resolution algorithm:
-
-1. find the latest coding attempt for the task that reached `running` or `succeeded`
-2. if its session is resumable and still exists, resume it
-3. otherwise create a new coding attempt with:
-   - the same worktree lease
-   - `resume_from_attempt_id` set to the original coding attempt
-   - the same preferred provider unless explicitly overridden
-
-Never route a fix request to the latest test attempt.
-
-## Prompting Requirements
-
-The system must support role-specific prompts sourced from the workflow contract.
-
-### Coding role prompt
-
-Must include:
-
-- task requirements
+- task goal
 - constraints
-- branch/worktree context
-- explicit instruction to modify code and tests as needed
+- current worktree path
+- latest checkpoint summary
+- latest verification report when applicable
+- explicit next objective
 
-### Test role prompt
+### Testing Attempt Prompt Must Include
 
-Must include:
+- task goal
+- current authoritative worktree path
+- latest coding checkpoint summary
+- explicit instruction to verify rather than continue implementation
+- required test report format
 
-- target coding task summary
-- worktree to inspect
-- explicit instruction to validate behavior, not implement unrelated changes
-- expected artifacts such as logs, failing cases, reproduction details
+### Review Attempt Prompt Must Include
 
-### Review role prompt
-
-Must include:
-
-- target coding task summary
-- review scope
-- acceptance checklist
+- task goal
+- current authoritative worktree path
+- latest coding checkpoint summary
+- acceptance criteria
 - explicit requirement to produce actionable findings
 
-Role prompts should be generated centrally, not embedded ad hoc in CLI commands.
+Testing and review prompts must not be treated as a continuation of the coding session. They are separate verification sessions driven by checkpoint handoff.
 
-### Prompt rendering rules
+## Merge and Cleanup Policy
 
-- prompt templates should be resolved from the workflow contract
-- prompt rendering should receive structured task, attempt, workflow, and worktree context
-- retry and continuation mode must be explicit in the rendered prompt
-- prompt generation must not be the only place where orchestration decisions exist; rendered prompts reflect state, they do not define it
+Merge is outside the core orchestration loop until a task is verified complete.
 
-## CLI Changes
+Rules:
 
-## Preserve Existing Commands
+- a task branch may contain multiple coding checkpoint commits
+- unverified commits stay on the task branch only
+- only the accepted candidate commit may be merged
+- worktree cleanup must never run while a non-terminal attempt still references the worktree
+- after merge, the worktree may be marked released and later cleaned
 
-Keep these working for backward compatibility:
+## Required Invariants
+
+The implementation must preserve these invariants:
+
+1. A task may have many attempts.
+2. An attempt may have one session, but a session is not the unit of task history.
+3. Every completed session creates a checkpoint.
+4. Every coding checkpoint that changes code is committed to the task branch.
+5. Testing always runs in a new session.
+6. Testing and review inspect the same authoritative task worktree.
+7. Task completion requires passing verification, not merely coding completion.
+8. The orchestrator can recover from session loss using the latest checkpoint.
+9. Worktree cleanup cannot delete a worktree still referenced by active work.
+10. The operator snapshot can be reconstructed from durable state plus runtime inspection.
+
+## Backward Compatibility
+
+The simple path must continue to work:
+
+- one task
+- one coding worktree
+- one coding session
+- one checkpoint after coding completion
+
+But the implementation must internally move toward the checkpoint-first model even for the simple path.
+
+The user-facing CLI can preserve commands such as:
 
 - `agvv task run`
 - `agvv task status`
@@ -763,582 +925,101 @@ Keep these working for backward compatibility:
 - `agvv task cleanup`
 - `agvv daemon run`
 
-## Extend Semantics
+Under the hood, those commands should operate on workflow, task, attempt, session, worktree, and checkpoint state rather than the old single-session task assumptions.
 
-### `task run`
+## Implementation Guidance for Coding Agents
 
-Continue to support the single-task case, but internally:
+Implement this refactor in phases. Do not attempt a single large rewrite.
 
-- create a workflow if needed
-- create one coding task
-- create one initial coding attempt
+### Phase 1: Add durable primitives
 
-### `task status`
+- add workflow, task, attempt, session, worktree, and checkpoint schema support
+- keep legacy task rows readable during migration
+- add serializers and typed models
 
-Must be expanded to show:
+### Phase 2: Introduce checkpoint creation
 
-- task state
-- latest attempt status
-- worker role
-- session info
-- worktree lease
-- last error
-- last runtime event
-- continuation mode or next action recommendation
+- create checkpoint records and repository artifacts for completed sessions
+- create code commits for coding checkpoints
+- add status rendering for latest checkpoint
 
-Optionally add:
+### Phase 3: Split attempt and session lifecycle
 
-- `--attempts`
-- `--events`
+- make attempts first-class
+- track session metadata separately
+- distinguish fresh start, resume, and restart from checkpoint
 
-### `task retry`
+### Phase 4: Enforce verification loop
 
-Current `retry` is too generic.
+- coding success must queue testing
+- testing must always start a new session
+- failed testing must route back to coding
 
-Split behavior internally into:
+### Phase 5: Add modular runtime adapters
 
-- retry the latest failed attempt
-- request a fix on the coding lineage
+- keep ACP local as the first implementation
+- move runtime-specific logic behind adapter boundaries
 
-Backward-compatible CLI behavior may remain, but implementation must distinguish:
+### Phase 6: Improve status and operator surfaces
 
-- retry same role
-- route back to coding role
-
-### New commands
-
-Add workflow-oriented commands after the model is stable:
-
-- `agvv workflow run`
-- `agvv workflow status`
-- `agvv workflow cleanup`
-
-These are not required in phase 1, but the internal architecture must not block them.
-
-### Snapshot-oriented status surface
-
-Expose a status surface that reads from the operator snapshot model.
-
-This may initially be:
-
-- richer CLI text output
-- `--json` status output
-
-Later it may also power:
-
-- a small dashboard
-- supervising-agent integration
-- event subscriptions
-
-## Event and Audit Model
-
-Keep `task_events`, but start treating events as workflow-relevant.
-
-Required event types include:
-
-- task created
-- attempt queued
-- attempt launched
-- ACP session created
-- ACP session resumed
-- attempt completed
-- attempt failed
-- timeout detected
-- downstream task scheduled
-- fix requested
-- worktree lease created
-- worktree lease cleaned
-- runtime heartbeat recorded
-- runtime snapshot refreshed
-- continuation mode selected
-- fresh lineage created
-
-Event metadata must contain stable identifiers:
-
-- `workflow_id`
-- `task_id`
-- `attempt_id`
-- `worktree_lease_id`
-- `session_name`
-- `session_id`
-
-## Daemon Behavior
-
-The daemon must become the single source of truth for background reconciliation.
-
-### Required daemon loop responsibilities
-
-- reconcile active attempts
-- detect terminal session outcomes
-- update task state
-- release or retain worktree leases according to policy
-- create downstream attempts for ready tasks
-- respect dependency edges
-- refresh the operator snapshot projection
-- surface workflow contract load failures
-
-### Concurrency rules
-
-The daemon may reconcile multiple active attempts in parallel, but must prevent duplicate scheduling.
-
-Use:
-
-- per-task locks for task state transitions
-- per-attempt locks for session reconciliation
-- workflow-safe ordering for downstream scheduling
-
-Do not allow two workers to be launched simultaneously for the same task role unless explicitly configured.
-
-## Migration Plan
-
-Implement in phases.
-
-### Phase 1: additive schema
-
-- add new tables
-- add compatibility read/write helpers
-- keep old commands functional
-
-### Phase 2: attempt-aware launches
-
-- write attempt rows for all launches
-- store session metadata on attempts
-- keep task-level session fields for compatibility only
-
-### Phase 3: scheduler split
-
-- move attempt lifecycle reconciliation out of the task-only dispatcher
-- add workflow-aware scheduling
-
-### Phase 4: role-aware orchestration
-
-- support coding/test/review roles
-- support dependency edges
-- support fix routing to original coding lineage
-
-### Phase 5: CLI and docs alignment
-
-- update README
-- update SKILL.md
-- add examples for single-task and multi-task workflows
-
-### Phase 6: contract-aware prompts and richer status surfaces
-
-- load workflow contract from the repository
-- render role prompts from the contract
-- expose snapshot-driven status output
-
-## Required Invariants
-
-The implementation must preserve these invariants.
-
-### Invariant 1
-
-One coding attempt writes to exactly one active worktree lease.
-
-### Invariant 2
-
-Review and test attempts must not silently allocate a new worktree when they are intended to validate an existing coding result.
-
-### Invariant 3
-
-Every attempt has durable lineage to:
-
-- one task
-- zero or one parent attempt
-- zero or one resume source attempt
-
-### Invariant 4
-
-A task must not be considered `completed` only because an ACP session ended. It is `completed` only when the required workflow role sequence succeeds.
-
-### Invariant 5
-
-Cleanup must not delete a worktree lease still referenced by any non-terminal attempt.
-
-### Invariant 6
-
-The workflow contract used to create a workflow must be identifiable after restart by path and digest.
-
-### Invariant 7
-
-A fix request must not silently create a fresh lineage when resuming or same-lineage continuation is still safe.
-
-### Invariant 8
-
-Operator status must be derivable from durable state plus current runtime inspection without replaying the full raw transcript.
-
-## Backward Compatibility Requirements
-
-The simple path must continue to work:
-
-- one `task.md`
-- one coding worker
-- one worktree
-- one session
-- one cleanup
-
-The user must not be forced to adopt workflow-level commands for the basic use case.
+- add attempt history to status
+- expose active worktrees
+- expose latest checkpoint and next action
 
 ## Testing Requirements
 
-Add or update tests in these areas.
+The implementation must add or update tests in these areas.
 
-### Model and schema tests
+### Schema and Model Tests
 
-- workflow/task/attempt/lease serialization
-- migrations from old schema to new schema
-- workflow contract parse and validation tests
+- workflow, task, attempt, session, worktree, and checkpoint round-trip persistence
+- compatibility reads for legacy task rows
 
-### Worktree lifecycle tests
+### Checkpoint Tests
 
-- dedicated coding worktree allocation
-- verification task reuses coding worktree
-- cleanup refuses deletion when lease is still referenced
+- completed coding session creates a checkpoint artifact
+- completed coding session that changed code creates a commit reference
+- completed testing session creates a verification checkpoint
 
-### Session lifecycle tests
+### Lifecycle Tests
 
-- launch creates attempt and session metadata
-- reconcile marks attempt success when ACP session ends cleanly
-- timeout marks attempt timed out
-- retry creates a new attempt while preserving lineage
-- runtime updates refresh attempt heartbeat and latest event fields
+- coding completion queues testing
+- testing always launches a new session
+- failed testing requests a new coding attempt
+- lost session triggers restart from latest checkpoint
 
-### Scheduler tests
+### Worktree Tests
 
-- coding success unlocks review or test
-- test failure creates fix request
-- fix request routes to coding lineage rather than test lineage
-- dependencies prevent premature launch
-- continuation policy chooses resume, same-lineage retry, or fresh lineage correctly
+- coding task gets a dedicated worktree
+- testing reuses the coding worktree
+- cleanup refuses to remove worktree while active attempts still reference it
 
-### CLI tests
+### Status Tests
 
-- legacy `task run/status/retry/cleanup` still function
-- expanded status output includes attempt and lease data
-- status snapshot output includes runtime event summary and next action
+- status surfaces show task state, latest attempt, current session, current worktree, latest checkpoint, and next action
 
-### Observability tests
+### Adapter Tests
 
-- snapshot projection is consistent with durable state
-- degraded runtime inspection still produces safe status output
-- workflow contract reload failure is surfaced without corrupting active workflows
+- ACP local adapter launches and polls sessions
+- runtime adapter capabilities influence scheduling choices
 
 ## Acceptance Criteria
 
-This refactor is complete when all of the following are true.
-
-1. A single coding task still works with `agvv task run`.
-2. The database records multiple attempts for one task.
-3. Review and test attempts can run against an existing coding worktree.
-4. A failed test can trigger a follow-up coding attempt on the original coding lineage.
-5. The daemon can reconcile multiple active attempts safely.
-6. Cleanup respects active lease references.
-7. Status commands show enough information to identify:
-   - which worker ran
-   - which session was used
-   - which worktree lease was used
-   - whether the next action is review, test, fix, or cleanup
-8. The workflow used for a run is identifiable by contract path and digest.
-9. Runtime status surfaces can show the latest attempt event and whether a fix will resume the same lineage or start a fresh one.
-
-## Definition of Done
-
-This refactor is done only when all of the following are true.
-
-### Product and behavior
-
-- the single-task path still works without requiring workflow-specific input
-- the new workflow model supports multiple tasks and multiple attempts durably
-- coding, review, and test roles are distinguishable in both state and status output
-- failed verification can be routed back to the original coding lineage
-- cleanup behavior is safe and lease-aware
-
-### Data and migration
-
-- schema migrations run cleanly from the current production schema
-- old task rows remain readable after migration
-- new rows persist enough metadata to reconstruct task, attempt, session, and lease lineage
-- no required runtime behavior depends only on logs or transient process memory
-- the workflow contract used for a workflow is recorded durably
-
-### Runtime and scheduling
-
-- attempt launch is no longer modeled as a single blocking task execution step
-- the daemon can reconcile more than one active attempt in one pass
-- dependency and readiness transitions are persisted durably
-- retry, fix, and resume paths preserve lineage explicitly
-- runtime updates refresh snapshot-visible attempt state during execution
-
-### Operator experience
-
-- `task run`, `task status`, `task retry`, and `task cleanup` still work for the basic case
-- status output is sufficient for an operator to determine the current owner, current runtime state, and next action
-- status output identifies the active workflow contract and the latest runtime event summary
-- failure messages are actionable and identify whether the issue is schema, scheduling, worktree, ACP runtime, or cleanup related
-
-### Verification
-
-- tests for touched areas exist and pass
-- backward compatibility behavior is covered by tests, not assumed
-- README and operator-facing docs are updated to match the shipped behavior
-
-## Engineering Implementation Checklist
-
-Use the following commit plan unless a concrete code-level constraint requires a local reordering. Each commit should keep the repository in a working state and include the most direct tests for the touched surface.
-
-### Commit 1: Add schema primitives and compatibility migration
-
-Scope:
-
-- add new tables for `workflows`, `task_attempts`, `worktree_leases`, and `task_dependencies`
-- add new columns needed on `tasks`
-- add workflow contract path and digest storage
-- keep old rows readable and preserve compatibility with existing task commands
-- add migration helpers and version detection
-
-Expected files:
-
-- `agvv/runtime/store.py`
-- `agvv/runtime/models.py`
-- migration helpers or schema utilities if split out
-
-Required checks:
-
-- schema migration tests
-- round-trip persistence tests for new tables
-- compatibility test that older task rows remain readable
-
-Exit condition:
-
-- a migrated database can represent workflow, task, attempt, and lease state without breaking legacy reads
-
-### Commit 2: Add workflow contract loading and typed policy access
-
-Scope:
-
-- load a repository-owned workflow contract
-- validate contract structure and defaults
-- expose typed accessors for prompt generation and scheduler policy
-- persist the resolved contract identity on workflow creation
-
-Expected files:
-
-- workflow loader/store modules
-- `agvv/runtime/core.py`
-- config or validation helpers
-
-Required checks:
-
-- contract parse tests
-- contract validation tests
-- workflow creation test proving contract digest persistence
-
-Exit condition:
-
-- workflows can resolve policy from a checked-in contract instead of only from CLI defaults
-
-### Commit 3: Refactor state enums and domain models
-
-Scope:
-
-- separate workflow state, task state, and attempt status
-- add first-class role, kind, lineage, lease references, and runtime summary fields in the model layer
-- stop treating task-level session metadata as the source of truth
-
-Expected files:
-
-- `agvv/runtime/models.py`
-- `agvv/runtime/core.py`
-- any shared typing or serializer modules
-
-Required checks:
-
-- model serialization tests
-- state transition unit tests for new enums and validation helpers
-
-Exit condition:
-
-- code can represent multiple attempts per task without relying on overloaded task fields
-
-### Commit 4: Introduce attempt-aware session lifecycle
-
-Scope:
-
-- split ACP lifecycle into session bootstrap and later reconciliation
-- create attempt records before launch
-- store session binding on attempts instead of relying on one task-level session field
-- preserve resume and retry lineage
-- capture live runtime update summaries on attempts
-
-Expected files:
-
-- `agvv/runtime/session_lifecycle.py`
-- `agvv/orchestration/acp_ops.py`
-- `agvv/runtime/core.py`
-
-Required checks:
-
-- session bootstrap tests
-- reconcile tests for clean completion, failure, and timeout
-- retry lineage tests
-
-Exit condition:
-
-- one task can have multiple attempts over time, and each attempt has durable runtime metadata
-
-### Commit 5: Promote worktree leases to a first-class resource
-
-Scope:
-
-- wrap current worktree allocation in a lease model
-- allow coding attempts to allocate leases and verification attempts to reuse them
-- prevent cleanup of leases still referenced by non-terminal attempts
-
-Expected files:
-
-- `agvv/orchestration/layout.py`
-- `agvv/runtime/store.py`
-- `agvv/runtime/core.py`
-
-Required checks:
-
-- worktree allocation tests
-- reuse tests for test and review attempts
-- cleanup safety tests
-
-Exit condition:
-
-- worktree ownership and cleanup are enforced by lease state rather than task naming conventions alone
-
-### Commit 6: Split dispatcher into reconcile and scheduling responsibilities
-
-Scope:
-
-- keep reconciliation logic explicit
-- add workflow-aware readiness evaluation
-- unlock downstream work based on dependencies and task state
-- avoid launching verification work prematurely
-
-Expected files:
-
-- `agvv/runtime/dispatcher.py`
-- new scheduler module if introduced
-- `agvv/runtime/core.py`
-
-Required checks:
-
-- readiness evaluation tests
-- dependency gating tests
-- multi-attempt reconcile tests
-
-Exit condition:
-
-- the daemon can decide what is ready to run next using durable workflow state
-
-### Commit 7: Add role-aware review, test, and fix routing
-
-Scope:
-
-- implement role-specific behavior for `coding`, `review`, and `test`
-- route failed review or test outcomes back to the correct coding lineage
-- support follow-up coding attempts on the same lease when appropriate
-
-Expected files:
-
-- scheduler or routing modules
-- `agvv/runtime/core.py`
-- prompt/template modules if they exist
-
-Required checks:
-
-- coding success to review or test transition tests
-- test failure to fix routing tests
-- lineage preservation tests
-
-Exit condition:
-
-- failed verification no longer dead-ends and can trigger a correct coding follow-up attempt
-
-### Commit 8: Add snapshot-driven status surfaces and documentation
-
-Scope:
-
-- expose workflow, attempt, and lease information in status commands
-- expose workflow contract identity and latest runtime event summary
-- implement a stable operator snapshot projection
-- preserve legacy commands for the simple case
-- document single-task and workflow-oriented usage
-
-Expected files:
-
-- CLI command modules
-- `README.md`
-- operator docs
-
-Required checks:
-
-- CLI status tests
-- snapshot projection tests
-- backward compatibility tests for legacy commands
-- smoke test for simple `task run/status/retry/cleanup`
-
-Exit condition:
-
-- operators can understand current workflow state without reading SQLite directly
-
-## Commit-Level Guardrails
-
-Apply these rules to every commit in the checklist above.
-
-- do not mix schema, runtime, CLI, and docs churn in one giant patch if a smaller checkpoint is possible
-- each commit must leave tests green for the touched scope
-- do not remove compatibility shims until the replacement path is covered by tests
-- do not rewrite worktree logic outside the existing orchestration boundary without a clear reason
-- do not encode orchestration state only in prompt text or ACP transcript output
-- prefer additive fields and tables over destructive renames in early commits
-
-## Testing Placement Guidance
-
-Testing requirements belong in the spec and also apply during implementation.
-
-Keep both layers:
-
-- the spec defines what categories of tests must exist so coding agents do not under-test the refactor
-- each implementation commit defines the narrow checks that must pass before moving to the next commit
-
-Do not defer test strategy entirely to implementation time. If tests are only decided ad hoc during coding, backward compatibility and migration coverage are likely to be missed.
-
-Use this split:
-
-- spec-level testing requirements define coverage expectations, migration safety, and acceptance coverage
-- implementation-time checks define the exact test files, commands, and new fixtures added for the current patch
-
-For this project, that means the current `Testing Requirements` section should stay in this document, and each commit above should carry its own direct checks.
-
-## Implementation Order
-
-Follow this order unless a blocking constraint appears.
-
-1. add schema and storage primitives
-2. refactor models and state enums
-3. introduce attempt-aware session lifecycle
-4. introduce worktree lease layer
-5. split scheduler responsibilities
-6. add worker roles and dependency routing
-7. update CLI output and docs
-8. remove obsolete task-level assumptions only after compatibility is proven
-
-## Explicit Guidance for Coding Agents
-
-While implementing this spec:
-
-- do not rewrite the entire project in one pass
-- prefer additive migrations over destructive changes
-- preserve existing CLI behavior unless this spec explicitly changes it
-- keep worktree lifecycle logic centralized
-- keep ACP runtime logic centralized
-- do not hide orchestration decisions in prompt text alone; persist them in SQLite
-- make every state transition auditable by event records
-
-If a choice is ambiguous, prefer the design that makes retries, auditing, and worker lineage easier to reason about.
+This refactor is complete when all of the following are true:
+
+1. A project with multiple tasks can be represented durably.
+2. A task can survive more than one coding and testing cycle.
+3. Coding completion creates a checkpoint but does not complete the task.
+4. Testing always starts in a new session.
+5. Failed testing triggers a new coding attempt from the latest checkpoint.
+6. A lost coding session can be replaced by a new session without losing the task.
+7. Worktree reuse for verification is enforced.
+8. Operators can inspect the complete durable work record needed for orchestration.
+9. The first implementation works locally with ACP.
+10. The architecture preserves a clean path to future runtime plugins.
+
+## Final Rule
+
+If an implementation choice is ambiguous, prefer the option that makes the system easier to recover after a crash, easier to inspect from durable state, and easier for a fresh coding session to continue from the latest checkpoint.
+
+That is the core of this design.
