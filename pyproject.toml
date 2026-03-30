@@ -1,36 +1,19 @@
 [project]
-name = "agent-wave"
-version = "0.2.0"
-description = "Agent Wave: orchestrate parallel git worktree workflow for AI agents."
+name = "agvv"
+version = "0.1.0"
+description = "Deterministic project orchestration engine for AI coding agents."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "pydantic>=2.8.0",
-    "typer>=0.23.1",
-]
-
-[project.optional-dependencies]
-dev = [
-    "interrogate>=1.7.0",
-    "pytest>=9.0.2",
-    "pytest-cov>=7.0.0",
-    "ruff>=0.15.2",
+    "typer>=0.15",
+    "pydantic>=2.0",
+    "python-frontmatter>=1.1",
+    "rich>=13.0",
 ]
 
 [project.scripts]
-agvv = "agvv.cli:app"
+agvv = "agvv.cli.main:app"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["agvv"]
-
-[dependency-groups]
-dev = [
-    "interrogate>=1.7.0",
-    "pytest>=9.0.2",
-    "pytest-cov>=7.0.0",
-    "ruff>=0.15.2",
-]

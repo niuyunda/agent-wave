@@ -1,72 +1,89 @@
-# agvv 总览
+# agvv Overview
 
-## 定位
+## Positioning
 
-agvv 是一个纯确定性的项目编排引擎，以 CLI + daemon 的形式运行。它为 orchestrator agent 提供多项目、多任务并行编码所需的全部机械性能力。
+agvv is a deterministic orchestration engine for coding agents. It runs as a CLI plus a small background daemon and gives an orchestrator agent the mechanical capabilities needed for multi-project, multi-task parallel coding.
 
-agvv 不含 LLM，不做任何需要判断的决策。遇到决策点时，agvv 暴露状态并通知 orchestrator agent，由其做出判断后通过 CLI 下达指令。
+agvv does not contain an LLM and does not make judgment calls. When a decision is needed, agvv exposes state and waits for the orchestrator to choose the next action.
 
-## 核心原则
+## Core Principles
 
-**代码库即真相** — 无数据库。所有持久状态以文件形式存在于项目仓库的 `.agvv/` 目录中。任何 agent 进入项目仓库即可获得完整上下文。
+**Codebase is truth**. There is no database. Persistent state lives in files under each repository's `.agvv/` directory.
 
-**Checkpoint 即 Git Commit** — 每次有意义的工作成果都体现为一次 git commit，包含代码变更和结构化上下文文件，让下一个 agent 无需聊天历史即可接续工作。
+**Checkpoint equals Git commit**. Meaningful work output must be captured as a commit so another agent can continue directly from the repository.
 
-**纯工具，不做决策** — agvv 只执行机械性操作（创建 worktree、启动进程、记录状态、检测超时）。所有判断性决策（优先级、重试策略、结果评估）由 orchestrator agent 负责。
+**Tool, not decider**. agvv creates worktrees, launches processes, records status, and detects failures. It does not decide priority, retry policy, or whether an output is good enough.
 
-**最小设计** — 从第一性原理和奥卡姆剃刀出发，只保留必须的概念和模块。使用过程中遇到问题再考虑添加。
+**Minimal design**. agvv keeps the model intentionally small: Task, Run, and Checkpoint.
 
-## 角色分工
+## Roles
 
+```text
+User
+  <-> conversation
+Orchestrator Agent
+  - interprets user intent
+  - creates tasks
+  - decides what to run and when
+  - reads state and reacts to failures
+  <-> CLI
+agvv
+  - task state management
+  - worktree lifecycle
+  - coding-agent process management
+  - checkpoint recording
+  - timeout detection
+  - daemon reconciliation
+  <-> subprocesses
+Coding Agents
+  - perform coding work inside task worktrees
+  - leave behind commits and repository state
 ```
-用户
-  ↕  对话
-Orchestrator Agent（项目管理角色）
-  │  - 理解用户意图，创建 task
-  │  - 调 agvv 管理项目和任务
-  │  - 在决策点做判断
-  │  - 决定下一步动作
-  ↕  CLI
-agvv（确定性引擎）
-  │  - task 状态管理
-  │  - worktree 生命周期（内部实现，不对外暴露）
-  │  - coding agent 进程管理
-  │  - checkpoint commit
-  │  - 超时/stall 检测
-  │  - 并发控制
-  │  - 状态变更通知
-  ↕  子进程
-Coding Agents（Codex / Claude / 其他）
-  - 在独立 worktree 中执行具体编码工作
-  - 完成后产出 checkpoint
-```
 
-Orchestrator agent 只关心"哪个项目有什么 task、目前状态如何"，不关心 worktree 怎么建、进程怎么管。
+The orchestrator should care about projects, tasks, and outcomes. It should not need to care how worktrees are created or how background processes are monitored.
 
-## 核心概念
-
-整个系统只有三个核心概念：
+## Core Concepts
 
 ### Task
 
-一件需要完成的工作。由 orchestrator agent 以 Markdown + front matter 格式提交。
+A task is one unit of work. The orchestrator provides a Markdown file with a unique `name` plus task content. agvv stores it under `.agvv/tasks/<name>/task.md`.
+
+Task names must be unique within a project. The name is also used for the task branch name: `agvv/<task-name>`.
 
 ### Run
 
-对某个 task 的一次执行。每个 run 有一个 purpose：
+A run is one execution of a task. Each run has a `purpose`:
 
-- `implement` — 实现功能或修复 bug
-- `test` — 运行测试验证
-- `review` — 代码审查
-- `repair` — 修复上一次 run 发现的问题
+- `implement`
+- `test`
+- `review`
+- `repair`
 
-一个 task 可以有多次 run（implement → review → repair → test → ...）。
+A task may have many runs over time.
 
 ### Checkpoint
 
-一次 git commit。包含：
+A checkpoint is a Git commit read from the task worktree. In agvv, a run is only considered complete if that checkpoint is actually present and readable.
 
-- 代码变更
-- 结构化上下文文件（run 结果摘要、失败信息、下一步建议等）
+Completion rules are purpose-aware:
 
-下一个 agent 只需读取仓库中的文件就能接续工作，不依赖任何聊天历史。
+- `implement` / `repair`: must produce a new checkpoint commit
+- `review`: must write a repository report file
+- `test`: may complete without creating a new code commit
+
+## Practical Boundaries
+
+agvv is intentionally not:
+
+- a scheduler with built-in prioritization
+- a queueing system
+- a hosted service
+- a web dashboard
+- a workflow engine with arbitrary plugins
+
+It is a local deterministic control plane for coding work.
+
+## Runtime Compatibility Notes
+
+- agvv appends a prompt hint to use `python3` when `python` is not available.
+- This reduces environment-specific failures across Linux distributions and WSL setups.

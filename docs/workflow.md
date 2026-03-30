@@ -1,121 +1,138 @@
-# agvv 工作流
+# agvv Workflow
 
-## 完整生命周期
+## End-to-End Flow
 
-一个 task 从创建到完成的典型流程：
-
-```
-task add → run(implement) → checkpoint → run(review/test)
-    → 通过 → merge
-    → 未通过 → run(repair) → checkpoint → run(review/test) → ...
+```text
+task add -> run(implement) -> checkpoint -> run(review/test)
+    -> pass -> merge
+    -> fail -> run(repair) -> checkpoint -> run(review/test) -> ...
 ```
 
-## 流程详解
+## 1. Add a Task
 
-### 1. 添加任务
-
-Orchestrator agent 准备 task.md，调用 agvv 注册：
+The orchestrator prepares a `task.md` file and registers it:
 
 ```bash
 agvv task add --project ~/projects/my-project --file task.md
 ```
 
-agvv 读取文件，提取 ID，在项目仓库中创建 `.agvv/tasks/<id>/task.md`，标记 `status: pending`。
+agvv validates that the task name is unique, creates `.agvv/tasks/<name>/task.md`, and marks the task as `pending`.
 
-### 2. 启动实现
+If a task with the same name already exists, agvv rejects it.
 
-Orchestrator agent 指定 purpose 和 agent 类型：
+## 2. Start a Run
 
 ```bash
 agvv run start fix-login-bug --purpose=implement --agent=codex
 ```
 
-agvv 内部：
-1. 创建 git worktree（如果该 task 还没有）
-2. 执行 `before_run` hook
-3. 启动 coding agent 子进程，工作目录指向 worktree
-4. 更新 task status 为 `running`
-5. daemon 开始监控进程
+Internally, agvv:
 
-### 3. Coding agent 工作
+1. creates the task worktree if needed
+2. ensures an acpx session exists for the task (idempotent)
+3. runs the `before_run` hook
+4. sends the prompt to the session (agent retains context from previous runs)
+5. records runtime facts for monitoring
+6. marks the task as `running`
 
-Coding agent 在独立 worktree 中编码。完成后产出 checkpoint：
-- 代码变更
-- 上下文文件（结果摘要、变更说明）
-- 通过 git commit 持久化
+For `review` and `test`, you can target an existing branch/ref:
 
-### 4. Run 完成
+```bash
+agvv run start review-login --purpose=review --agent=codex --base-branch=agvv/fix-login-bug
+```
 
-agvv 检测到进程退出：
-1. 执行 `after_run` hook
-2. 记录 run 结果到 `.agvv/tasks/<id>/runs/`
-3. 更新 task status
-4. 通知 orchestrator agent
+## 3. Coding Agent Work
 
-### 5. Orchestrator agent 评估
+The coding agent works inside its dedicated task worktree. For `implement`/`repair`, the expected durable output is a new Git commit in that worktree.
 
-Orchestrator agent 查看结果：
+agvv does not inspect content quality. It enforces mechanical completion artifacts only.
+
+## 4. Run Completion
+
+When the daemon sees that the coding-agent process has exited, it:
+
+1. reads the exit code from the runtime sidecar when available
+2. records the final run status
+3. runs the `after_run` hook
+4. updates the task state
+
+Important rule:
+
+- `implement` / `repair`: successful process exit without a new checkpoint is `failed`
+- `review`: successful process exit without a report file is `failed`
+
+By default, review reports are expected at:
+
+```text
+reports/agvv/<task-name>/<run-number>-review.md
+```
+
+## 5. Inspect the Result
+
+The orchestrator can inspect the latest result:
 
 ```bash
 agvv checkpoint show fix-login-bug
 ```
 
-根据结果做判断：
-- **结果正常** → 启动 review 或 test
-- **结果失败** → 重试、repair、或放弃
-- **超时/stall** → 重试或调整参数
+Typical next actions:
 
-### 6. Review / Test
+- good result -> run `review` or `test`
+- failed result -> run `repair`, retry with a different agent, or stop
+- timed out result -> retry or adjust parameters
+
+## 6. Review or Test
 
 ```bash
 agvv run start fix-login-bug --purpose=review --agent=claude
 agvv run start fix-login-bug --purpose=test --agent=codex
 ```
 
-同样的 run 机制，不同的 purpose。Review/test agent 在同一个 worktree 上工作，能看到之前的 checkpoint。
+These runs reuse the same task worktree and session for the task. If `--base-branch` is provided, agvv attaches review/test work to that existing branch/ref in detached mode.
 
-### 7. 合并
-
-审查通过后，orchestrator agent 指示合并：
+## 7. Merge
 
 ```bash
 agvv task merge fix-login-bug
 ```
 
-agvv 内部：
-1. 尝试将 worktree 分支合并到主分支
-2. 成功 → 清理 worktree，更新 task status 为 `done`
-3. 冲突 → 报错，通知 orchestrator agent 决策
+agvv:
 
-## 并行工作
+1. checks out the main branch
+2. merges the task branch
+3. archives the task on success
+4. removes the task worktree on success
 
-多个 task 可以同时进行：
+If the merge conflicts:
 
-```bash
-# Orchestrator agent 同时启动三个任务
-agvv run start feature-1 --purpose=implement --agent=claude
-agvv run start feature-2 --purpose=implement --agent=pi
-agvv run start fix-bug-1 --purpose=implement --agent=codex
-```
+- agvv aborts the merge
+- the task becomes `blocked`
+- the conflicting files are reported back to the orchestrator
 
-每个 task 在独立 worktree 中并行工作，互不干扰。合并时可能出现冲突，由 orchestrator agent 决定处理方式。
+## Parallel Work
 
-## 合并冲突处理
-
-当 `agvv task merge` 遇到冲突时：
-
-1. agvv 报告冲突，列出冲突文件
-2. Orchestrator agent 决定处理方式：
-   - 启动一个 `purpose=repair` 的 run，让 coding agent 解决冲突
-   - 调整合并顺序（先合并无冲突的 task）
-   - 其他策略
-
-## 状态查询
-
-Orchestrator agent 随时可以查询全局状态：
+Multiple tasks can run at the same time:
 
 ```bash
-agvv run status                          # 所有项目的 run 状态
-agvv task list --project ~/projects/x    # 某项目的所有 task
-agvv task show fix-login-bug             # 某个 task 的详情和 run 历史
+agvv task add --project ~/projects/my-app --file add-search.md
+agvv task add --project ~/projects/my-app --file add-dark-mode.md
+agvv task add --project ~/projects/my-app --file fix-login-bug.md
+
+agvv run start add-search --purpose=implement --agent=claude
+agvv run start add-dark-mode --purpose=implement --agent=pi
+agvv run start fix-login-bug --purpose=implement --agent=codex
 ```
+
+Each task has its own worktree and branch. agvv does not serialize them unless the orchestrator chooses to.
+
+## Failure Handling
+
+agvv is designed to be strict about observable failures:
+
+- failed `before_run` hook: abort the run and clean up a newly created worktree
+- uncooperative run stop: escalate from cooperative cancel to killing the process group
+- dead launcher but live child process: keep the run as `running`
+- successful exit but missing checkpoint: mark the run as `failed`
+- merge conflict: mark the task as `blocked`
+
+The system stays small, but it should not lie about what is actually happening.

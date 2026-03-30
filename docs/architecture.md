@@ -1,152 +1,207 @@
-# agvv 架构
+# agvv Architecture
 
-## 运行模式
+## Runtime Model
 
-agvv 以 daemon 形式运行，在后台持续监控所有已注册项目的任务和运行状态。
+agvv has two parts:
+
+- a CLI used by the orchestrator agent
+- a background daemon that reconciles and monitors active runs
 
 ```bash
-agvv daemon start    # 启动后台进程
-agvv daemon stop     # 停止
+agvv daemon start
+agvv daemon stop
+agvv daemon status
 ```
 
-daemon 的内存状态是缓存，不是真相。真相永远在各项目仓库的 `.agvv/` 文件中。daemon 重启后从文件重建状态。
+The daemon's in-memory view is only a cache. The source of truth is always the filesystem inside each repository's `.agvv/` directory. After a restart, the daemon rebuilds state from files.
 
-## 状态持久化
+## Persistent State
 
-所有持久状态存储在项目仓库内：
+All project-level state lives inside the repository:
 
-```
+```text
 my-project/
 ├── src/
 ├── .agvv/
-│   ├── config.md              # 项目级配置
+│   ├── config.md
 │   └── tasks/
-│       └── fix-login-bug/
-│           ├── task.md        # orchestrator agent 提交的任务描述
-│           └── runs/          # agvv 自动维护的 run 记录
-│               ├── 001-implement.md
-│               └── 002-review.md
+│       ├── fix-login-bug/
+│       │   ├── task.md
+│       │   └── runs/
+│       │       ├── 001-implement.md
+│       │       └── 001-implement.runtime.json
+│       └── archive/
+│           └── 2026-03-30-fix-login-bug/
 └── package.json
 ```
 
-### task.md 格式
+Global state stays in the user's home directory:
 
-front matter 给 agvv 机器读，body 给 coding agent 读：
+```text
+~/.agvv/
+├── projects.md
+├── daemon.pid
+└── daemon.log
+```
+
+## Task Record
+
+The orchestrator submits a Markdown file with a `name` and task body:
 
 ```markdown
 ---
+name: fix-login-bug
+---
+
+## Goal
+Fix the white screen issue on the login page in Safari.
+
+## Context
+Users report a white screen after clicking the login button in Safari 17.
+
+## Acceptance Criteria
+- Login works in Safari 17
+- Existing tests still pass
+```
+
+agvv validates the name, creates `.agvv/tasks/fix-login-bug/`, and adds managed fields:
+
+```markdown
+---
+name: fix-login-bug
 status: pending
 created_at: 2026-03-30
 ---
-
-## 目标
-修复登录页面在 Safari 下的白屏问题
-
-## 上下文
-用户反馈 Safari 17 下点击登录按钮后页面白屏。
-相关文件：src/pages/login.tsx, src/styles/auth.css
-
-## 验收标准
-- Safari 17 下登录流程正常
-- 现有测试通过
 ```
 
-front matter 中 `status` 由 agvv 管理，orchestrator agent 提交时无需填写。
+Rules:
 
-### run 记录格式
+- `name` is supplied by the orchestrator and must be unique per project
+- `status` and `created_at` are managed by agvv
+- the name is also used to derive the Git branch `agvv/<name>`
 
-每次 run 完成后 agvv 自动生成：
+## Run Record
+
+Each run gets a Markdown record:
 
 ```markdown
 ---
 purpose: implement
 agent: codex
 status: completed
-started_at: 2026-03-30T10:00:00Z
-finished_at: 2026-03-30T10:15:00Z
+started_at: 2026-03-30T10:00:00
+finished_at: 2026-03-30T10:15:00
 checkpoint: abc1234
----
-
-## 结果摘要
-修复了 CSS 兼容性问题，添加了 Safari 专用的 flex 布局回退方案。
-
-## 变更文件
-- src/styles/auth.css
-- src/pages/login.tsx
-```
-
-run 记录的 body 由 coding agent 在 checkpoint 中提供，agvv 负责归档。
-
-## 全局注册表
-
-daemon 需要知道它管理哪些项目：
-
-```
-~/.agvv/projects.md
----
-projects:
-  - path: ~/projects/my-project
-  - path: ~/projects/another-project
+pid: 12345
+launcher_pid: 12340
+pgid: 12340
+exit_code: 0
+base_branch: agvv/fix-login-bug
+base_commit: abc1234
+report_path: reports/agvv/review-login/002-review.md
 ---
 ```
 
-## Worktree 管理
+The run body is reserved for result text or structured summaries produced during the run.
 
-Worktree 是 agvv 的内部实现细节，不对 orchestrator agent 暴露。
+## Runtime Sidecar
 
-- `agvv run start` 时自动创建 worktree（如果该 task 还没有）
-- 一个 task 对应一个 worktree，多次 run 复用
-- `agvv task merge` 后自动清理 worktree
-- task 被删除或归档时清理 worktree
+Each run may also have a sidecar JSON file:
 
-### 路径安全
+```text
+.agvv/tasks/fix-login-bug/runs/001-implement.runtime.json
+```
 
-- worktree 路径必须在 workspace root 内
-- task ID 仅允许 `[A-Za-z0-9._-]`
-- 创建时做 symlink-safe 规范化校验，防止路径穿越
+It stores runtime facts needed for monitoring:
 
-### Hooks
+- `launcher_pid`
+- `agent_pid`
+- `pgid`
+- `started_at`
+- `finished_at`
+- `exit_code`
+- `status`
 
-在 worktree 生命周期的关键节点执行 shell 脚本，在 `config.md` 中配置：
+This file exists so the daemon can reason about the real coding-agent child process instead of a transient launcher process.
+
+## Session Lifecycle
+
+Each task has an associated acpx session. The session is a persistent agent context that retains conversation history across runs.
+
+- `agvv run start` ensures a session exists before sending the prompt
+- subsequent runs for the same task reuse the same session (the agent has context from previous runs)
+- `agvv task merge` closes the session alongside worktree cleanup
+- sessions can be managed explicitly with `agvv session ensure/close/status/list`
+
+agvv delegates session state entirely to acpx. Session data is stored at `~/.acpx/sessions/` and is not duplicated inside `.agvv/`.
+
+The session is scoped by `(agent, worktree cwd, task name)`. The agent process uses a queue-owner pattern: a background process per session handles prompts via IPC, and exits after an idle TTL.
+
+## Worktree Lifecycle
+
+Worktrees are an internal implementation detail. The orchestrator never has to manage them directly.
+
+- `agvv run start` creates the worktree if needed
+- the same task reuses the same worktree across runs
+- `review`/`test` may target an existing branch/ref with `--base-branch` (detached mode)
+- `agvv task merge` removes the worktree on success
+- task archive or cleanup also removes the worktree when possible
+
+## Hooks
+
+Project-level hooks can be configured in `.agvv/config.md`:
 
 ```yaml
 hooks:
-  after_create: "./scripts/bootstrap.sh"    # 首次创建后（装依赖等）
-  before_run: "./scripts/pre-check.sh"      # 每次 run 前（失败则中止 run）
-  after_run: "./scripts/cleanup.sh"         # 每次 run 后（失败只记录）
+  after_create: "./scripts/bootstrap.sh"
+  before_run: "./scripts/pre-check.sh"
+  after_run: "./scripts/cleanup.sh"
 ```
 
-Hooks 在 worktree 目录下执行，有超时限制。
+Hook semantics:
 
-## 进程监控
+- `after_create`: runs after the worktree is first created
+- `before_run`: runs before each run; if it fails, the run is aborted
+- `after_run`: runs after each run; failures are logged but do not overwrite the run result
 
-daemon 持续监控所有 coding agent 进程：
+## Monitoring
 
-- **超时检测**：run 超过配置时限，标记为 `timed_out`
-- **Stall 检测**：run 长时间无输出，标记为 `stalled`
-- 检测到异常后通知 orchestrator agent，不做决策
+The daemon continuously scans registered projects and checks active tasks.
 
-## 并发控制
+Current monitoring responsibilities:
 
-- agvv 内置 `max_concurrent_runs` 硬上限
-- 超出时拒绝启动新 run，返回错误
-- orchestrator agent 负责决定优先级和排队策略
+- detect dead processes
+- detect timeout
+- reconcile stale `running` state after daemon restart
 
-## 启动对账（Reconciliation）
+Completion policy is enforced when a run exits:
 
-daemon 启动时从文件系统重建真实状态：
+- `implement` / `repair`: must produce a new commit checkpoint
+- `review`: must produce a repository review report artifact
 
-- 扫描所有项目的 `.agvv/tasks/` 目录
-- 检查标记为 `running` 的 task，对应进程是否存活
-- 进程已死但状态未更新的，自动修正为 `failed`
-- 检查 worktree 是否实际存在
+Current non-goals:
 
-## 通知机制
+- no full stall detector yet
+- no output-based progress scoring
 
-agvv 在状态变更时主动通知 orchestrator agent（具体协议取决于 OpenClaw 机制），同时支持轮询作为兜底。
+This is intentional. agvv keeps monitoring minimal and grounded in observable facts.
 
-状态变更事件包括：
+## Reconciliation
 
-- run 完成（成功/失败/超时/stall）
-- task 状态变化
-- 合并成功/冲突
+When the daemon starts, it rebuilds the real state:
+
+- scan all registered projects
+- find tasks marked `running`
+- read the latest run record and runtime sidecar
+- if the tracked process is already dead, finish the run using the recorded exit code when available
+
+This keeps daemon restarts cheap and safe.
+
+## Merge Semantics
+
+`agvv task merge` checks out the main branch and merges the task branch.
+
+- on success: the task is archived and the worktree is removed
+- on conflict: the merge is aborted, the task is marked `blocked`, and the conflicting files are reported
+
+This makes merge conflict a visible orchestration event rather than a hidden Git detail.
