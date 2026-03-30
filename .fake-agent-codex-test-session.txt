@@ -1,0 +1,3 @@
+agent=codex
+session=test-session
+prompt=test prompt 
