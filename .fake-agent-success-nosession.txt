@@ -22,3 +22,6 @@ prompt=--cwd /tmp/tmp_sipwnmv/merge-conflict/worktrees/conflict-a sessions ensur
 agent=success
 session=none
 prompt=--cwd /tmp/tmp_sipwnmv/merge-conflict/worktrees/conflict-b sessions ensure --name conflict-b 
+agent=success
+session=none
+prompt=--cwd /tmp/tmp_sipwnmv/merge-conflict/worktrees/conflict-a sessions close conflict-a 
