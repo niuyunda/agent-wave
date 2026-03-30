@@ -124,7 +124,10 @@ def merge_task(project_path: Path, task_name: str) -> str:
             pass
         update_task_status(project_path, task_name, TaskStatus.blocked)
         conflict_summary = ", ".join(conflict_files) if conflict_files else "unknown files"
-        raise ValueError(f"Merge conflict: {conflict_summary}. {e}") from e
+        init_note = ""
+        if any(Path(path).name == "__init__.py" for path in conflict_files):
+            init_note = " Note: __init__.py conflicts are often expected when parallel branches update exports/imports."
+        raise ValueError(f"Merge conflict: {conflict_summary}.{init_note} {e}") from e
 
     # Close acpx session before removing worktree
     run_info = _get_latest_run_info(project_path, task_name)

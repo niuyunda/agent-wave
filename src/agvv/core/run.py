@@ -110,6 +110,10 @@ def start_run(
     agent_cmd = _build_acpx_prompt_command(agent, session_name, prompt)
     runtime_file = _runtime_file(project_path, task_name, run_num, purpose)
     log_file = _run_log_file(project_path, task_name, run_num, purpose)
+    runtime_env = os.environ.copy()
+    runtime_env["AGVV_RUN_PURPOSE"] = purpose.value
+    runtime_env["AGVV_TASK_NAME"] = task_name
+    runtime_env["AGVV_RUN_AGENT"] = agent
     with log_file.open("ab") as log_handle:
         proc = subprocess.Popen(
             [
@@ -123,6 +127,7 @@ def start_run(
             stdout=log_handle,
             stderr=log_handle,
             start_new_session=True,
+            env=runtime_env,
         )
 
     runtime = _wait_for_runtime_file(runtime_file)
@@ -293,6 +298,16 @@ def _finish_run(project_path: Path, task_name: str, status: RunStatus) -> RunSta
             post.metadata["error_message"] = log_tail
 
     latest_file.write_text(frontmatter.dumps(post) + "\n", encoding="utf-8")
+
+    if effective_status in (RunStatus.failed, RunStatus.timed_out, RunStatus.stalled):
+        _terminate_active_run(
+            {
+                "agent_pid": runtime.get("agent_pid") or post.metadata.get("pid"),
+                "pid": runtime.get("agent_pid") or post.metadata.get("pid"),
+                "launcher_pid": runtime.get("launcher_pid") or post.metadata.get("launcher_pid"),
+                "pgid": runtime.get("pgid") or post.metadata.get("pgid"),
+            }
+        )
 
     # Run after_run hook
     worktree_path = project_path / "worktrees" / task_name
@@ -540,25 +555,44 @@ def _kill_active_process_group(active: dict, sig: int) -> None:
 def _terminate_active_run(active: dict) -> bool:
     monitor_pid = active.get("agent_pid") or active.get("pid")
     launcher_pid = active.get("launcher_pid")
-    if not _process_alive(monitor_pid):
-        return not _process_alive(launcher_pid)
+    pgid = active.get("pgid")
+    if not _process_alive(monitor_pid) and not _process_alive(launcher_pid):
+        return True
+
+    # Avoid signaling a recycled process-group id when no tracked member still
+    # belongs to that pgid.
+    if pgid:
+        has_tracked_member = False
+        for pid in (monitor_pid, launcher_pid):
+            if not _process_alive(pid):
+                continue
+            try:
+                if os.getpgid(pid) == pgid:
+                    has_tracked_member = True
+                    break
+            except (ProcessLookupError, PermissionError):
+                continue
+        if not has_tracked_member:
+            pgid = None
+            active = dict(active)
+            active["pgid"] = None
 
     for _ in range(20):
-        if not _process_alive(monitor_pid):
+        if not _process_alive(monitor_pid) and not _process_alive(launcher_pid):
             break
         time.sleep(0.1)
 
-    if _process_alive(monitor_pid):
+    if _process_alive(monitor_pid) or _process_alive(launcher_pid):
         _kill_active_process_group(active, signal.SIGTERM)
         for _ in range(30):
-            if not _process_alive(monitor_pid):
+            if not _process_alive(monitor_pid) and not _process_alive(launcher_pid):
                 break
             time.sleep(0.1)
 
-    if _process_alive(monitor_pid):
+    if _process_alive(monitor_pid) or _process_alive(launcher_pid):
         _kill_active_process_group(active, signal.SIGKILL)
         for _ in range(20):
-            if not _process_alive(monitor_pid):
+            if not _process_alive(monitor_pid) and not _process_alive(launcher_pid):
                 break
             time.sleep(0.1)
 

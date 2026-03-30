@@ -12,7 +12,7 @@ app = typer.Typer(no_args_is_help=True)
 
 @app.command()
 def start() -> None:
-    """Start the agvv daemon."""
+    """Start background monitor for active runs."""
     try:
         pid = start_daemon()
         print_success(f"Daemon started (PID {pid})")
@@ -23,7 +23,7 @@ def start() -> None:
 
 @app.command()
 def stop() -> None:
-    """Stop the agvv daemon."""
+    """Stop background monitor daemon."""
     try:
         stop_daemon()
         print_success("Daemon stopped")
@@ -34,7 +34,7 @@ def stop() -> None:
 
 @app.command()
 def status() -> None:
-    """Show daemon status."""
+    """Show whether daemon is running and its PID."""
     info = get_daemon_status()
     if info["running"]:
         print_info(f"Daemon running (PID {info['pid']})")

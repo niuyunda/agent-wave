@@ -15,10 +15,10 @@ app = typer.Typer(no_args_is_help=True)
 
 @app.command()
 def add(
-    project: str = typer.Option(..., "--project", help="Project path"),
-    file: str = typer.Option(..., "--file", help="Path to task.md file"),
+    project: str = typer.Option(..., "--project", help="Target repository path"),
+    file: str = typer.Option(..., "--file", help="Task markdown file (front matter must include `name`)"),
 ) -> None:
-    """Register a task from a task.md file."""
+    """Create a task record from markdown in a project."""
     try:
         name = task.add_task(Path(project).resolve(), Path(file))
         print_success(f"Task created: {name}")
@@ -29,10 +29,10 @@ def add(
 
 @app.command("list")
 def list_cmd(
-    project: str = typer.Option(None, "--project", help="Project path (all if omitted)"),
-    as_json: bool = typer.Option(False, "--json", help="Output as JSON"),
+    project: str = typer.Option(None, "--project", help="Filter to one project path (omit for all registered projects)"),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),
 ) -> None:
-    """List all tasks."""
+    """List tasks with latest run snapshot."""
     if project:
         projects = [Path(project).resolve()]
     else:
@@ -72,11 +72,11 @@ def list_cmd(
 
 @app.command()
 def show(
-    task_name: str = typer.Argument(..., help="Task name"),
-    project: str = typer.Option(None, "--project", help="Project path"),
-    as_json: bool = typer.Option(False, "--json", help="Output as JSON"),
+    task_name: str = typer.Argument(..., help="Task name from task front matter"),
+    project: str = typer.Option(None, "--project", help="Target project path (optional if task name is unique)"),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),
 ) -> None:
-    """Show detailed task info including run history."""
+    """Show full task state, body, and run history."""
     try:
         pp = proj_mod.resolve_project(project, task_name)
         info = task.show_task(pp, task_name)
@@ -115,10 +115,10 @@ def show(
 
 @app.command()
 def merge(
-    task_name: str = typer.Argument(..., help="Task name"),
-    project: str = typer.Option(None, "--project", help="Project path"),
+    task_name: str = typer.Argument(..., help="Task to merge"),
+    project: str = typer.Option(None, "--project", help="Target project path (optional if task name is unique)"),
 ) -> None:
-    """Merge task branch into main and archive."""
+    """Merge `agvv/<task>` into main and archive on success."""
     try:
         pp = proj_mod.resolve_project(project, task_name)
         commit = task.merge_task(pp, task_name)

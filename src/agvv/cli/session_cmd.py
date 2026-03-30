@@ -15,11 +15,11 @@ app = typer.Typer(no_args_is_help=True)
 
 @app.command()
 def ensure(
-    task_name: str = typer.Argument(..., help="Task name"),
-    agent: str = typer.Option(..., "--agent", help="Agent type (codex, claude, etc.)"),
-    project: str = typer.Option(None, "--project", help="Project path"),
+    task_name: str = typer.Argument(..., help="Task whose session should exist"),
+    agent: str = typer.Option(..., "--agent", help="Agent type (for example: codex)"),
+    project: str = typer.Option(None, "--project", help="Target project path (optional if task name is unique)"),
 ) -> None:
-    """Ensure a session exists for a task (idempotent)."""
+    """Create or reuse a persistent session for a task."""
     try:
         pp = proj_mod.resolve_project(project, task_name)
         session.ensure_session(pp, task_name, agent)
@@ -31,11 +31,11 @@ def ensure(
 
 @app.command()
 def close(
-    task_name: str = typer.Argument(..., help="Task name"),
+    task_name: str = typer.Argument(..., help="Task whose session should be closed"),
     agent: str = typer.Option(..., "--agent", help="Agent type"),
-    project: str = typer.Option(None, "--project", help="Project path"),
+    project: str = typer.Option(None, "--project", help="Target project path (optional if task name is unique)"),
 ) -> None:
-    """Close a task session (soft-close, keeps history)."""
+    """Soft-close a task session while keeping history."""
     try:
         pp = proj_mod.resolve_project(project, task_name)
         session.close_session(pp, task_name, agent)
@@ -47,12 +47,12 @@ def close(
 
 @app.command("status")
 def status_cmd(
-    task_name: str = typer.Argument(..., help="Task name"),
+    task_name: str = typer.Argument(..., help="Task to inspect session for"),
     agent: str = typer.Option(..., "--agent", help="Agent type"),
-    project: str = typer.Option(None, "--project", help="Project path"),
-    as_json: bool = typer.Option(False, "--json", help="Output as JSON"),
+    project: str = typer.Option(None, "--project", help="Target project path (optional if task name is unique)"),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),
 ) -> None:
-    """Show session status for a task."""
+    """Show runtime status of a task session."""
     try:
         pp = proj_mod.resolve_project(project, task_name)
     except ValueError as e:
@@ -77,9 +77,9 @@ def status_cmd(
 @app.command("list")
 def list_cmd(
     agent: str = typer.Option(..., "--agent", help="Agent type"),
-    as_json: bool = typer.Option(False, "--json", help="Output as JSON"),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),
 ) -> None:
-    """List all sessions for an agent."""
+    """List all known sessions for an agent type."""
     sessions = session.list_sessions(agent)
 
     if as_json:

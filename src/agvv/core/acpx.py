@@ -22,7 +22,7 @@ def acpx_invocation() -> tuple[str, list[str]]:
     if env_bin is not None or env_args is not None:
         return (
             env_bin or "npx",
-            env_args.split() if env_args is not None else ["acpx@latest"],
+            env_args.split() if env_args is not None else [],
         )
 
     local_acpx = shutil.which("acpx")

@@ -109,6 +109,13 @@ case "$agent" in
     git_commit_if_possible
     exit 0
     ;;
+  dirty_no_commit)
+    sleep "$sleep_seconds"
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      printf '%s\n' "dirty-${session:-none}" >> ".dirty-no-commit.txt"
+    fi
+    exit 0
+    ;;
   no_commit)
     sleep "$sleep_seconds"
     exit 0

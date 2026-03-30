@@ -18,6 +18,7 @@ from pathlib import Path
 
 
 child_process: subprocess.Popen[str] | None = None
+child_pgid: int | None = None
 
 
 def _now() -> str:
@@ -42,9 +43,48 @@ def _write_runtime(path: Path, payload: dict) -> None:
 def _forward_signal(signum: int, _frame: object) -> None:
     if child_process and child_process.poll() is None:
         try:
-            child_process.send_signal(signum)
+            if child_pgid:
+                os.killpg(child_pgid, signum)
+            else:
+                child_process.send_signal(signum)
         except ProcessLookupError:
             pass
+
+
+def _run_git(cwd: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _has_working_tree_changes(cwd: Path) -> bool:
+    result = _run_git(cwd, ["status", "--porcelain"])
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def _has_staged_changes(cwd: Path) -> bool:
+    result = _run_git(cwd, ["diff", "--cached", "--quiet"])
+    return result.returncode == 1
+
+
+def _auto_commit_if_needed(cwd: Path) -> None:
+    purpose = os.environ.get("AGVV_RUN_PURPOSE")
+    if purpose not in {"implement", "repair"}:
+        return
+    if not _has_working_tree_changes(cwd):
+        return
+
+    _run_git(cwd, ["add", "-A"])
+    if not _has_staged_changes(cwd):
+        return
+
+    task_name = os.environ.get("AGVV_TASK_NAME", "").strip()
+    message = f"agvv: checkpoint {task_name}" if task_name else "agvv: checkpoint"
+    _run_git(cwd, ["commit", "-m", message])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -60,7 +100,6 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGINT, _forward_signal)
 
     launcher_pid = os.getpid()
-    pgid = os.getpgrp()
     started_at = _now()
     _write_runtime(
         runtime_path,
@@ -69,14 +108,16 @@ def main(argv: list[str] | None = None) -> int:
             "exit_code": None,
             "finished_at": None,
             "launcher_pid": launcher_pid,
-            "pgid": pgid,
+            "pgid": None,
             "started_at": started_at,
             "status": "starting",
         },
     )
 
     global child_process
-    child_process = subprocess.Popen(command)
+    global child_pgid
+    child_process = subprocess.Popen(command, start_new_session=True)
+    child_pgid = os.getpgid(child_process.pid)
 
     _write_runtime(
         runtime_path,
@@ -85,13 +126,16 @@ def main(argv: list[str] | None = None) -> int:
             "exit_code": None,
             "finished_at": None,
             "launcher_pid": launcher_pid,
-            "pgid": pgid,
+            "pgid": child_pgid,
             "started_at": started_at,
             "status": "running",
         },
     )
 
     exit_code = child_process.wait()
+    if exit_code == 0:
+        _auto_commit_if_needed(Path.cwd())
+    final_status = "completed" if exit_code == 0 else "failed"
     _write_runtime(
         runtime_path,
         {
@@ -99,9 +143,9 @@ def main(argv: list[str] | None = None) -> int:
             "exit_code": exit_code,
             "finished_at": _now(),
             "launcher_pid": launcher_pid,
-            "pgid": pgid,
+            "pgid": child_pgid,
             "started_at": started_at,
-            "status": "finished",
+            "status": final_status,
         },
     )
     return exit_code

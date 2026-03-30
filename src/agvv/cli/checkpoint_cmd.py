@@ -12,11 +12,11 @@ app = typer.Typer(no_args_is_help=True)
 
 @app.command()
 def show(
-    task_name: str = typer.Argument(..., help="Task name"),
-    project: str = typer.Option(None, "--project", help="Project path"),
-    as_json: bool = typer.Option(False, "--json", help="Output as JSON"),
+    task_name: str = typer.Argument(..., help="Task to inspect"),
+    project: str = typer.Option(None, "--project", help="Target project path (optional if task name is unique)"),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),
 ) -> None:
-    """Show the latest checkpoint for a task."""
+    """Show latest checkpoint context, or latest-failure fallback info."""
     try:
         pp = proj_mod.resolve_project(project, task_name)
         info = checkpoint.show_checkpoint(pp, task_name)

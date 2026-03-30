@@ -60,7 +60,91 @@ Execution rules:
 - `task=pending` with latest run `completed` is normal (waiting for next action).
 - For shell checks, use `python`; fallback to `python3` when unavailable.
 
-## 6) Failure handling
+## 6) Main commands and common parameters
+
+### Project
+
+- `agvv project add <repo_path>`
+- `agvv project list`
+- `agvv project remove <repo_path>`
+
+### Task
+
+- `agvv task add --project <repo_path> --file <task_md>`
+- `agvv task list [--project <repo_path>] [--json]`
+- `agvv task show <task_name> [--project <repo_path>]`
+- `agvv task merge <task_name> [--project <repo_path>]`
+
+### Run
+
+- `agvv run start <task_name> --purpose <implement|review|test|repair> --agent <agent> [--base-branch <ref>] [--project <repo_path>]`
+- `agvv run stop <task_name> [--project <repo_path>]`
+- `agvv run status [--project <repo_path>] [--json]`
+
+### Session
+
+- `agvv session ensure <task_name> --agent <agent> [--project <repo_path>]`
+- `agvv session status <task_name> --agent <agent> [--project <repo_path>]`
+- `agvv session close <task_name> --agent <agent> [--project <repo_path>]`
+- `agvv session list --agent <agent> [--project <repo_path>]`
+
+### Checkpoint and daemon
+
+- `agvv checkpoint show <task_name> [--project <repo_path>] [--json]`
+- `agvv daemon start | status | stop`
+
+Common high-frequency parameters:
+
+- `--project`: avoid ambiguous project resolution.
+- `--json`: machine-readable output for agent parsing.
+- `--purpose`: required on `run start`; drives completion gate.
+- `--agent`: required on `run start/session`.
+- `--base-branch`: strongly recommended for `review/test`.
+
+## 7) Example usage
+
+```bash
+# 1) Register project and add task
+agvv project add /repo/app
+agvv task add --project /repo/app --file /tmp/fix-login.md
+
+# 2) Implement
+agvv run start fix-login --purpose implement --agent codex --project /repo/app
+agvv run status --project /repo/app --json
+agvv checkpoint show fix-login --project /repo/app
+
+# 3) Review and test against implementation branch
+agvv run start review-login --purpose review --agent codex --base-branch agvv/fix-login --project /repo/app
+agvv run start test-login --purpose test --agent codex --base-branch agvv/fix-login --project /repo/app
+
+# 4) Merge when ready
+agvv task show fix-login --project /repo/app
+agvv task merge fix-login --project /repo/app
+```
+
+## 8) Failure handling
 
 - If any hard gate is not met, treat the run as invalid and re-run with corrected inputs.
 - When ambiguous, inspect `task show` and `checkpoint show` before deciding next action.
+
+## 9) Issue tracking
+
+When something goes wrong with agvv, document it in the codebase:
+
+**Location:** `/home/yunda/projects/agent-wave/docs/issues/`
+
+**Template:** `docs/issues/ISSUE_TEMPLATE.md` — copy it, rename with date and descriptive name (e.g. `2026-03-31-base-branch-wrong-commit.md`).
+
+**Required frontmatter fields:**
+
+- `name` — short slug
+- `date` — YYYY-MM-DD
+- `type` — bug | enhancement | question | investigation
+- `severity` — critical | high | medium | low | none
+- `status` — open | in-progress | resolved | wonotfix
+- `reproduced` — true | false
+- `affects` — implement | review | test | repair | merge | daemon | cli | unknown
+
+**Write the issue before fixing** — document what happened, steps to reproduce, and evidence. Fix the issue after.
+
+**Default agent:** `claude` (changed from `codex` as of 2026-03-31).

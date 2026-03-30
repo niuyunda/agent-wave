@@ -26,9 +26,9 @@ def _project_counts(pp: Path) -> dict:
 
 @app.command()
 def add(
-    path: str = typer.Argument(..., help="Path to the project directory"),
+    path: str = typer.Argument(..., help="Repository directory to register"),
 ) -> None:
-    """Register a project and initialize .agvv/ directory."""
+    """Register a repository and initialize `.agvv/` metadata."""
     try:
         entry = project.add_project(Path(path))
         print_success(f"Project registered: {entry.path}")
@@ -39,9 +39,9 @@ def add(
 
 @app.command("list")
 def list_cmd(
-    as_json: bool = typer.Option(False, "--json", help="Output as JSON"),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),
 ) -> None:
-    """List all registered projects with status overview."""
+    """List registered repositories with task/run summary counts."""
     entries = project.list_projects()
     if not entries:
         print_error("No projects registered")
@@ -72,9 +72,9 @@ def list_cmd(
 
 @app.command()
 def remove(
-    path: str = typer.Argument(..., help="Path to the project directory"),
+    path: str = typer.Argument(..., help="Registered repository directory to remove"),
 ) -> None:
-    """Unregister a project (does not delete .agvv/ directory)."""
+    """Remove project from registry only (keeps repository files)."""
     try:
         project.remove_project(Path(path))
         print_success(f"Project removed: {path}")

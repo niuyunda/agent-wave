@@ -13,16 +13,16 @@ from agvv.cli.task_cmd import app as task_app
 
 app = typer.Typer(
     name="agvv",
-    help="Deterministic project orchestration engine for AI coding agents.",
+    help="Deterministic orchestration CLI for AI coding workflows in local Git repositories.",
     no_args_is_help=True,
 )
 
-app.add_typer(daemon_app, name="daemon", help="Manage the agvv daemon.")
-app.add_typer(project_app, name="project", help="Manage registered projects.")
-app.add_typer(task_app, name="task", help="Manage tasks.")
-app.add_typer(run_app, name="run", help="Manage runs.")
-app.add_typer(session_app, name="session", help="Manage agent sessions.")
-app.add_typer(checkpoint_app, name="checkpoint", help="View checkpoints.")
+app.add_typer(daemon_app, name="daemon", help="Control the background monitor daemon.")
+app.add_typer(project_app, name="project", help="Register repositories and view project-level summaries.")
+app.add_typer(task_app, name="task", help="Create, inspect, and merge tasks.")
+app.add_typer(run_app, name="run", help="Start, stop, and inspect task runs.")
+app.add_typer(session_app, name="session", help="Manage persistent acpx sessions per task.")
+app.add_typer(checkpoint_app, name="checkpoint", help="Inspect latest durable checkpoint context.")
 
 
 if __name__ == "__main__":

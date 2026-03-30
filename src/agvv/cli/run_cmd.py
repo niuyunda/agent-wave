@@ -17,17 +17,17 @@ app = typer.Typer(no_args_is_help=True)
 
 @app.command()
 def start(
-    task_name: str = typer.Argument(..., help="Task name"),
-    purpose: RunPurpose = typer.Option(..., "--purpose", help="Run purpose"),
-    agent: str = typer.Option(..., "--agent", help="Agent type (codex, claude, etc.)"),
+    task_name: str = typer.Argument(..., help="Task to execute"),
+    purpose: RunPurpose = typer.Option(..., "--purpose", help="Execution intent: implement, review, test, or repair"),
+    agent: str = typer.Option("claude", "--agent", help="Agent type to invoke via acpx (for example: claude, codex)"),
     base_branch: str | None = typer.Option(
         None,
         "--base-branch",
-        help="Existing branch/ref to run against (recommended for review/test)",
+        help="Existing branch or ref baseline (recommended for review/test)",
     ),
-    project: str = typer.Option(None, "--project", help="Project path"),
+    project: str = typer.Option(None, "--project", help="Target project path (optional if task name is unique)"),
 ) -> None:
-    """Start a new run for a task."""
+    """Start a task run and record runtime metadata."""
     try:
         pp = proj_mod.resolve_project(project, task_name)
         meta = run.start_run(pp, task_name, purpose, agent, base_branch=base_branch)
@@ -39,10 +39,10 @@ def start(
 
 @app.command()
 def stop(
-    task_name: str = typer.Argument(..., help="Task name"),
-    project: str = typer.Option(None, "--project", help="Project path"),
+    task_name: str = typer.Argument(..., help="Task with an active run"),
+    project: str = typer.Option(None, "--project", help="Target project path (optional if task name is unique)"),
 ) -> None:
-    """Stop the current run for a task."""
+    """Stop active run and ensure process group exits."""
     try:
         pp = proj_mod.resolve_project(project, task_name)
         run.stop_run(pp, task_name)
@@ -54,10 +54,10 @@ def stop(
 
 @app.command("status")
 def status_cmd(
-    project: str = typer.Option(None, "--project", help="Project path (all if omitted)"),
-    as_json: bool = typer.Option(False, "--json", help="Output as JSON"),
+    project: str = typer.Option(None, "--project", help="Filter to one project path (omit for all registered projects)"),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),
 ) -> None:
-    """Show status of all active runs."""
+    """List currently active runs."""
     if project:
         projects = [Path(project).resolve()]
     else:
