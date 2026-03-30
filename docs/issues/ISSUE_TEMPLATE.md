@@ -35,13 +35,6 @@ affects: implement|review|test|repair|merge|daemon|cli|unknown
 
 <!-- Log snippets, screenshots, task output, etc. -->
 
-## Root Cause
-
-<!-- If known, explain what caused the issue -->
-
-## Suggested Fix
-
-<!-- If applicable, how to fix this -->
 
 ## Notes
 

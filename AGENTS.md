@@ -20,7 +20,9 @@ Tests live in `tests/` and use realistic temp repos and Git operations. User-fac
 Target Python 3.10+ with 4-space indentation and type hints where useful. Prefer small deterministic functions and explicit state transitions. Use `snake_case` for modules/functions/files. Task names exposed to users should be machine-friendly (for example `fix-login-bug`). Keep comments minimal and focused on non-obvious behavior.
 
 ## Testing Guidelines
-Testing framework: standard-library `unittest`. Name files `test_*.py` and methods `test_*`. Favor fault-oriented, end-to-end style tests over heavy mocking. When changing run/daemon/checkpoint/merge behavior, add or update regression coverage in `tests/test_robustness.py` or `tests/test_run.py`.
+Testing framework: standard-library `unittest`. Name files `test_*.py` and methods `test_*`. Favor fault-oriented, end-to-end style tests over heavy mocking.
+
+For **end-to-end** coverage, prefer a **real agent** (see `tests/test_real_agent_e2e.py` and `AGVV_RUN_REAL_AGENT_E2E=1` above). Use a **fake** agent script only when you need something a real agent cannot provide, such as deterministic simulation of a specific exit path, stall, or hook failure. When changing run/daemon/checkpoint/merge behavior, add or update regression coverage in `tests/test_robustness.py` or `tests/test_run.py`.
 
 ## Commit & Pull Request Guidelines
 Use concise imperative commit subjects, optionally with prefixes (for example `feat:`, `fix:`, `docs:`). Keep each commit scoped to one logical change. PRs should include purpose, behavior changes, verification commands run, and any CLI/doc updates. Link relevant issues when available.
