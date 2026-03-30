@@ -19,3 +19,6 @@ prompt=--cwd /tmp/tmp71b5w0_e/missing-checkpoint/worktrees/checkpoint-task sessi
 agent=success
 session=none
 prompt=--cwd /tmp/tmp_sipwnmv/merge-conflict/worktrees/conflict-a sessions ensure --name conflict-a 
+agent=success
+session=none
+prompt=--cwd /tmp/tmp_sipwnmv/merge-conflict/worktrees/conflict-b sessions ensure --name conflict-b 
