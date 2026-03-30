@@ -10,3 +10,6 @@ prompt=--cwd /tmp/tmp4vp5kmcj/missing-checkpoint/worktrees/checkpoint-task sessi
 agent=success
 session=none
 prompt=--cwd /tmp/tmp375uuty2/checkpoint-display/worktrees/display-task sessions ensure --name display-task 
+agent=success
+session=none
+prompt=--cwd /tmp/tmp375uuty2/checkpoint-display/worktrees/display-task sessions ensure --name display-task 
