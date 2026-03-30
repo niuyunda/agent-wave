@@ -26,7 +26,14 @@ Cannot do:
 - choose retry strategy
 - resolve business conflicts automatically
 
-## 3) Run model (hard requirements)
+## 3) Task markdown (`task.md`)
+
+When authoring or editing the markdown file you pass to `agvv task add --file`:
+
+- **Reference only:** open `docs/task-template.md` in this repository as an **example shape**, not a mandatory schema. Tasks may be shorter, reorder sections, or skip prose—the goal is useful signal, not bureaucracy.
+- **Worth keeping tight:** **acceptance criteria** (checkable outcomes), **how to test / verify** (commands or explicit manual steps), and **definition of done** (what “finished” means, including no scope creep). Those reduce low-quality or untested handoffs; everything else can stay loose so the agent is not over-constrained.
+
+## 4) Run model (hard requirements)
 
 - Task: one unit of work (`name` must be unique in a project).
 - Run: one execution (`implement | review | test | repair`).
@@ -35,13 +42,13 @@ Cannot do:
   - `review`: MUST write a non-empty report file (default `reports/agvv/<task>/<run>-review.md`; otherwise `missing_review_report`).
   - `test`: exit code determines pass/fail; new commit is optional.
 
-## 4) Branch and baseline policy
+## 5) Branch and baseline policy
 
 - `implement/repair`: run on `agvv/<task>`.
 - `review/test`: by default, explicitly pass `--base-branch=<ref>` to avoid wrong baselines.
 - With `--base-branch`, execution is detached; do not expect a new task branch.
 
-## 5) Agent execution protocol (minimal loop)
+## 6) Agent execution protocol (minimal loop)
 
 ```bash
 agvv task list --project <repo>
@@ -60,7 +67,7 @@ Execution rules:
 - `task=pending` with latest run `completed` is normal (waiting for next action).
 - For shell checks, use `python`; fallback to `python3` when unavailable.
 
-## 6) Main commands and common parameters
+## 7) Main commands and common parameters
 
 ### Project
 
@@ -101,7 +108,7 @@ Common high-frequency parameters:
 - `--agent`: required on `run start/session`.
 - `--base-branch`: strongly recommended for `review/test`.
 
-## 7) Example usage
+## 8) Example usage
 
 ```bash
 # 1) Register project and add task
@@ -122,12 +129,12 @@ agvv task show fix-login --project /repo/app
 agvv task merge fix-login --project /repo/app
 ```
 
-## 8) Failure handling
+## 9) Failure handling
 
 - If any hard gate is not met, treat the run as invalid and re-run with corrected inputs.
 - When ambiguous, inspect `task show` and `checkpoint show` before deciding next action.
 
-## 9) Issue tracking
+## 10) Issue tracking
 
 When something goes wrong with agvv, document it in the codebase:
 

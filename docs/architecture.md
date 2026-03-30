@@ -39,10 +39,12 @@ Global state stays in the user's home directory:
 
 ```text
 ~/.agvv/
-├── projects.md
+├── projects.json
 ├── daemon.pid
 └── daemon.log
 ```
+
+The project list is read only from `projects.json` (no import from `projects.md`).
 
 ## Task Record
 

@@ -37,7 +37,7 @@ uv pip install -e .
 agvv project add ~/projects/my-app
 ```
 
-This initializes a `.agvv/` directory inside the repository and adds the project to the global registry in `~/.agvv/projects.md`.
+This initializes a `.agvv/` directory inside the repository and adds the project to the global registry in `~/.agvv/projects.json` (JSON only; `projects.md` is not read).
 
 ### 2. Add a task
 
@@ -211,7 +211,7 @@ src/agvv/
             └── 2026-03-30-fix-login-bug/
 
 ~/.agvv/
-├── projects.md
+├── projects.json
 ├── daemon.pid
 └── daemon.log
 ```

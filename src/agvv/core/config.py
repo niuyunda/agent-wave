@@ -17,7 +17,13 @@ TASK_NAME_PATTERN = r"^[A-Za-z0-9._-]+$"
 
 # Global home directory
 AGVV_HOME = Path.home() / ".agvv"
-PROJECTS_FILE = AGVV_HOME / "projects.md"
+
+
+def projects_registry_path() -> Path:
+    """Global JSON registry of registered repositories (under ``AGVV_HOME``)."""
+    return AGVV_HOME / "projects.json"
+
+
 DAEMON_PID_FILE = AGVV_HOME / "daemon.pid"
 DAEMON_LOG_FILE = AGVV_HOME / "daemon.log"
 

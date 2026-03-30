@@ -46,8 +46,17 @@ def get_main_branch(cwd: Path) -> str:
             return "main"
 
 
-def create_worktree(repo_root: Path, worktree_path: Path, branch: str) -> None:
-    """Create a new git worktree with a new branch, or reattach an existing branch."""
+def create_worktree(
+    repo_root: Path,
+    worktree_path: Path,
+    branch: str,
+    start_point: str | None = None,
+) -> None:
+    """Create a new git worktree with a new branch, or reattach an existing branch.
+
+    If ``start_point`` is set, a new branch is created starting at that ref (when
+    the branch does not exist yet). Ignored when the branch already exists.
+    """
     # Prune stale worktree entries (e.g. directory was deleted externally)
     run_git(["worktree", "prune"], cwd=repo_root)
 
@@ -61,10 +70,11 @@ def create_worktree(repo_root: Path, worktree_path: Path, branch: str) -> None:
         )
     except GitError:
         # Branch does not exist — create new branch
-        run_git(
-            ["worktree", "add", "-b", branch, str(worktree_path)],
-            cwd=repo_root,
-        )
+        args = ["worktree", "add", "-b", branch, str(worktree_path)]
+        if start_point:
+            run_git(["rev-parse", "--verify", start_point], cwd=repo_root)
+            args.append(start_point)
+        run_git(args, cwd=repo_root)
 
 
 def create_detached_worktree(repo_root: Path, worktree_path: Path, ref: str) -> None:

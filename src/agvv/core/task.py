@@ -6,11 +6,12 @@ import re
 import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import frontmatter
 
 from agvv.core import config
-from agvv.core.models import RunMeta, RunStatus, TaskMeta, TaskStatus
+from agvv.core.models import RunMeta, RunStatus, TaskStatus
 from agvv.core.session import close_session
 from agvv.utils import git, markdown
 
@@ -22,14 +23,52 @@ def validate_task_name(name: str) -> None:
         )
 
 
+def _frontmatter_for_new_task(post: frontmatter.Post) -> dict[str, Any]:
+    """Merge source YAML with agvv defaults; drop only invalid ``status`` values.
+
+    All keys from the source front matter are kept. ``name`` is required and
+    validated. ``status`` defaults to ``pending`` when absent; ``created_at``
+    defaults to today's date (YYYY-MM-DD) when absent.
+    """
+    merged: dict[str, Any] = dict(post.metadata)
+    name = merged.get("name")
+    if name is None or name == "":
+        raise ValueError("task.md must have 'name' in front matter")
+    name = name if isinstance(name, str) else str(name)
+    validate_task_name(name)
+    merged["name"] = name
+
+    raw_status = merged.get("status")
+    if raw_status is None:
+        merged["status"] = TaskStatus.pending.value
+    else:
+        key = raw_status if isinstance(raw_status, str) else str(raw_status)
+        try:
+            merged["status"] = TaskStatus(key).value
+        except ValueError as e:
+            allowed = ", ".join(s.value for s in TaskStatus)
+            raise ValueError(
+                f"Invalid task status {raw_status!r}. Use one of: {allowed}"
+            ) from e
+
+    created = merged.get("created_at")
+    if created is None:
+        merged["created_at"] = datetime.now().strftime("%Y-%m-%d")
+    else:
+        merged["created_at"] = (
+            created.strftime("%Y-%m-%d")
+            if hasattr(created, "strftime")
+            else str(created)
+        )
+
+    return merged
+
+
 def add_task(project_path: Path, task_file_path: Path) -> str:
     """Add a task to a project from a task.md file. Returns task name."""
     post = frontmatter.load(str(task_file_path))
-    name = post.metadata.get("name")
-    if not name:
-        raise ValueError("task.md must have 'name' in front matter")
-
-    validate_task_name(name)
+    merged = _frontmatter_for_new_task(post)
+    name = merged["name"]
 
     td = config.task_dir(project_path, name)
     if td.exists():
@@ -37,10 +76,8 @@ def add_task(project_path: Path, task_file_path: Path) -> str:
             f'task "{name}" already exists in project {project_path.name}'
         )
 
-    # Create task directory and write task.md with agvv-managed fields
-    meta = TaskMeta(name=name)
     tf = config.task_file(project_path, name)
-    markdown.write_md(tf, meta.model_dump(mode="json"), post.content)
+    markdown.write_md(tf, merged, post.content)
 
     # Create runs directory
     config.runs_dir(project_path, name).mkdir(parents=True, exist_ok=True)

@@ -144,7 +144,7 @@ class AgvvRepoTestCase(unittest.TestCase):
         self.home_dir = self.tmp_path / "home"
         self.home_dir.mkdir()
 
-        self.projects_file = self.home_dir / ".agvv" / "projects.md"
+        self.projects_file = self.home_dir / ".agvv" / "projects.json"
         self.daemon_pid_file = self.home_dir / ".agvv" / "daemon.pid"
         self.daemon_log_file = self.home_dir / ".agvv" / "daemon.log"
         self.agvv_home = self.home_dir / ".agvv"
@@ -153,7 +153,6 @@ class AgvvRepoTestCase(unittest.TestCase):
         self.config_patcher = mock.patch.multiple(
             config,
             AGVV_HOME=self.agvv_home,
-            PROJECTS_FILE=self.projects_file,
             DAEMON_PID_FILE=self.daemon_pid_file,
             DAEMON_LOG_FILE=self.daemon_log_file,
         )

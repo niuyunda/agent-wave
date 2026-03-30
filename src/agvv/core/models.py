@@ -34,7 +34,12 @@ class RunStatus(str, Enum):
 
 
 class TaskMeta(BaseModel):
-    """Front-matter fields managed by agvv in task.md."""
+    """Canonical front-matter fields agvv reads/writes in task.md.
+
+    On disk, ``task.md`` may include additional YAML keys; those are preserved
+    when the task is created via ``task add`` and remain visible to
+    ``task list`` / ``task show``.
+    """
 
     name: str
     status: TaskStatus = TaskStatus.pending

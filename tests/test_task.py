@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import textwrap
+from pathlib import Path
+
+import frontmatter
+
 from agvv.core import config, run, task
 from agvv.core.models import RunMeta, RunPurpose, RunStatus, TaskStatus
 from agvv.daemon import server
@@ -22,6 +27,52 @@ class TaskTest(AgvvRepoTestCase):
         duplicate.write_text("---\nname: duplicate-task\n---\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, 'already exists'):
             task.add_task(repo, duplicate)
+
+    def test_add_task_preserves_extra_frontmatter(self) -> None:
+        repo = self._create_project_repo("task-frontmatter-merge")
+        src = self.tmp_path / "rich-task.md"
+        src.write_text(
+            textwrap.dedent(
+                """\
+                ---
+                name: rich-task
+                title: "Auth timeout"
+                priority: high
+                labels:
+                  - security
+                  - api
+                links:
+                  issue: "https://example.com/i/1"
+                ---
+
+                Body line.
+                """
+            ),
+            encoding="utf-8",
+        )
+        task.add_task(repo, src)
+
+        tf = config.task_file(repo, "rich-task")
+        meta = frontmatter.load(str(tf)).metadata
+        self.assertEqual(meta["name"], "rich-task")
+        self.assertEqual(meta["title"], "Auth timeout")
+        self.assertEqual(meta["priority"], "high")
+        self.assertEqual(meta["labels"], ["security", "api"])
+        self.assertEqual(meta["links"], {"issue": "https://example.com/i/1"})
+        self.assertIn("status", meta)
+        self.assertIn("created_at", meta)
+        body = frontmatter.load(str(tf)).content
+        self.assertIn("Body line.", body)
+
+    def test_add_task_rejects_invalid_status_in_source(self) -> None:
+        repo = self._create_project_repo("task-bad-status")
+        src = self.tmp_path / "bad-status.md"
+        src.write_text(
+            "---\nname: bad-status-task\nstatus: not-a-real-status\n---\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "Invalid task status"):
+            task.add_task(repo, src)
 
     def test_list_and_show_task_include_latest_run_metadata(self) -> None:
         repo = self._create_project_repo("task-metadata")

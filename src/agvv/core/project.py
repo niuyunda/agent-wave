@@ -2,32 +2,43 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-
-import frontmatter
 
 from agvv.core import config
 from agvv.core.models import ProjectEntry
 
 
+def _parse_projects_json(path: Path) -> list[ProjectEntry]:
+    raw = path.read_text(encoding="utf-8").strip()
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid projects registry JSON ({path.name}): {e}") from e
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid projects registry: root must be an object ({path.name})")
+    items = data.get("projects", [])
+    if not isinstance(items, list):
+        raise ValueError(f"Invalid projects registry: 'projects' must be a list ({path.name})")
+    return [ProjectEntry(**e) for e in items]
+
+
 def _read_projects_file() -> list[ProjectEntry]:
-    """Read the global projects registry."""
-    pf = config.PROJECTS_FILE
+    """Read the global projects registry (JSON)."""
+    pf = config.projects_registry_path()
     if not pf.exists():
         return []
-    post = frontmatter.load(str(pf))
-    entries = post.metadata.get("projects", [])
-    if not entries:
-        return []
-    return [ProjectEntry(**e) for e in entries]
+    return _parse_projects_json(pf)
 
 
 def _write_projects_file(entries: list[ProjectEntry]) -> None:
-    """Write the global projects registry."""
+    """Write the global projects registry as JSON."""
     config.ensure_agvv_home()
-    data = {"projects": [e.model_dump() for e in entries]}
-    post = frontmatter.Post("", **data)
-    config.PROJECTS_FILE.write_text(frontmatter.dumps(post) + "\n", encoding="utf-8")
+    payload = {"projects": [e.model_dump() for e in entries]}
+    text = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    config.projects_registry_path().write_text(text, encoding="utf-8")
 
 
 def list_projects() -> list[ProjectEntry]:

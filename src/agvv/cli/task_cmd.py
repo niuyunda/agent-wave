@@ -16,9 +16,18 @@ app = typer.Typer(no_args_is_help=True)
 @app.command()
 def add(
     project: str = typer.Option(..., "--project", help="Target repository path"),
-    file: str = typer.Option(..., "--file", help="Task markdown file (front matter must include `name`)"),
+    file: str = typer.Option(
+        ...,
+        "--file",
+        help="Task markdown; YAML front matter must include `name`",
+    ),
 ) -> None:
-    """Create a task record from markdown in a project."""
+    """Create a task record from markdown in a project.
+
+    Source front matter is copied into `.agvv/tasks/<name>/task.md` except that
+    missing `status` defaults to pending and missing `created_at` to today.
+    Example layout (optional): see ``docs/task-template.md`` in the agvv repo.
+    """
     try:
         name = task.add_task(Path(project).resolve(), Path(file))
         print_success(f"Task created: {name}")
