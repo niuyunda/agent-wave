@@ -146,6 +146,20 @@ def merge_task(project_path: Path, task_name: str) -> str:
 
     branch = f"{config.BRANCH_PREFIX}{task_name}"
     main_branch = git.get_main_branch(project_path)
+    current_branch = git.current_branch(project_path)
+
+    if current_branch != main_branch:
+        raise ValueError(
+            f"Project worktree is on '{current_branch}'. "
+            f"To avoid switching your main worktree automatically, "
+            f"checkout '{main_branch}' and rerun merge."
+        )
+
+    if not git.is_worktree_clean(project_path, ignored_paths=(config.AGVV_DIR, "worktrees")):
+        raise ValueError(
+            f"Project worktree at {project_path} has uncommitted changes. "
+            "Commit, stash, or clean them before merge."
+        )
 
     # Checkout main and merge
     git.run_git(["checkout", main_branch], cwd=project_path)

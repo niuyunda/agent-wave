@@ -79,6 +79,18 @@ def close_session(project_path: Path, task_name: str, agent: str) -> None:
     )
 
 
+def cancel_session(project_path: Path, task_name: str, agent: str) -> bool:
+    """Try to cancel the active session for a task."""
+    worktree_path = project_path / "worktrees" / task_name
+    result = _run_with_order_fallback(
+        worktree_path=worktree_path,
+        agent=agent,
+        args=[agent, "-s", task_name, "cancel"],
+        timeout=10,
+    )
+    return result is not None
+
+
 def get_session_status(project_path: Path, task_name: str, agent: str) -> dict | None:
     """Get session status. Returns parsed JSON or None if unavailable."""
     worktree_path = project_path / "worktrees" / task_name

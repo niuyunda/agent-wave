@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import signal
+import textwrap
 import time
 import unittest
 from unittest import mock
@@ -129,6 +130,61 @@ class AgvvRobustnessTest(AgvvRepoTestCase):
 
         agent = self.tmp_path / "no-report-agent.sh"
         agent.write_text("#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n", encoding="utf-8")
+        agent.chmod(0o755)
+
+        with mock.patch.dict(
+            os.environ,
+            {"AGVV_ACPX_BIN": str(agent), "AGVV_ACPX_ARGS": "", "AGVV_ACPX_OPTS": ""},
+            clear=False,
+        ):
+            run.start_run(repo, "review-task", RunPurpose.review, "codex")
+            self._wait_for_process_exit(repo, "review-task")
+            server._monitor_cycle()
+
+        latest = task.show_task(repo, "review-task")["runs"][-1]
+        self.assertEqual(latest["status"], "failed")
+        self.assertEqual(latest["finish_reason"], "no_new_checkpoint")
+
+    def test_review_run_with_commit_but_missing_report_is_failed(self) -> None:
+        repo = self._create_project_repo("review-commit-no-report")
+        self._add_task(repo, "review-task", "SLEEP=0")
+
+        agent = self.tmp_path / "commit-no-report-agent.sh"
+        agent.write_text(
+            textwrap.dedent(
+                """\
+                #!/usr/bin/env bash
+                set -euo pipefail
+                while [[ $# -gt 0 ]]; do
+                  case "$1" in
+                    --approve-all) shift || true ;;
+                    --timeout|--model|--cwd|--format) shift 2 || true ;;
+                    *) break ;;
+                  esac
+                done
+                shift || true
+                while [[ $# -gt 0 ]]; do
+                  case "$1" in
+                    -s|--session) shift 2 || true ;;
+                    --cwd) shift 2 || true ;;
+                    --format) shift 2 || true ;;
+                    *) break ;;
+                  esac
+                done
+                if [[ "${1:-}" == "sessions" || "${1:-}" == "status" ]]; then
+                  if [[ "${1:-}" == "status" ]]; then
+                    echo '{"status":"ok"}'
+                  fi
+                  exit 0
+                fi
+                printf 'x\\n' >> .agvv-review-only.txt
+                git add .agvv-review-only.txt
+                git commit -m 'review worktree commit'
+                exit 0
+                """
+            ),
+            encoding="utf-8",
+        )
         agent.chmod(0o755)
 
         with mock.patch.dict(

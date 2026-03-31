@@ -58,8 +58,8 @@ When the daemon sees that the coding-agent process has exited, it:
 
 Important rule:
 
-- `implement` / `repair`: successful process exit without a new checkpoint is `failed`
-- `review`: successful process exit without a report file is `failed`
+- all purposes: successful process exit without a new checkpoint (vs. the run’s `base_commit`) is `failed`
+- `review`: successful process exit without a non-empty report file is also `failed`
 
 By default, review reports are expected at:
 

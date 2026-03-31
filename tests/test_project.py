@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from agvv.core import config, project
+from agvv.utils import git
 
 from tests._support import AgvvRepoTestCase
 
@@ -29,6 +31,33 @@ class ProjectTest(AgvvRepoTestCase):
         project.add_project(repo)
         with self.assertRaisesRegex(ValueError, "already registered"):
             project.add_project(repo)
+
+    def test_add_project_initializes_git_repo_when_missing(self) -> None:
+        repo = self.tmp_path / "plain-project"
+        repo.mkdir()
+        (repo / "README.md").write_text("# plain\n", encoding="utf-8")
+
+        entry = project.add_project(repo)
+
+        self.assertEqual(Path(entry.path), repo.resolve())
+        self.assertTrue(git.is_git_repo(repo))
+        self.assertTrue(git.has_commits(repo))
+        tracked = git.run_git(["ls-files"], cwd=repo).splitlines()
+        self.assertIn("README.md", tracked)
+
+    def test_add_project_bootstraps_existing_repo_without_commits(self) -> None:
+        repo = self.tmp_path / "repo-no-head"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "config", "user.name", "agvv-test"], cwd=repo, check=True, capture_output=True, text=True)
+        subprocess.run(["git", "config", "user.email", "agvv-test@example.com"], cwd=repo, check=True, capture_output=True, text=True)
+        (repo / "README.md").write_text("# no-head\n", encoding="utf-8")
+
+        project.add_project(repo)
+
+        self.assertTrue(git.has_commits(repo))
+        tracked = git.run_git(["ls-files"], cwd=repo).splitlines()
+        self.assertIn("README.md", tracked)
 
     def test_find_and_resolve_project_from_task_name(self) -> None:
         repo_a = self._create_project_repo("lookup-a")

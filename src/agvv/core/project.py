@@ -7,6 +7,7 @@ from pathlib import Path
 
 from agvv.core import config
 from agvv.core.models import ProjectEntry
+from agvv.utils import git
 
 
 def _parse_projects_json(path: Path) -> list[ProjectEntry]:
@@ -50,6 +51,25 @@ def add_project(path: Path) -> ProjectEntry:
     path = path.resolve()
     if not path.is_dir():
         raise ValueError(f"Directory does not exist: {path}")
+
+    if not git.is_git_repo(path):
+        try:
+            git.init_repo(path)
+        except git.GitError as e:
+            raise ValueError(f"Failed to initialize Git repository at {path}: {e}") from e
+
+    if not git.has_commits(path):
+        try:
+            git.run_git(["add", "-A"], cwd=path)
+            commit_args = ["commit", "-m", "agvv: init"]
+            if not git.has_staged_changes(path):
+                commit_args.insert(1, "--allow-empty")
+            git.run_git(commit_args, cwd=path)
+        except git.GitError as e:
+            raise ValueError(
+                "Git repository needs an initial commit before agvv can use worktrees. "
+                "Configure git user.name/user.email or create the first commit manually."
+            ) from e
 
     entries = _read_projects_file()
     for e in entries:

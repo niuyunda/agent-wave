@@ -178,8 +178,8 @@ Current monitoring responsibilities:
 
 Completion policy is enforced when a run exits:
 
-- `implement` / `repair`: must produce a new commit checkpoint
-- `review`: must produce a repository review report artifact
+- all purposes: must produce a new commit checkpoint (relative to the run’s `base_commit`)
+- `review`: must also produce a repository review report artifact
 
 Current non-goals:
 

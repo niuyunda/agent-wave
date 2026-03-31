@@ -38,9 +38,8 @@ When authoring or editing the markdown file you pass to `agvv task add --file`:
 - Task: one unit of work (`name` must be unique in a project).
 - Run: one execution (`implement | review | test | repair`).
 - Completion gates:
-  - `implement/repair`: MUST create a **new commit** (`no_new_checkpoint` on failure).
-  - `review`: MUST write a non-empty report file (default `reports/agvv/<task>/<run>-review.md`; otherwise `missing_review_report`).
-  - `test`: exit code determines pass/fail; new commit is optional.
+  - All purposes: MUST create a **new commit** vs. the run’s recorded baseline (`no_new_checkpoint` on failure).
+  - `review`: MUST also write a non-empty report file (default `reports/agvv/<task>/<run>-review.md`; otherwise `missing_review_report`).
 
 ## 5) Branch and baseline policy
 

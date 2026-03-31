@@ -146,3 +146,29 @@ class TaskTest(AgvvRepoTestCase):
 
         with self.assertRaises(git.GitError):
             git.run_git(["rev-parse", "--verify", "agvv/merge-task"], cwd=repo)
+
+    def test_merge_task_requires_clean_project_worktree(self) -> None:
+        repo = self._create_project_repo("task-merge-dirty")
+        self._add_task(repo, "merge-task", "SLEEP=0")
+
+        run.start_run(repo, "merge-task", RunPurpose.implement, "success")
+        self._wait_for_process_exit(repo, "merge-task")
+        server._monitor_cycle()
+
+        (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "has uncommitted changes"):
+            task.merge_task(repo, "merge-task")
+
+    def test_merge_task_requires_main_branch_in_project_worktree(self) -> None:
+        repo = self._create_project_repo("task-merge-branch")
+        self._add_task(repo, "merge-task", "SLEEP=0")
+
+        run.start_run(repo, "merge-task", RunPurpose.implement, "success")
+        self._wait_for_process_exit(repo, "merge-task")
+        server._monitor_cycle()
+
+        self._run(["git", "checkout", "-b", "feature"], cwd=repo)
+
+        with self.assertRaisesRegex(ValueError, "checkout 'main' and rerun merge"):
+            task.merge_task(repo, "merge-task")

@@ -33,6 +33,28 @@ def get_repo_root(path: Path) -> Path:
     return Path(out)
 
 
+def is_git_repo(path: Path) -> bool:
+    """Return True when ``path`` is inside a Git work tree."""
+    try:
+        return run_git(["rev-parse", "--is-inside-work-tree"], cwd=path) == "true"
+    except GitError:
+        return False
+
+
+def init_repo(path: Path, main_branch: str = "main") -> None:
+    """Initialize a Git repository."""
+    run_git(["init", "-b", main_branch], cwd=path)
+
+
+def has_commits(cwd: Path) -> bool:
+    """Return True when HEAD resolves to a commit."""
+    try:
+        run_git(["rev-parse", "--verify", "HEAD"], cwd=cwd)
+        return True
+    except GitError:
+        return False
+
+
 def get_main_branch(cwd: Path) -> str:
     """Detect the main branch name (main or master)."""
     try:
@@ -109,6 +131,41 @@ def ref_exists(repo_root: Path, ref: str) -> bool:
 def current_branch(cwd: Path) -> str:
     """Return the current branch name, or HEAD if detached."""
     return run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd)
+
+
+def changed_paths(cwd: Path) -> list[str]:
+    """Return changed paths from ``git status --porcelain``."""
+    out = run_git(["status", "--porcelain"], cwd=cwd)
+    paths: list[str] = []
+    for line in out.splitlines():
+        if len(line) < 4:
+            continue
+        path = line[3:]
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        paths.append(path)
+    return paths
+
+
+def is_worktree_clean(cwd: Path, ignored_paths: tuple[str, ...] = ()) -> bool:
+    """Return True when the work tree has no relevant changes."""
+    for path in changed_paths(cwd):
+        if any(path == ignored or path.startswith(f"{ignored}/") for ignored in ignored_paths):
+            continue
+        return False
+    return True
+
+
+def has_staged_changes(cwd: Path) -> bool:
+    """Return True when the index contains staged changes."""
+    result = subprocess.run(
+        ["git", "diff", "--cached", "--quiet"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 1
 
 
 def remove_worktree(repo_root: Path, worktree_path: Path, branch: str | None = None) -> None:

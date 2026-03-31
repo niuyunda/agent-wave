@@ -16,7 +16,7 @@ import frontmatter
 from agvv.core import config
 from agvv.core.acpx import acpx_invocation, acpx_opts, check_acpx_auth
 from agvv.core.models import RunMeta, RunPurpose, RunStatus, TaskStatus
-from agvv.core.session import ensure_session
+from agvv.core.session import cancel_session, ensure_session
 from agvv.core.task import next_run_number, update_task_status
 from agvv.utils import git, markdown
 
@@ -168,19 +168,10 @@ def stop_run(project_path: Path, task_name: str) -> None:
         raise ValueError(f"No active run for task '{task_name}'")
 
     agent = active.get("agent", "codex")
-    session_name = task_name
 
     # Try acpx cooperative cancel first, but do not trust it blindly. The run
     # is only stopped once the underlying process group is actually gone.
-    cancel_cmd = _build_acpx_cancel_command(agent, session_name)
-    try:
-        subprocess.run(
-            cancel_cmd,
-            timeout=10,
-            capture_output=True,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
+    cancel_session(project_path, task_name, agent)
 
     if not _terminate_active_run(active):
         raise ValueError(f"Failed to stop task '{task_name}': process is still alive")
@@ -280,11 +271,11 @@ def _finish_run(project_path: Path, task_name: str, status: RunStatus) -> RunSta
                 finish_reason = "missing_checkpoint"
                 error_message = "Run exited successfully but no valid checkpoint could be read"
             else:
-                if purpose in {RunPurpose.implement, RunPurpose.repair} and not post.metadata.get("checkpoint"):
+                if not post.metadata.get("checkpoint"):
                     effective_status = RunStatus.failed
                     finish_reason = "no_new_checkpoint"
                     error_message = "Run exited successfully but produced no new commit checkpoint"
-                if purpose == RunPurpose.review:
+                elif purpose == RunPurpose.review:
                     report_path = post.metadata.get("report_path")
                     if not _review_report_exists(worktree_path, report_path):
                         effective_status = RunStatus.failed
@@ -438,12 +429,6 @@ def _build_acpx_prompt_command(agent: str, session_name: str, prompt: str) -> li
     opts = acpx_opts()
 
     return [acpx_bin, *acpx_args, *opts, agent, "-s", session_name, prompt]
-
-
-def _build_acpx_cancel_command(agent: str, session_name: str) -> list[str]:
-    """Build an acpx cancel command for the session."""
-    acpx_bin, acpx_args = acpx_invocation()
-    return [acpx_bin, *acpx_args, agent, "-s", session_name, "cancel"]
 
 
 def _run_hook(project_path: Path, hook_name: str, worktree_path: Path) -> None:

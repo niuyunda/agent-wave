@@ -58,3 +58,18 @@ class SessionTest(unittest.TestCase):
         self.assertEqual(info["session"], "abc")
         self.assertEqual(info["status"], "dead")
         self.assertEqual(info["pid"], "123")
+
+    def test_cancel_session_uses_worktree_scoped_command(self) -> None:
+        with (
+            mock.patch("agvv.core.session.acpx_invocation", return_value=("acpx", [])),
+            mock.patch(
+                "agvv.core.session.subprocess.run",
+                return_value=subprocess.CompletedProcess(["acpx"], 0),
+            ) as run_mock,
+        ):
+            ok = session.cancel_session(Path("/repo"), "task-d", "codex")
+
+        self.assertTrue(ok)
+        cmd = run_mock.call_args.args[0]
+        self.assertEqual(cmd[:4], ["acpx", "--cwd", "/repo/worktrees/task-d", "codex"])
+        self.assertEqual(cmd[4:], ["-s", "task-d", "cancel"])

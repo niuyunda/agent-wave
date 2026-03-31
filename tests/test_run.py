@@ -208,6 +208,19 @@ class RunTest(AgvvRepoTestCase):
             TaskStatus.failed.value,
         )
 
+    def test_completed_test_run_without_new_commit_is_failed(self) -> None:
+        repo = self._create_project_repo("run-test-no-new-checkpoint")
+        self._add_task(repo, "test-no-new-cp-task", "SLEEP=0")
+
+        run.start_run(repo, "test-no-new-cp-task", RunPurpose.test, "no_commit")
+        self._wait_for_process_exit(repo, "test-no-new-cp-task")
+        server._monitor_cycle()
+
+        latest = self._latest_run(repo, "test-no-new-cp-task")
+        self.assertEqual(latest["status"], "failed")
+        self.assertEqual(latest["finish_reason"], "no_new_checkpoint")
+        self.assertIsNone(latest.get("checkpoint"))
+
     def test_review_run_supports_base_branch_and_writes_report(self) -> None:
         repo = self._create_project_repo("review-base-branch")
         self._add_task(repo, "review-task", "SLEEP=0")
@@ -222,7 +235,7 @@ class RunTest(AgvvRepoTestCase):
             repo,
             "review-task",
             RunPurpose.review,
-            "no_commit",
+            "success",
             base_branch="feature-branch",
         )
         self._wait_for_process_exit(repo, "review-task")
@@ -231,16 +244,15 @@ class RunTest(AgvvRepoTestCase):
         latest = self._latest_run(repo, "review-task")
         self.assertEqual(latest["status"], "completed")
         self.assertEqual(latest["base_branch"], "feature-branch")
-        self.assertIsNone(latest["checkpoint"])
+        feature_tip = git.run_git(["rev-parse", "feature-branch"], cwd=repo)
+        self.assertIsNotNone(latest["checkpoint"])
+        self.assertNotEqual(latest["checkpoint"], feature_tip)
         report_path = latest.get("report_path")
         self.assertIsNotNone(report_path)
 
         wt = repo / "worktrees" / "review-task"
         self.assertEqual(git.current_branch(wt), "HEAD")
-        self.assertEqual(
-            git.get_latest_commit(wt),
-            git.run_git(["rev-parse", "feature-branch"], cwd=repo),
-        )
+        self.assertEqual(git.get_latest_commit(wt), latest["checkpoint"])
         self.assertFalse(git.ref_exists(repo, "agvv/review-task"))
         self.assertTrue((wt / report_path).exists())
 

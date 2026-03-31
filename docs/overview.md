@@ -67,9 +67,8 @@ A checkpoint is a Git commit read from the task worktree. In agvv, a run is only
 
 Completion rules are purpose-aware:
 
-- `implement` / `repair`: must produce a new checkpoint commit
-- `review`: must write a repository report file
-- `test`: may complete without creating a new code commit
+- Every run purpose must produce a **new** checkpoint commit relative to the run’s recorded `base_commit`.
+- `review`: must also write a non-empty repository report file at `report_path`.
 
 ## Practical Boundaries
 

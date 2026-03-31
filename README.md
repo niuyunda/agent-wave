@@ -169,10 +169,8 @@ This keeps the system small while avoiding false states such as "stopped but sti
 
 ## Completion Semantics
 
-- `implement` and `repair` runs require a **new Git commit checkpoint** created during that run.
-- Exit code `0` without a new checkpoint is downgraded to `failed` (`finish_reason=no_new_checkpoint`).
-- `review` runs must write a report file in the repository (`reports/agvv/<task>/<run>-review.md`).
-- `review` and `test` runs may complete without creating a new code commit.
+- Every run purpose must create a **new Git commit checkpoint** during that run (vs. the recorded `base_commit`); exit code `0` without that is `failed` (`finish_reason=no_new_checkpoint`).
+- `review` runs must also write a non-empty report file (default `reports/agvv/<task>/<run>-review.md`).
 - `agvv checkpoint show` does not hide latest failures; if the latest run has no checkpoint, it reports that explicitly and includes the previous checkpoint when available.
 
 ## Python Command Compatibility
