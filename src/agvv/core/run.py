@@ -51,7 +51,7 @@ def start_run(
     branch = f"{config.BRANCH_PREFIX}{task_name}"
     run_num = next_run_number(project_path, task_name)
     worktree_path = project_path / "worktrees" / task_name
-    worktree_ref, detached_mode, new_branch_start = _resolve_worktree_ref(
+    worktree_ref, detached_mode, branch_start = _resolve_worktree_ref(
         project_path,
         task_name,
         purpose,
@@ -69,7 +69,7 @@ def start_run(
                 project_path,
                 worktree_path,
                 branch,
-                start_point=new_branch_start,
+                start_ref=branch_start,
             )
         worktree_created = True
         _run_hook(project_path, "after_create", worktree_path)
@@ -138,15 +138,18 @@ def start_run(
     runtime = _wait_for_runtime_file(runtime_file)
 
     # Record run
+    recorded_base = (
+        worktree_ref
+        if detached_mode
+        else (base_branch if base_branch else branch)
+    )
     meta = RunMeta(
         purpose=purpose,
         agent=agent,
         pid=runtime.get("agent_pid") or proc.pid,
         launcher_pid=proc.pid,
         pgid=runtime.get("pgid"),
-        base_branch=base_branch
-        if base_branch
-        else (worktree_ref if detached_mode else branch),
+        base_branch=recorded_base,
         base_commit=base_commit,
         report_path=report_path,
     )
@@ -357,12 +360,11 @@ def _resolve_worktree_ref(
     purpose: RunPurpose,
     base_branch: str | None,
 ) -> tuple[str, bool, str | None]:
-    """Resolve the ref to attach the worktree to.
+    """Resolve how the worktree is created.
 
-    Returns (ref, detached_mode, start_point_for_new_branch). When
-    ``start_point_for_new_branch`` is set and the task branch is created, the
-    new branch begins at that ref (``implement`` / ``repair`` with
-    ``--base-branch``).
+    Returns ``(ref, detached_mode, start_ref)``. When ``detached_mode`` is True,
+    ``ref`` is checked out detached. When False, ``ref`` is the task branch name
+    and ``start_ref`` (if set) is the commit-ish for a newly created branch.
     """
     task_branch = f"{config.BRANCH_PREFIX}{task_name}"
     if purpose in {RunPurpose.review, RunPurpose.test}:

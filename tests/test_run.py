@@ -244,8 +244,7 @@ class RunTest(AgvvRepoTestCase):
         self.assertFalse(git.ref_exists(repo, "agvv/review-task"))
         self.assertTrue((wt / report_path).exists())
 
-    def test_repair_run_with_base_branch_starts_from_that_ref(self) -> None:
-        """Regression: implement/--base-branch for repair must not use main HEAD only."""
+    def test_repair_run_respects_base_branch_checkpoint(self) -> None:
         repo = self._create_project_repo("repair-base-branch")
         self._add_task(repo, "impl-task", "SLEEP=0")
         self._add_task(repo, "repair-task", "SLEEP=0")
@@ -254,8 +253,8 @@ class RunTest(AgvvRepoTestCase):
         self._wait_for_process_exit(repo, "impl-task")
         server._monitor_cycle()
 
-        main_head = git.get_latest_commit(repo)
         impl_tip = git.run_git(["rev-parse", "agvv/impl-task"], cwd=repo)
+        main_head = git.run_git(["rev-parse", "main"], cwd=repo)
         self.assertNotEqual(impl_tip, main_head)
 
         run.start_run(
@@ -274,4 +273,8 @@ class RunTest(AgvvRepoTestCase):
         self.assertEqual(latest["base_commit"], impl_tip)
 
         repair_wt = repo / "worktrees" / "repair-task"
-        self.assertEqual(git.get_latest_commit(repair_wt), latest["checkpoint"])
+        self.assertTrue(git.ref_exists(repo, "agvv/repair-task"))
+        self.assertEqual(git.current_branch(repair_wt), "agvv/repair-task")
+        repair_tip = git.get_latest_commit(repair_wt)
+        self.assertNotEqual(repair_tip, impl_tip)
+        self.assertEqual(latest["checkpoint"], repair_tip)
