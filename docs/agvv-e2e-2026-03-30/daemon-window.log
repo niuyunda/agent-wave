@@ -1,7 +1,0 @@
-[2026-03-30T21:46:37] Daemon started
-[2026-03-30T21:46:37] Running reconciliation...
-[2026-03-30T21:47:54] Process 81250 for task add-checklist-renderer is dead, marking completed
-[2026-03-30T21:47:54] Process 81376 for task add-summary-builder is dead, marking completed
-[2026-03-30T21:52:21] Process 83272 for task review-feature-integration is dead, marking completed
-[2026-03-30T21:55:41] Process 84600 for task apply-review-fixes is dead, marking completed
-[2026-03-30T21:58:05] Daemon stopping
