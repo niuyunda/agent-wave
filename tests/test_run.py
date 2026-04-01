@@ -256,6 +256,36 @@ class RunTest(AgvvRepoTestCase):
         self.assertFalse(git.ref_exists(repo, "agvv/review-task"))
         self.assertTrue((wt / report_path).exists())
 
+    def test_implement_run_reattaches_task_branch_after_detached_review(self) -> None:
+        repo = self._create_project_repo("review-to-implement")
+        self._add_task(repo, "reattach-task", "SLEEP=0")
+
+        run.start_run(repo, "reattach-task", RunPurpose.implement, "success")
+        self._wait_for_process_exit(repo, "reattach-task")
+        server._monitor_cycle()
+
+        branch_tip_before = git.run_git(["rev-parse", "agvv/reattach-task"], cwd=repo)
+
+        run.start_run(repo, "reattach-task", RunPurpose.review, "success")
+        self._wait_for_process_exit(repo, "reattach-task")
+        server._monitor_cycle()
+
+        wt = repo / "worktrees" / "reattach-task"
+        self.assertEqual(git.current_branch(wt), "HEAD")
+
+        run.start_run(repo, "reattach-task", RunPurpose.implement, "success")
+        self._wait_for_process_exit(repo, "reattach-task")
+        server._monitor_cycle()
+
+        latest = self._latest_run(repo, "reattach-task")
+        branch_tip_after = git.run_git(["rev-parse", "agvv/reattach-task"], cwd=repo)
+
+        self.assertEqual(latest["status"], "completed")
+        self.assertEqual(git.current_branch(wt), "agvv/reattach-task")
+        self.assertEqual(branch_tip_after, latest["checkpoint"])
+        self.assertEqual(git.get_latest_commit(wt), latest["checkpoint"])
+        self.assertNotEqual(branch_tip_after, branch_tip_before)
+
     def test_repair_run_respects_base_branch_checkpoint(self) -> None:
         repo = self._create_project_repo("repair-base-branch")
         self._add_task(repo, "impl-task", "SLEEP=0")

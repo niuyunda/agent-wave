@@ -26,6 +26,11 @@ def projects_registry_path() -> Path:
 
 DAEMON_PID_FILE = AGVV_HOME / "daemon.pid"
 DAEMON_LOG_FILE = AGVV_HOME / "daemon.log"
+DAEMON_CONFIG_FILE = AGVV_HOME / "daemon.conf"
+
+# GitHub issues
+ISSUES_CACHE_FILE = AGVV_HOME / "issues.json"
+DEFAULT_AGVV_REPO = "niuyunda/agent-wave"
 
 # Defaults
 DEFAULT_RUN_TIMEOUT = 3600  # 1 hour
@@ -59,3 +64,11 @@ def task_file(project_path: Path, task_name: str) -> Path:
 
 def runs_dir(project_path: Path, task_name: str) -> Path:
     return task_dir(project_path, task_name) / RUNS_DIR
+
+
+def issues_cache_path() -> Path:
+    return ISSUES_CACHE_FILE
+
+
+def daemon_config_path() -> Path:
+    return DAEMON_CONFIG_FILE

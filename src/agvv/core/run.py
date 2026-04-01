@@ -80,6 +80,18 @@ def start_run(
             raise ValueError(
                 f"Failed to switch worktree '{task_name}' to ref '{worktree_ref}': {e}"
             ) from e
+    else:
+        try:
+            _checkout_task_branch(
+                project_path,
+                worktree_path,
+                branch,
+                branch_start,
+            )
+        except git.GitError as e:
+            raise ValueError(
+                f"Failed to switch worktree '{task_name}' to branch '{branch}': {e}"
+            ) from e
 
     # Run before_run hook — on failure, clean up freshly created worktree
     try:
@@ -371,6 +383,19 @@ def _resolve_worktree_ref(
             raise ValueError(f"Base branch/ref does not exist: {base_branch}")
         return task_branch, False, base_branch
     return task_branch, False, None
+
+
+def _checkout_task_branch(
+    project_path: Path,
+    worktree_path: Path,
+    branch: str,
+    start_ref: str | None,
+) -> None:
+    """Ensure branch-based runs execute on the task branch."""
+    attach_ref = start_ref
+    if attach_ref is None and not git.ref_exists(project_path, branch):
+        attach_ref = git.get_main_branch(project_path)
+    git.checkout_branch(worktree_path, branch, start_ref=attach_ref)
 
 
 def _default_report_path(task_name: str, run_num: int, purpose: RunPurpose) -> str | None:

@@ -147,6 +147,18 @@ class TaskTest(AgvvRepoTestCase):
         with self.assertRaises(git.GitError):
             git.run_git(["rev-parse", "--verify", "agvv/merge-task"], cwd=repo)
 
+    def test_add_task_rejects_name_that_already_exists_in_archive(self) -> None:
+        repo = self._create_project_repo("task-archive-name-reuse")
+        self._add_task(repo, "repeat-task", "SLEEP=0")
+
+        run.start_run(repo, "repeat-task", RunPurpose.implement, "success")
+        self._wait_for_process_exit(repo, "repeat-task")
+        server._monitor_cycle()
+        task.merge_task(repo, "repeat-task")
+
+        with self.assertRaisesRegex(ValueError, 'task "repeat-task" already exists'):
+            self._add_task(repo, "repeat-task")
+
     def test_merge_task_requires_clean_project_worktree(self) -> None:
         repo = self._create_project_repo("task-merge-dirty")
         self._add_task(repo, "merge-task", "SLEEP=0")

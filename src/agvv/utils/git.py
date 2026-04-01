@@ -119,6 +119,19 @@ def checkout_detached(cwd: Path, ref: str) -> None:
     run_git(["checkout", "--detach", ref], cwd=cwd)
 
 
+def checkout_branch(cwd: Path, branch: str, start_ref: str | None = None) -> None:
+    """Attach the current worktree to ``branch``, creating it when needed."""
+    if ref_exists(cwd, branch):
+        run_git(["checkout", branch], cwd=cwd)
+        return
+
+    args = ["checkout", "-b", branch]
+    if start_ref:
+        run_git(["rev-parse", "--verify", start_ref], cwd=cwd)
+        args.append(start_ref)
+    run_git(args, cwd=cwd)
+
+
 def ref_exists(repo_root: Path, ref: str) -> bool:
     """Return True if a ref can be resolved."""
     try:

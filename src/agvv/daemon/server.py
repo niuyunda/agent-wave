@@ -90,9 +90,58 @@ def get_daemon_status() -> dict:
         return {"running": False, "pid": None}
 
 
+def _load_daemon_config() -> dict:
+    """Load daemon config from ``~/.agvv/daemon.conf``."""
+    cfg_path = config.daemon_config_path()
+    if not cfg_path.exists():
+        return {}
+    try:
+        return json.loads(cfg_path.read_text())
+    except (ValueError, OSError):
+        return {}
+
+
+def _issues_sync(repo: str) -> int:
+    """Fetch open GitHub issues and cache to ``~/.agvv/issues.json``. Returns count of issues."""
+    try:
+        result = subprocess.run(
+            [
+                "gh", "issue", "list",
+                "--repo", repo,
+                "--state", "open",
+                "--json", "number,title,url,createdAt,labels",
+                "--limit", "100",
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            _log(f"issues sync: gh failed: {result.stderr.strip()}")
+            return 0
+        issues = json.loads(result.stdout)
+        config.issues_cache_path().write_text(json.dumps(issues, indent=2))
+        count = len(issues)
+        _log(f"issues sync: cached {count} open issues from {repo}")
+        return count
+    except subprocess.TimeoutExpired:
+        _log("issues sync: gh timed out")
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as e:
+        _log(f"issues sync error: {e}")
+    return 0
+
+
 def _run_loop() -> None:
-    """Main daemon loop: monitor runs, detect timeouts/stalls."""
+    """Main daemon loop: monitor runs, detect timeouts/stalls, and periodically sync issues."""
     signal.signal(signal.SIGTERM, _handle_sigterm)
+
+    daemon_cfg = _load_daemon_config()
+    sync_interval: int | None = daemon_cfg.get("sync_interval")
+    last_sync_at = time.monotonic()
+    agvv_repo = config.DEFAULT_AGVV_REPO
+
+    if sync_interval:
+        _log(f"Issues sync enabled (every {sync_interval} min)")
+        _issues_sync(agvv_repo)
+        last_sync_at = time.monotonic()
 
     while True:
         try:
@@ -101,6 +150,14 @@ def _run_loop() -> None:
             break
         except Exception as e:
             _log(f"Monitor error: {e}")
+
+        # Check if it's time to sync issues
+        if sync_interval:
+            elapsed = (time.monotonic() - last_sync_at) / 60.0
+            if elapsed >= sync_interval:
+                _issues_sync(agvv_repo)
+                last_sync_at = time.monotonic()
+
         time.sleep(10)
 
 

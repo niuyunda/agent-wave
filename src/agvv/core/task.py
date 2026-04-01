@@ -71,7 +71,7 @@ def add_task(project_path: Path, task_file_path: Path) -> str:
     name = merged["name"]
 
     td = config.task_dir(project_path, name)
-    if td.exists():
+    if td.exists() or _task_exists_in_archive(project_path, name):
         raise ValueError(
             f'task "{name}" already exists in project {project_path.name}'
         )
@@ -110,6 +110,23 @@ def count_archived_tasks(project_path: Path) -> int:
     if not ad.exists():
         return 0
     return sum(1 for item in ad.iterdir() if item.is_dir())
+
+
+def _task_exists_in_archive(project_path: Path, task_name: str) -> bool:
+    """Return True when the archive already contains ``task_name``."""
+    ad = config.archive_dir(project_path)
+    if not ad.exists():
+        return False
+
+    for item in ad.iterdir():
+        if not item.is_dir():
+            continue
+        tf = item / config.TASK_FILE
+        if not tf.exists():
+            continue
+        if markdown.read_frontmatter(tf).get("name") == task_name:
+            return True
+    return False
 
 
 def show_task(project_path: Path, task_name: str) -> dict:
