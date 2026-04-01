@@ -143,8 +143,9 @@ agvv checkpoint show <task-name>
 
 ```bash
 --project <path>    # Explicit project path for commands that need it
---json              # Structured output
 ```
+
+Output format: agvv command output is JSON by default (agent-friendly and machine-readable).
 
 ## Workflow
 

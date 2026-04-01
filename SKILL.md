@@ -77,7 +77,7 @@ Execution rules:
 ### Task
 
 - `agvv task add --project <repo_path> --file <task_md>`
-- `agvv task list [--project <repo_path>] [--json]`
+- `agvv task list [--project <repo_path>]`
 - `agvv task show <task_name> [--project <repo_path>]`
 - `agvv task merge <task_name> [--project <repo_path>]`
 
@@ -85,24 +85,24 @@ Execution rules:
 
 - `agvv run start <task_name> --purpose <implement|review|test|repair> --agent <agent> [--base-branch <ref>] [--project <repo_path>]`
 - `agvv run stop <task_name> [--project <repo_path>]`
-- `agvv run status [--project <repo_path>] [--json]`
+- `agvv run status [--project <repo_path>]`
 
 ### Session
 
 - `agvv session ensure <task_name> --agent <agent> [--project <repo_path>]`
 - `agvv session status <task_name> --agent <agent> [--project <repo_path>]`
 - `agvv session close <task_name> --agent <agent> [--project <repo_path>]`
-- `agvv session list --agent <agent> [--project <repo_path>]`
+- `agvv session list --agent <agent>`
 
 ### Checkpoint and daemon
 
-- `agvv checkpoint show <task_name> [--project <repo_path>] [--json]`
+- `agvv checkpoint show <task_name> [--project <repo_path>]`
 - `agvv daemon start | status | stop`
 
 Common high-frequency parameters:
 
 - `--project`: avoid ambiguous project resolution.
-- `--json`: machine-readable output for agent parsing.
+- output is JSON by default; no output-format flag is needed.
 - `--purpose`: required on `run start`; drives completion gate.
 - `--agent`: required on `run start/session`.
 - `--base-branch`: strongly recommended for `review/test`.
@@ -116,7 +116,7 @@ agvv task add --project /repo/app --file /tmp/fix-login.md
 
 # 2) Implement
 agvv run start fix-login --purpose implement --agent codex --project /repo/app
-agvv run status --project /repo/app --json
+agvv run status --project /repo/app
 agvv checkpoint show fix-login --project /repo/app
 
 # 3) Review and test against implementation branch
