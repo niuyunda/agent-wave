@@ -7,7 +7,7 @@ from pathlib import Path
 import typer
 
 from agvv.core import project, task
-from agvv.utils.format import print_error, print_json, print_success, print_table
+from agvv.utils.format import print_error, print_json, print_success
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -31,43 +31,21 @@ def add(
     """Register a repository and initialize `.agvv/` metadata."""
     try:
         entry = project.add_project(Path(path))
-        print_success(f"Project registered: {entry.path}")
+        print_success("Project registered", path=entry.path)
     except ValueError as e:
         print_error(str(e))
         raise typer.Exit(1)
 
 
 @app.command("list")
-def list_cmd(
-    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),
-) -> None:
+def list_cmd() -> None:
     """List registered repositories with task/run summary counts."""
     entries = project.list_projects()
-    if not entries:
-        print_error("No projects registered")
-        raise typer.Exit(1)
-
-    if as_json:
-        data = []
-        for e in entries:
-            counts = _project_counts(Path(e.path))
-            data.append({"path": e.path, **counts})
-        print_json(data)
-        return
-
-    columns = ["PROJECT", "TASKS", "RUNNING", "PENDING", "DONE", "FAILED"]
-    rows = []
+    data = []
     for e in entries:
         c = _project_counts(Path(e.path))
-        rows.append([
-            e.path,
-            str(c["tasks"]),
-            str(c["running"]),
-            str(c["pending"]),
-            str(c["done"]),
-            str(c["failed"]),
-        ])
-    print_table(columns, rows)
+        data.append({"path": e.path, **c})
+    print_json(data)
 
 
 @app.command()
@@ -77,7 +55,7 @@ def remove(
     """Remove project from registry only (keeps repository files)."""
     try:
         project.remove_project(Path(path))
-        print_success(f"Project removed: {path}")
+        print_success("Project removed", path=str(Path(path).resolve()))
     except ValueError as e:
         print_error(str(e))
         raise typer.Exit(1)

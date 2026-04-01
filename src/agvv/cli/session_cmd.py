@@ -8,7 +8,7 @@ import typer
 
 from agvv.core import project as proj_mod
 from agvv.core import session
-from agvv.utils.format import print_error, print_info, print_json, print_success, print_table
+from agvv.utils.format import print_error, print_json, print_success
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -22,8 +22,14 @@ def ensure(
     """Create or reuse a persistent session for a task."""
     try:
         pp = proj_mod.resolve_project(project, task_name)
-        session.ensure_session(pp, task_name, agent)
-        print_success(f"Session ensured: {task_name} (agent={agent})")
+        created_or_found = session.ensure_session(pp, task_name, agent)
+        print_success(
+            "Session ensured",
+            project=str(pp),
+            task=task_name,
+            agent=agent,
+            ensured=created_or_found,
+        )
     except (ValueError, Exception) as e:
         print_error(str(e))
         raise typer.Exit(1)
@@ -39,7 +45,7 @@ def close(
     try:
         pp = proj_mod.resolve_project(project, task_name)
         session.close_session(pp, task_name, agent)
-        print_success(f"Session closed: {task_name}")
+        print_success("Session closed", project=str(pp), task=task_name, agent=agent)
     except (ValueError, Exception) as e:
         print_error(str(e))
         raise typer.Exit(1)
@@ -50,7 +56,6 @@ def status_cmd(
     task_name: str = typer.Argument(..., help="Task to inspect session for"),
     agent: str = typer.Option(..., "--agent", help="Agent type"),
     project: str = typer.Option(None, "--project", help="Target project path (optional if task name is unique)"),
-    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),
 ) -> None:
     """Show runtime status of a task session."""
     try:
@@ -61,42 +66,18 @@ def status_cmd(
 
     info = session.get_session_status(pp, task_name, agent)
     if not info:
-        print_info(f"No active session for {task_name}")
+        print_json({"task": task_name, "agent": agent, "project": str(pp), "active": False})
         return
 
-    if as_json:
-        print_json(info)
-        return
-
-    print_info(f"Session: {task_name}")
-    for key in ("acpxRecordId", "acpSessionId", "pid", "agentStartedAt", "closed", "lastUsedAt"):
-        if key in info:
-            print_info(f"  {key}: {info[key]}")
+    payload = dict(info)
+    payload.update({"task": task_name, "agent": agent, "project": str(pp), "active": True})
+    print_json(payload)
 
 
 @app.command("list")
 def list_cmd(
     agent: str = typer.Option(..., "--agent", help="Agent type"),
-    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),
 ) -> None:
     """List all known sessions for an agent type."""
     sessions = session.list_sessions(agent)
-
-    if as_json:
-        print_json(sessions)
-        return
-
-    if not sessions:
-        print_info("No sessions found")
-        return
-
-    columns = ["NAME", "CWD", "CLOSED", "LAST USED"]
-    rows = []
-    for s in sessions:
-        rows.append([
-            s.get("name", "-"),
-            s.get("cwd", "-"),
-            str(s.get("closed", False)),
-            s.get("lastUsedAt", "-"),
-        ])
-    print_table(columns, rows)
+    print_json(sessions)

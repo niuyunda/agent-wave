@@ -5,7 +5,7 @@ This guide is optimized for agents: each command tells you when to use it, which
 ## Global patterns
 
 - `--project <path>`: force target repository; use this to avoid ambiguous task lookup.
-- `--json`: machine-readable output for planning and automation.
+- Default output is JSON for agent-friendly parsing.
 - Task names come from task front matter `name:`.
 
 ## daemon
@@ -28,14 +28,13 @@ Commands:
 
 ```bash
 agvv project add <repo_path>
-agvv project list [--json]
+agvv project list
 agvv project remove <repo_path>
 ```
 
 Parameters:
 
 - `<repo_path>`: repository directory.
-- `--json`: return summary counts as structured data.
 
 ## task
 
@@ -45,8 +44,8 @@ Commands:
 
 ```bash
 agvv task add --project <repo_path> --file <task_md>
-agvv task list [--project <repo_path>] [--json]
-agvv task show <task_name> [--project <repo_path>] [--json]
+agvv task list [--project <repo_path>]
+agvv task show <task_name> [--project <repo_path>]
 agvv task merge <task_name> [--project <repo_path>]
 ```
 
@@ -63,7 +62,7 @@ Commands:
 
 ```bash
 agvv run start <task_name> --purpose <implement|review|test|repair> --agent <agent> [--base-branch <ref>] [--project <repo_path>]
-agvv run status [--project <repo_path>] [--json]
+agvv run status [--project <repo_path>]
 agvv run stop <task_name> [--project <repo_path>]
 ```
 
@@ -87,9 +86,9 @@ Commands:
 
 ```bash
 agvv session ensure <task_name> --agent <agent> [--project <repo_path>]
-agvv session status <task_name> --agent <agent> [--project <repo_path>] [--json]
+agvv session status <task_name> --agent <agent> [--project <repo_path>]
 agvv session close <task_name> --agent <agent> [--project <repo_path>]
-agvv session list --agent <agent> [--json]
+agvv session list --agent <agent>
 ```
 
 ## checkpoint
@@ -99,7 +98,7 @@ When to use: read the latest durable output for a task.
 Command:
 
 ```bash
-agvv checkpoint show <task_name> [--project <repo_path>] [--json]
+agvv checkpoint show <task_name> [--project <repo_path>]
 ```
 
 If latest run has no checkpoint, output includes latest-failure context and may include previous checkpoint.

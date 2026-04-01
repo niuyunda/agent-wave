@@ -8,7 +8,7 @@ import typer
 
 from agvv.core import config
 from agvv.daemon.server import get_daemon_status, start_daemon, stop_daemon
-from agvv.utils.format import print_error, print_info, print_success
+from agvv.utils.format import print_error, print_json, print_success
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -35,7 +35,7 @@ def start(
         cfg_path.write_text(json.dumps(cfg))
     try:
         pid = start_daemon()
-        print_success(f"Daemon started (PID {pid})")
+        print_success("Daemon started", pid=pid)
     except Exception as e:
         print_error(str(e))
         raise typer.Exit(1)
@@ -56,7 +56,4 @@ def stop() -> None:
 def status() -> None:
     """Show whether daemon is running and its PID."""
     info = get_daemon_status()
-    if info["running"]:
-        print_info(f"Daemon running (PID {info['pid']})")
-    else:
-        print_info("Daemon not running")
+    print_json(info)

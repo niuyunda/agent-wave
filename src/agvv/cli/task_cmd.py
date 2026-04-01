@@ -8,7 +8,7 @@ import typer
 
 from agvv.core import project as proj_mod
 from agvv.core import task
-from agvv.utils.format import print_error, print_info, print_json, print_success, print_table
+from agvv.utils.format import print_error, print_json, print_success
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -29,8 +29,9 @@ def add(
     Example layout (optional): see ``docs/task-template.md`` in the agvv repo.
     """
     try:
-        name = task.add_task(Path(project).resolve(), Path(file))
-        print_success(f"Task created: {name}")
+        project_path = Path(project).resolve()
+        name = task.add_task(project_path, Path(file))
+        print_success("Task created", project=str(project_path), task=name)
     except ValueError as e:
         print_error(str(e))
         raise typer.Exit(1)
@@ -39,7 +40,6 @@ def add(
 @app.command("list")
 def list_cmd(
     project: str = typer.Option(None, "--project", help="Filter to one project path (omit for all registered projects)"),
-    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),
 ) -> None:
     """List tasks with latest run snapshot."""
     if project:
@@ -47,43 +47,19 @@ def list_cmd(
     else:
         projects = [Path(e.path) for e in proj_mod.list_projects()]
 
-    if not projects:
-        print_error("No projects registered")
-        raise typer.Exit(1)
-
     all_tasks = []
     for pp in projects:
         for t in task.list_tasks(pp):
             t["project"] = str(pp)
             all_tasks.append(t)
 
-    if as_json:
-        print_json(all_tasks)
-        return
-
-    if not all_tasks:
-        print_info("No tasks found")
-        return
-
-    columns = ["TASK", "STATUS", "RUN#", "PURPOSE", "AGENT", "LAST EVENT"]
-    rows = []
-    for t in all_tasks:
-        rows.append([
-            t.get("name", "?"),
-            t.get("status", "-"),
-            str(t.get("run_number", 0) or "-"),
-            t.get("last_purpose") or "-",
-            t.get("last_agent") or "-",
-            t.get("last_event") or "-",
-        ])
-    print_table(columns, rows)
+    print_json(all_tasks)
 
 
 @app.command()
 def show(
     task_name: str = typer.Argument(..., help="Task name from task front matter"),
     project: str = typer.Option(None, "--project", help="Target project path (optional if task name is unique)"),
-    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON output"),
 ) -> None:
     """Show full task state, body, and run history."""
     try:
@@ -92,34 +68,7 @@ def show(
     except ValueError as e:
         print_error(str(e))
         raise typer.Exit(1)
-
-    if as_json:
-        print_json(info)
-        return
-
-    print_info(f"Task: {info['name']}")
-    print_info(f"Project: {info.get('project', '-')}")
-    print_info(f"Status: {info.get('status', '-')}")
-    print_info(f"Branch: {info.get('branch', '-')}")
-    print_info(f"Created: {info.get('created_at', '-')}")
-    print_info("")
-
-    runs = info.get("runs", [])
-    if runs:
-        print_info("Run History:")
-        for i, r in enumerate(runs, 1):
-            status = r.get("status", "?")
-            purpose = r.get("purpose", "?")
-            agent = r.get("agent", "?")
-            print_info(f"  #{i}  {purpose:<12} {agent:<8} {status}")
-    else:
-        print_info("No runs yet")
-
-    # Show body
-    body = info.get("body", "").strip()
-    if body:
-        print_info("")
-        print_info(body)
+    print_json(info)
 
 
 @app.command()
@@ -131,7 +80,7 @@ def merge(
     try:
         pp = proj_mod.resolve_project(project, task_name)
         commit = task.merge_task(pp, task_name)
-        print_success(f"Task '{task_name}' merged ({commit[:7]})")
+        print_success("Task merged", project=str(pp), task=task_name, commit=commit)
     except ValueError as e:
         print_error(str(e))
         raise typer.Exit(1)
