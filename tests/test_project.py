@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -10,6 +11,17 @@ from tests._support import AgvvRepoTestCase
 
 
 class ProjectTest(AgvvRepoTestCase):
+    def test_ensure_project_is_idempotent(self) -> None:
+        repo = self._create_project_repo("ensure-project", register=False)
+
+        first = project.ensure_project(repo)
+        second = project.ensure_project(repo)
+
+        self.assertEqual(Path(first.path), repo.resolve())
+        self.assertEqual(Path(second.path), repo.resolve())
+        self.assertEqual([e.path for e in project.list_projects()], [str(repo.resolve())])
+        self.assertTrue((repo / ".agvv" / config.CONFIG_FILE).exists())
+
     def test_add_project_initializes_registry_and_default_files(self) -> None:
         repo = self.tmp_path / "project-init"
         repo.mkdir()
@@ -19,8 +31,17 @@ class ProjectTest(AgvvRepoTestCase):
         self.assertEqual(Path(entry.path), repo.resolve())
         self.assertEqual([e.path for e in project.list_projects()], [str(repo.resolve())])
         self.assertTrue((repo / ".agvv" / config.CONFIG_FILE).exists())
+        for hook_name in ("after_create", "before_run", "after_run"):
+            self.assertTrue((repo / ".agvv" / config.HOOKS_DIR / f"{hook_name}.sh").exists())
         self.assertTrue(config.tasks_dir(repo).is_dir())
         self.assertTrue(config.archive_dir(repo).is_dir())
+
+        raw_cfg = json.loads((repo / ".agvv" / config.CONFIG_FILE).read_text(encoding="utf-8"))
+        self.assertEqual(raw_cfg.get("agvv_repo"), "https://github.com/niuyunda/agent-wave")
+        self.assertEqual(
+            set(raw_cfg.get("hooks", {}).keys()),
+            {"after_create", "before_run", "after_run"},
+        )
 
     def test_add_project_rejects_missing_directory_and_duplicates(self) -> None:
         missing = self.tmp_path / "missing-project"

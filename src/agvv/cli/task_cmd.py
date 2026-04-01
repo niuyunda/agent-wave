@@ -10,7 +10,33 @@ from agvv.core import project as proj_mod
 from agvv.core import task
 from agvv.utils.format import print_error, print_json, print_success
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(no_args_is_help=False, invoke_without_command=True)
+
+
+def _list_tasks(project: str | None) -> None:
+    """List tasks with latest run snapshot."""
+    if project:
+        projects = [Path(project).resolve()]
+    else:
+        projects = [Path(e.path) for e in proj_mod.list_projects()]
+
+    all_tasks = []
+    for pp in projects:
+        for t in task.list_tasks(pp):
+            t["project"] = str(pp)
+            all_tasks.append(t)
+
+    print_json(all_tasks)
+
+
+@app.callback()
+def tasks(
+    ctx: typer.Context,
+    project: str = typer.Option(None, "--project", help="Filter to one project path (omit for all registered projects)"),
+) -> None:
+    """Create, inspect, and merge tasks."""
+    if ctx.invoked_subcommand is None:
+        _list_tasks(project)
 
 
 @app.command()
@@ -30,30 +56,12 @@ def add(
     """
     try:
         project_path = Path(project).resolve()
+        proj_mod.ensure_project(project_path)
         name = task.add_task(project_path, Path(file))
         print_success("Task created", project=str(project_path), task=name)
     except ValueError as e:
         print_error(str(e))
         raise typer.Exit(1)
-
-
-@app.command("list")
-def list_cmd(
-    project: str = typer.Option(None, "--project", help="Filter to one project path (omit for all registered projects)"),
-) -> None:
-    """List tasks with latest run snapshot."""
-    if project:
-        projects = [Path(project).resolve()]
-    else:
-        projects = [Path(e.path) for e in proj_mod.list_projects()]
-
-    all_tasks = []
-    for pp in projects:
-        for t in task.list_tasks(pp):
-            t["project"] = str(pp)
-            all_tasks.append(t)
-
-    print_json(all_tasks)
 
 
 @app.command()

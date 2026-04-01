@@ -31,15 +31,7 @@ uv pip install -e .
 
 ## Quick Start
 
-### 1. Register a project
-
-```bash
-agvv project add ~/projects/my-app
-```
-
-This initializes a `.agvv/` directory inside the repository and adds the project to the global registry in `~/.agvv/projects.json` (JSON only; `projects.md` is not read).
-
-### 2. Add a task
+### 1. Add a task
 
 Prepare a `task.md`:
 
@@ -57,86 +49,87 @@ Fix the white screen issue on the login page in Safari.
 ```
 
 ```bash
-agvv task add --project ~/projects/my-app --file task.md
+agvv tasks add --project ~/projects/my-app --file task.md
 ```
 
-### 3. Start a run
+`tasks add` automatically initializes `.agvv/` metadata and registers the project in `~/.agvv/projects.json` when needed.
+
+### 2. Start a run
 
 ```bash
-agvv run start fix-login-bug --purpose=implement --agent=codex
+agvv runs start fix-login-bug --purpose=implement --agent=codex
 # Review against an existing branch/ref
-agvv run start review-login --purpose=review --agent=codex --base-branch=agvv/fix-login-bug
+agvv runs start review-login --purpose=review --agent=codex --base-branch=agvv/fix-login-bug
 ```
 
 agvv creates or reuses the task worktree, runs lifecycle hooks, launches the coding agent, records runtime facts, and marks the task as `running`.
 
-### 4. Check status
+### 3. Check status
 
 ```bash
 # Global overview
-agvv project list
+agvv projects
 
 # Task list for one project
-agvv task list --project ~/projects/my-app
+agvv tasks --project ~/projects/my-app
 
 # Full task details with run history
-agvv task show fix-login-bug
+agvv tasks show fix-login-bug
 
 # Checkpoint information for the latest run
-agvv checkpoint show fix-login-bug
+agvv checkpoints show fix-login-bug
 ```
 
-### 5. Merge
+### 4. Merge
 
 ```bash
-agvv task merge fix-login-bug
+agvv tasks merge fix-login-bug
 ```
 
 On success, agvv merges the task branch into the main branch, removes the worktree, and archives the task. On conflict, agvv aborts the merge, marks the task as `blocked`, and reports the conflicting files.
 
 ## CLI Reference
 
-### `daemon`
+### `daemons`
 
 ```bash
-agvv daemon start     # Start background monitoring
-agvv daemon stop      # Stop the daemon
-agvv daemon status    # Show daemon status
+agvv daemons start     # Start background monitoring
+agvv daemons stop      # Stop the daemon
+agvv daemons status    # Show daemon status
 ```
 
-### `project`
+### `projects`
 
 ```bash
-agvv project add <path>      # Register a repository and initialize .agvv/
-agvv project list            # Show registered projects with summary counts
-agvv project remove <path>   # Remove from the registry only
+agvv projects                 # Show registered projects with summary counts
+agvv projects remove <path>   # Remove from the registry only
 ```
 
-### `task`
+### `tasks`
 
 ```bash
-agvv task add --project <path> --file <task.md>
-agvv task list [--project <path>]
-agvv task show <task-name>
-agvv task merge <task-name>
+agvv tasks add --project <path> --file <task.md>
+agvv tasks [--project <path>]
+agvv tasks show <task-name>
+agvv tasks merge <task-name>
 ```
 
-### `run`
+### `runs`
 
 ```bash
-agvv run start <task-name> --purpose=<purpose> --agent=<agent>
-agvv run stop <task-name>
-agvv run status [--project <path>]
+agvv runs start <task-name> --purpose=<purpose> --agent=<agent>
+agvv runs stop <task-name>
+agvv runs status [--project <path>]
 ```
 
 `purpose`: `implement` | `test` | `review` | `repair`
 
 `--base-branch` is recommended for `review`/`test` runs so they execute against an existing branch/ref instead of creating a new task branch.
 
-### `checkpoint`
+### `checkpoints`
 
 ```bash
-agvv checkpoint show <task-name>
+agvv checkpoints show <task-name>
 ```
 
 ### Global options
@@ -150,9 +143,9 @@ Output format: agvv command output is JSON by default (agent-friendly and machin
 ## Workflow
 
 ```text
-task add -> run(implement) -> checkpoint -> run(review/test)
+tasks add -> runs(implement) -> checkpoints -> runs(review/test)
     -> pass -> merge
-    -> fail -> run(repair) -> checkpoint -> ...
+    -> fail -> runs(repair) -> checkpoints -> ...
 ```
 
 Multiple tasks can run in parallel, each in its own worktree. agvv does not decide concurrency policy; it only exposes the current state so the orchestrator can decide.
@@ -164,7 +157,7 @@ agvv keeps monitoring simple but reliable:
 - Each run is launched through a tiny Python runner.
 - The runner records runtime facts in a sidecar JSON file next to the run record.
 - The daemon monitors the real coding-agent child process, not just a transient launcher process.
-- `agvv run stop` only marks a run as `stopped` after the underlying process group is actually gone.
+- `agvv runs stop` only marks a run as `stopped` after the underlying process group is actually gone.
 
 This keeps the system small while avoiding false states such as "stopped but still running" or "launcher died but child is still alive".
 
@@ -172,7 +165,7 @@ This keeps the system small while avoiding false states such as "stopped but sti
 
 - Every run purpose must create a **new Git commit checkpoint** during that run (vs. the recorded `base_commit`); exit code `0` without that is `failed` (`finish_reason=no_new_checkpoint`).
 - `review` runs must also write a non-empty report file (default `reports/agvv/<task>/<run>-review.md`).
-- `agvv checkpoint show` does not hide latest failures; if the latest run has no checkpoint, it reports that explicitly and includes the previous checkpoint when available.
+- `agvv checkpoints show` does not hide latest failures; if the latest run has no checkpoint, it reports that explicitly and includes the previous checkpoint when available.
 
 ## Python Command Compatibility
 
@@ -198,7 +191,11 @@ src/agvv/
 ```text
 <project-repo>/
 └── .agvv/
-    ├── config.md
+    ├── config.json
+    ├── hooks/
+    │   ├── after_create.sh
+    │   ├── before_run.sh
+    │   └── after_run.sh
     └── tasks/
         ├── fix-login-bug/
         │   ├── task.md

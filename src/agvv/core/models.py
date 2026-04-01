@@ -37,8 +37,8 @@ class TaskMeta(BaseModel):
     """Canonical front-matter fields agvv reads/writes in task.md.
 
     On disk, ``task.md`` may include additional YAML keys; those are preserved
-    when the task is created via ``task add`` and remain visible to
-    ``task list`` / ``task show``.
+    when the task is created via ``tasks add`` and remain visible to
+    ``tasks`` / ``tasks show``.
     """
 
     name: str

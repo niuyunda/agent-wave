@@ -209,6 +209,22 @@ def get_active_run(project_path: Path, task_name: str) -> dict | None:
 
     monitor_pid = latest.get("agent_pid") or latest.get("pid")
     if monitor_pid and not _process_alive(monitor_pid):
+        launcher_pid = latest.get("launcher_pid")
+        if latest.get("exit_code") is None and isinstance(launcher_pid, int) and _process_alive(launcher_pid):
+            runtime_file = _runtime_file_for_run_file(latest["_file"])
+            for _ in range(40):
+                refreshed = _read_runtime_info(runtime_file)
+                if refreshed:
+                    latest.update(refreshed)
+                runtime_status = latest.get("status")
+                if runtime_status in _TERMINAL_RUNTIME_STATUSES or latest.get("exit_code") is not None:
+                    _finish_run(project_path, task_name, _status_from_runtime(latest))
+                    return None
+                if not _process_alive(launcher_pid):
+                    break
+                time.sleep(0.05)
+            if isinstance(launcher_pid, int) and _process_alive(launcher_pid):
+                return latest
         _finish_run(project_path, task_name, _status_from_runtime(latest))
         return None
     return latest
@@ -462,12 +478,18 @@ def _run_hook(project_path: Path, hook_name: str, worktree_path: Path) -> None:
     if not config_path.exists():
         return
 
-    post = frontmatter.load(str(config_path))
-    hooks = post.metadata.get("hooks", {})
+    try:
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise ValueError(f"Invalid project config JSON ({config_path}): {e}") from e
+
+    hooks = cfg.get("hooks", {}) if isinstance(cfg, dict) else {}
     if not hooks or hook_name not in hooks:
         return
 
     cmd = hooks[hook_name]
+    if not isinstance(cmd, str) or not cmd.strip():
+        return
     try:
         subprocess.run(
             cmd,

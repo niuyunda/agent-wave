@@ -9,7 +9,7 @@ import typer
 from agvv.core import project, task
 from agvv.utils.format import print_error, print_json, print_success
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(no_args_is_help=False, invoke_without_command=True)
 
 
 def _project_counts(pp: Path) -> dict:
@@ -24,21 +24,7 @@ def _project_counts(pp: Path) -> dict:
     }
 
 
-@app.command()
-def add(
-    path: str = typer.Argument(..., help="Repository directory to register"),
-) -> None:
-    """Register a repository and initialize `.agvv/` metadata."""
-    try:
-        entry = project.add_project(Path(path))
-        print_success("Project registered", path=entry.path)
-    except ValueError as e:
-        print_error(str(e))
-        raise typer.Exit(1)
-
-
-@app.command("list")
-def list_cmd() -> None:
+def _list_projects() -> None:
     """List registered repositories with task/run summary counts."""
     entries = project.list_projects()
     data = []
@@ -46,6 +32,13 @@ def list_cmd() -> None:
         c = _project_counts(Path(e.path))
         data.append({"path": e.path, **c})
     print_json(data)
+
+
+@app.callback()
+def projects(ctx: typer.Context) -> None:
+    """View and manage registered project entries."""
+    if ctx.invoked_subcommand is None:
+        _list_projects()
 
 
 @app.command()

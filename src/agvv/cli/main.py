@@ -18,12 +18,12 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-app.add_typer(daemon_app, name="daemon", help="Control the background monitor daemon.")
-app.add_typer(project_app, name="project", help="Register repositories and view project-level summaries.")
-app.add_typer(task_app, name="task", help="Create, inspect, and merge tasks.")
-app.add_typer(run_app, name="run", help="Start, stop, and inspect task runs.")
-app.add_typer(session_app, name="session", help="Manage persistent acpx sessions per task.")
-app.add_typer(checkpoint_app, name="checkpoint", help="Inspect latest durable checkpoint context.")
+app.add_typer(daemon_app, name="daemons", help="Control the background monitor daemon.")
+app.add_typer(project_app, name="projects", help="View and manage registered project entries.")
+app.add_typer(task_app, name="tasks", help="Create, inspect, and merge tasks.")
+app.add_typer(run_app, name="runs", help="Start, stop, and inspect task runs.")
+app.add_typer(session_app, name="sessions", help="Manage persistent acpx sessions per task.")
+app.add_typer(checkpoint_app, name="checkpoints", help="Inspect latest durable checkpoint context.")
 app.add_typer(feedback_app, name="feedback", help="File issues and sync agvv GitHub issues.")
 
 

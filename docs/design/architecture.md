@@ -8,9 +8,9 @@ agvv has two parts:
 - a background daemon that reconciles and monitors active runs
 
 ```bash
-agvv daemon start
-agvv daemon stop
-agvv daemon status
+agvv daemons start
+agvv daemons stop
+agvv daemons status
 ```
 
 The daemon's in-memory view is only a cache. The source of truth is always the filesystem inside each repository's `.agvv/` directory. After a restart, the daemon rebuilds state from files.
@@ -23,7 +23,11 @@ All project-level state lives inside the repository:
 my-project/
 ├── src/
 ├── .agvv/
-│   ├── config.md
+│   ├── config.json
+│   ├── hooks/
+│   │   ├── after_create.sh
+│   │   ├── before_run.sh
+│   │   └── after_run.sh
 │   └── tasks/
 │       ├── fix-login-bug/
 │       │   ├── task.md
@@ -130,10 +134,10 @@ This file exists so the daemon can reason about the real coding-agent child proc
 
 Each task has an associated acpx session. The session is a persistent agent context that retains conversation history across runs.
 
-- `agvv run start` ensures a session exists before sending the prompt
+- `agvv runs start` ensures a session exists before sending the prompt
 - subsequent runs for the same task reuse the same session (the agent has context from previous runs)
-- `agvv task merge` closes the session alongside worktree cleanup
-- sessions can be managed explicitly with `agvv session ensure/close/status/list`
+- `agvv tasks merge` closes the session alongside worktree cleanup
+- sessions can be managed explicitly with `agvv sessions ensure/close/status/list`
 
 agvv delegates session state entirely to acpx. Session data is stored at `~/.acpx/sessions/` and is not duplicated inside `.agvv/`.
 
@@ -143,21 +147,25 @@ The session is scoped by `(agent, worktree cwd, task name)`. The agent process u
 
 Worktrees are an internal implementation detail. The orchestrator never has to manage them directly.
 
-- `agvv run start` creates the worktree if needed
+- `agvv runs start` creates the worktree if needed
 - the same task reuses the same worktree across runs
 - `review`/`test` may target an existing branch/ref with `--base-branch` (detached mode)
-- `agvv task merge` removes the worktree on success
+- `agvv tasks merge` removes the worktree on success
 - task archive or cleanup also removes the worktree when possible
 
 ## Hooks
 
-Project-level hooks can be configured in `.agvv/config.md`:
+Project-level hooks can be configured in `.agvv/config.json`:
 
-```yaml
-hooks:
-  after_create: "./scripts/bootstrap.sh"
-  before_run: "./scripts/pre-check.sh"
-  after_run: "./scripts/cleanup.sh"
+```json
+{
+  "agvv_repo": "https://github.com/niuyunda/agent-wave",
+  "hooks": {
+    "after_create": "bash /absolute/path/to/.agvv/hooks/after_create.sh",
+    "before_run": "bash /absolute/path/to/.agvv/hooks/before_run.sh",
+    "after_run": "bash /absolute/path/to/.agvv/hooks/after_run.sh"
+  }
+}
 ```
 
 Hook semantics:
@@ -201,7 +209,7 @@ This keeps daemon restarts cheap and safe.
 
 ## Merge Semantics
 
-`agvv task merge` checks out the main branch and merges the task branch.
+`agvv tasks merge` checks out the main branch and merges the task branch.
 
 - on success: the task is archived and the worktree is removed
 - on conflict: the merge is aborted, the task is marked `blocked`, and the conflicting files are reported

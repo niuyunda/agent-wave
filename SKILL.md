@@ -15,8 +15,8 @@ First-principles constraints:
 
 Can do:
 
-- project/task registration
-- run start/stop
+- task registration (projects auto-registered on `tasks add`)
+- runs start/stop
 - state and checkpoint inspection
 - merge and archive task branches
 
@@ -28,7 +28,7 @@ Cannot do:
 
 ## 3) Task markdown (`task.md`)
 
-When authoring or editing the markdown file you pass to `agvv task add --file`:
+When authoring or editing the markdown file you pass to `agvv tasks add --file`:
 
 - **Reference only:** open `docs/task-template.md` in this repository as an **example shape**, not a mandatory schema. Tasks may be shorter, reorder sections, or skip prose—the goal is useful signal, not bureaucracy.
 - **Worth keeping tight:** **acceptance criteria** (checkable outcomes), **how to test / verify** (commands or explicit manual steps), and **definition of done** (what “finished” means, including no scope creep). Those reduce low-quality or untested handoffs; everything else can stay loose so the agent is not over-constrained.
@@ -50,13 +50,13 @@ When authoring or editing the markdown file you pass to `agvv task add --file`:
 ## 6) Agent execution protocol (minimal loop)
 
 ```bash
-agvv task list --project <repo>
-agvv run start <task> --purpose=implement --agent=codex
-agvv run start <task> --purpose=review --agent=codex --base-branch=<ref>
-agvv run start <task> --purpose=test --agent=codex --base-branch=<ref>
-agvv task show <task>
-agvv checkpoint show <task>
-agvv task merge <task>
+agvv tasks --project <repo>
+agvv runs start <task> --purpose=implement --agent=codex
+agvv runs start <task> --purpose=review --agent=codex --base-branch=<ref>
+agvv runs start <task> --purpose=test --agent=codex --base-branch=<ref>
+agvv tasks show <task>
+agvv checkpoints show <task>
+agvv tasks merge <task>
 ```
 
 Execution rules:
@@ -70,68 +70,70 @@ Execution rules:
 
 ### Project
 
-- `agvv project add <repo_path>`
-- `agvv project list`
-- `agvv project remove <repo_path>`
+- `agvv projects`
+- `agvv projects remove <repo_path>`
 
 ### Task
 
-- `agvv task add --project <repo_path> --file <task_md>`
-- `agvv task list [--project <repo_path>]`
-- `agvv task show <task_name> [--project <repo_path>]`
-- `agvv task merge <task_name> [--project <repo_path>]`
+- `agvv tasks add --project <repo_path> --file <task_md>`
+- `agvv tasks [--project <repo_path>]`
+- `agvv tasks show <task_name> [--project <repo_path>]`
+- `agvv tasks merge <task_name> [--project <repo_path>]`
 
 ### Run
 
-- `agvv run start <task_name> --purpose <implement|review|test|repair> --agent <agent> [--base-branch <ref>] [--project <repo_path>]`
-- `agvv run stop <task_name> [--project <repo_path>]`
-- `agvv run status [--project <repo_path>]`
+- `agvv runs start <task_name> --purpose <implement|review|test|repair> --agent <agent> [--base-branch <ref>] [--project <repo_path>]`
+- `agvv runs stop <task_name> [--project <repo_path>]`
+- `agvv runs status [--project <repo_path>]`
 
 ### Session
 
-- `agvv session ensure <task_name> --agent <agent> [--project <repo_path>]`
-- `agvv session status <task_name> --agent <agent> [--project <repo_path>]`
-- `agvv session close <task_name> --agent <agent> [--project <repo_path>]`
-- `agvv session list --agent <agent>`
+- `agvv sessions ensure <task_name> --agent <agent> [--project <repo_path>]`
+- `agvv sessions status <task_name> --agent <agent> [--project <repo_path>]`
+- `agvv sessions close <task_name> --agent <agent> [--project <repo_path>]`
+- `agvv sessions list --agent <agent>`
 
 ### Checkpoint and daemon
 
-- `agvv checkpoint show <task_name> [--project <repo_path>]`
-- `agvv daemon start | status | stop`
+- `agvv checkpoints show <task_name> [--project <repo_path>]`
+- `agvv daemons start | status | stop`
+
+### Feedback
+
+- `agvv feedback --title <title> [--body <text>] [--type <bug|feature|refactor>]`
 
 Common high-frequency parameters:
 
 - `--project`: avoid ambiguous project resolution.
 - output is JSON by default; no output-format flag is needed.
-- `--purpose`: required on `run start`; drives completion gate.
-- `--agent`: required on `run start/session`.
+- `--purpose`: required on `runs start`; drives completion gate.
+- `--agent`: required on `runs start/sessions`.
 - `--base-branch`: strongly recommended for `review/test`.
 
 ## 8) Example usage
 
 ```bash
-# 1) Register project and add task
-agvv project add /repo/app
-agvv task add --project /repo/app --file /tmp/fix-login.md
+# 1) Add task (auto-register project)
+agvv tasks add --project /repo/app --file /tmp/fix-login.md
 
 # 2) Implement
-agvv run start fix-login --purpose implement --agent codex --project /repo/app
-agvv run status --project /repo/app
-agvv checkpoint show fix-login --project /repo/app
+agvv runs start fix-login --purpose implement --agent codex --project /repo/app
+agvv runs status --project /repo/app
+agvv checkpoints show fix-login --project /repo/app
 
 # 3) Review and test against implementation branch
-agvv run start review-login --purpose review --agent codex --base-branch agvv/fix-login --project /repo/app
-agvv run start test-login --purpose test --agent codex --base-branch agvv/fix-login --project /repo/app
+agvv runs start review-login --purpose review --agent codex --base-branch agvv/fix-login --project /repo/app
+agvv runs start test-login --purpose test --agent codex --base-branch agvv/fix-login --project /repo/app
 
 # 4) Merge when ready
-agvv task show fix-login --project /repo/app
-agvv task merge fix-login --project /repo/app
+agvv tasks show fix-login --project /repo/app
+agvv tasks merge fix-login --project /repo/app
 ```
 
 ## 9) Failure handling
 
 - If any hard gate is not met, treat the run as invalid and re-run with corrected inputs.
-- When ambiguous, inspect `task show` and `checkpoint show` before deciding next action.
+- When ambiguous, inspect `tasks show` and `checkpoints show` before deciding next action.
 
 ## 10) Issue tracking
 

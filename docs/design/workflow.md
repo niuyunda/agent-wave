@@ -3,27 +3,27 @@
 ## End-to-End Flow
 
 ```text
-task add -> run(implement) -> checkpoint -> run(review/test)
+tasks add -> runs(implement) -> checkpoints -> runs(review/test)
     -> pass -> merge
-    -> fail -> run(repair) -> checkpoint -> run(review/test) -> ...
+    -> fail -> runs(repair) -> checkpoints -> runs(review/test) -> ...
 ```
 
 ## 1. Add a Task
 
-The orchestrator prepares a `task.md` file and registers it:
+The orchestrator prepares a `task.md` file:
 
 ```bash
-agvv task add --project ~/projects/my-project --file task.md
+agvv tasks add --project ~/projects/my-project --file task.md
 ```
 
-agvv validates that the task name is unique, creates `.agvv/tasks/<name>/task.md`, and marks the task as `pending`.
+agvv auto-registers and initializes the project when needed, validates that the task name is unique, creates `.agvv/tasks/<name>/task.md`, and marks the task as `pending`.
 
 If a task with the same name already exists, agvv rejects it.
 
 ## 2. Start a Run
 
 ```bash
-agvv run start fix-login-bug --purpose=implement --agent=codex
+agvv runs start fix-login-bug --purpose=implement --agent=codex
 ```
 
 Internally, agvv:
@@ -38,7 +38,7 @@ Internally, agvv:
 For `review` and `test`, you can target an existing branch/ref:
 
 ```bash
-agvv run start review-login --purpose=review --agent=codex --base-branch=agvv/fix-login-bug
+agvv runs start review-login --purpose=review --agent=codex --base-branch=agvv/fix-login-bug
 ```
 
 ## 3. Coding Agent Work
@@ -72,7 +72,7 @@ reports/agvv/<task-name>/<run-number>-review.md
 The orchestrator can inspect the latest result:
 
 ```bash
-agvv checkpoint show fix-login-bug
+agvv checkpoints show fix-login-bug
 ```
 
 Typical next actions:
@@ -84,8 +84,8 @@ Typical next actions:
 ## 6. Review or Test
 
 ```bash
-agvv run start fix-login-bug --purpose=review --agent=claude
-agvv run start fix-login-bug --purpose=test --agent=codex
+agvv runs start fix-login-bug --purpose=review --agent=claude
+agvv runs start fix-login-bug --purpose=test --agent=codex
 ```
 
 These runs reuse the same task worktree and session for the task. If `--base-branch` is provided, agvv attaches review/test work to that existing branch/ref in detached mode.
@@ -93,7 +93,7 @@ These runs reuse the same task worktree and session for the task. If `--base-bra
 ## 7. Merge
 
 ```bash
-agvv task merge fix-login-bug
+agvv tasks merge fix-login-bug
 ```
 
 agvv:
@@ -114,13 +114,13 @@ If the merge conflicts:
 Multiple tasks can run at the same time:
 
 ```bash
-agvv task add --project ~/projects/my-app --file add-search.md
-agvv task add --project ~/projects/my-app --file add-dark-mode.md
-agvv task add --project ~/projects/my-app --file fix-login-bug.md
+agvv tasks add --project ~/projects/my-app --file add-search.md
+agvv tasks add --project ~/projects/my-app --file add-dark-mode.md
+agvv tasks add --project ~/projects/my-app --file fix-login-bug.md
 
-agvv run start add-search --purpose=implement --agent=claude
-agvv run start add-dark-mode --purpose=implement --agent=pi
-agvv run start fix-login-bug --purpose=implement --agent=codex
+agvv runs start add-search --purpose=implement --agent=claude
+agvv runs start add-dark-mode --purpose=implement --agent=pi
+agvv runs start fix-login-bug --purpose=implement --agent=codex
 ```
 
 Each task has its own worktree and branch. agvv does not serialize them unless the orchestrator chooses to.
@@ -130,7 +130,7 @@ Each task has its own worktree and branch. agvv does not serialize them unless t
 agvv is designed to be strict about observable failures:
 
 - failed `before_run` hook: abort the run and clean up a newly created worktree
-- uncooperative run stop: escalate from cooperative cancel to killing the process group
+- uncooperative `runs stop`: escalate from cooperative cancel to killing the process group
 - dead launcher but live child process: keep the run as `running`
 - successful exit but missing checkpoint: mark the run as `failed`
 - merge conflict: mark the task as `blocked`

@@ -1,23 +1,21 @@
-"""feedback subcommand — file issues against the agvv GitHub repo."""
+"""feedback command - file issues against the agvv GitHub repo."""
 
 from __future__ import annotations
 
+import json
 import subprocess
-import sys
-import urllib.request
-import urllib.error
 from pathlib import Path
 
 import typer
 
 from agvv.core import config
-from agvv.utils.format import print_error, print_info, print_success
+from agvv.utils.format import print_error, print_success
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(no_args_is_help=False, invoke_without_command=True)
 
 
-@app.command()
-def submit(
+@app.callback()
+def feedback(
     title: str = typer.Option(..., "--title", "-t", help="Issue title"),
     body: str = typer.Option("", "--body", "-b", help="Issue body description"),
     issue_type: str = typer.Option("bug", "--type", "-T",
@@ -80,12 +78,27 @@ def _resolve_repo() -> str:
         from agvv.core.project import list_projects
         entries = list_projects()
         if entries:
-            entry_path = Path(entries[0]["path"])
+            entry_path = Path(entries[0].path)
             agvv_dir = entry_path / ".agvv"
-            cfg = agvv_dir / "config.md"
+            cfg = agvv_dir / config.CONFIG_FILE
             if cfg.exists():
-                for line in cfg.read_text().splitlines():
-                    if line.strip().startswith("agvv_repo:"):
-                        return line.split(":", 1)[1].strip()
+                try:
+                    raw_cfg = json.loads(cfg.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    raw_cfg = {}
+                if isinstance(raw_cfg, dict):
+                    agvv_repo = raw_cfg.get("agvv_repo")
+                    if isinstance(agvv_repo, str) and agvv_repo.strip():
+                        return _normalize_repo_ref(agvv_repo)
 
     return config.DEFAULT_AGVV_REPO
+
+
+def _normalize_repo_ref(repo: str) -> str:
+    candidate = repo.strip()
+    if candidate.startswith(("https://github.com/", "http://github.com/")):
+        tail = candidate.rstrip("/").split("github.com/", 1)[1]
+        parts = [p for p in tail.split("/") if p]
+        if len(parts) >= 2:
+            return f"{parts[0]}/{parts[1].removesuffix('.git')}"
+    return candidate

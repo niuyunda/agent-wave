@@ -204,6 +204,8 @@ def _monitor_cycle() -> None:
             # Check if process is still alive
             if not _process_alive(monitor_pid):
                 status = _determine_exit_status(project_path, task_name)
+                if status == RunStatus.running:
+                    continue
                 final_status = finish_run(project_path, task_name, status) or status
                 _log(f"Process {monitor_pid} for task {task_name} is dead, marking {final_status.value}")
                 continue
@@ -246,6 +248,8 @@ def _reconcile() -> None:
             monitor_pid = latest.get("agent_pid") or latest.get("pid")
             if monitor_pid and not _process_alive(monitor_pid):
                 status = _determine_exit_status(project_path, task_name)
+                if status == RunStatus.running:
+                    continue
                 final_status = finish_run(project_path, task_name, status) or status
                 _log(f"Reconciled {task_name}: running → {final_status.value} (PID {monitor_pid} dead)")
 
@@ -258,14 +262,24 @@ def _determine_exit_status(project_path: Path, task_name: str) -> RunStatus:
 
     runtime_files = sorted(rd.glob("*.runtime.json"))
     if runtime_files:
-        try:
-            payload = json.loads(runtime_files[-1].read_text(encoding="utf-8"))
-            code = payload.get("exit_code")
-            if code is None:
+        runtime_path = runtime_files[-1]
+        for _ in range(40):
+            try:
+                payload = json.loads(runtime_path.read_text(encoding="utf-8"))
+            except (ValueError, OSError, json.JSONDecodeError):
                 return RunStatus.failed
-            return RunStatus.completed if int(code) == 0 else RunStatus.failed
-        except (ValueError, OSError, json.JSONDecodeError):
-            return RunStatus.failed
+
+            code = payload.get("exit_code")
+            if code is not None:
+                return RunStatus.completed if int(code) == 0 else RunStatus.failed
+
+            launcher_pid = payload.get("launcher_pid")
+            if not (isinstance(launcher_pid, int) and _process_alive(launcher_pid)):
+                return RunStatus.failed
+
+            # Agent is already gone, but launcher may still be finalizing runtime metadata.
+            time.sleep(0.05)
+        return RunStatus.running
 
     exitcode_files = sorted(rd.glob("*.exitcode"))
     if exitcode_files:

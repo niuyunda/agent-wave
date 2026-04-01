@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
@@ -10,10 +11,7 @@ import warnings
 from pathlib import Path
 from unittest import mock
 
-import frontmatter
-
 from agvv.core import config, project, run, task
-warnings.filterwarnings("ignore", category=DeprecationWarning, module="frontmatter")
 warnings.filterwarnings("ignore", category=ResourceWarning, module="subprocess")
 
 
@@ -215,9 +213,9 @@ class AgvvRepoTestCase(unittest.TestCase):
         task.add_task(repo, task_file)
 
     def _write_project_config(self, repo: Path, **metadata: object) -> None:
-        config_file = repo / ".agvv" / "config.md"
+        config_file = repo / ".agvv" / config.CONFIG_FILE
         config_file.write_text(
-            frontmatter.dumps(frontmatter.Post("", **metadata)) + "\n",
+            json.dumps(metadata, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
 
