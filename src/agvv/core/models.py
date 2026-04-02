@@ -17,19 +17,11 @@ class TaskStatus(str, Enum):
     done = "done"
 
 
-class RunPurpose(str, Enum):
-    implement = "implement"
-    test = "test"
-    review = "review"
-    repair = "repair"
-
-
 class RunStatus(str, Enum):
     running = "running"
     completed = "completed"
     failed = "failed"
     timed_out = "timed_out"
-    stalled = "stalled"
     stopped = "stopped"
 
 
@@ -47,9 +39,8 @@ class TaskMeta(BaseModel):
 
 
 class RunMeta(BaseModel):
-    """Front-matter fields for a run record."""
+    """Front-matter fields for a task run record."""
 
-    purpose: RunPurpose
     agent: str
     status: RunStatus = RunStatus.running
     started_at: str = Field(
@@ -65,7 +56,6 @@ class RunMeta(BaseModel):
     error_message: Optional[str] = None
     base_branch: Optional[str] = None
     base_commit: Optional[str] = None
-    report_path: Optional[str] = None
 
 
 class ProjectEntry(BaseModel):

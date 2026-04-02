@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import textwrap
 import unittest
-from pathlib import Path
 from unittest import mock
 
 import frontmatter
 
-from agvv.core import config, run, task
-from agvv.core.models import RunPurpose, TaskStatus
+from agvv.core import run, task
+from agvv.core.models import TaskStatus
 from agvv.daemon import server
 from agvv.utils import git
 
@@ -57,14 +55,6 @@ class RealAgentE2ETest(AgvvRepoTestCase):
         )
         task.add_task(repo, task_file)
 
-        ensure_session = self.tmp_path / "ensure-acpx-session.sh"
-        ensure_session.write_text(
-            "#!/usr/bin/env bash\nset -euo pipefail\nacpx codex sessions ensure --name \"$(basename \"$PWD\")\" >/dev/null\n",
-            encoding="utf-8",
-        )
-        ensure_session.chmod(0o755)
-        self._write_project_config(repo, hooks={"after_create": str(ensure_session)})
-
         with mock.patch.dict(
             os.environ,
             {
@@ -73,11 +63,9 @@ class RealAgentE2ETest(AgvvRepoTestCase):
             },
             clear=False,
         ):
-            run.start_run(repo, task_name, RunPurpose.implement, "codex")
+            run.start_run(repo, task_name, "codex")
             self._wait_for_process_exit(repo, task_name, timeout=300.0)
             server._monitor_cycle()
-
-        self.addCleanup(self._close_acpx_session, repo / "worktrees" / task_name, task_name)
 
         latest = self._latest_run(repo, task_name)
         self.assertEqual(latest["status"], "completed")
@@ -93,14 +81,3 @@ class RealAgentE2ETest(AgvvRepoTestCase):
             cwd=repo,
         ).splitlines()
         self.assertEqual([path for path in commit_files if path], ["README.md"])
-
-    def _close_acpx_session(self, cwd: Path, task_name: str) -> None:
-        if not cwd.exists():
-            return
-        subprocess.run(
-            ["acpx", "codex", "sessions", "close", task_name],
-            cwd=cwd,
-            check=False,
-            capture_output=True,
-            text=True,
-        )

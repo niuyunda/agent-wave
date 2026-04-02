@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import textwrap
-from pathlib import Path
 
 import frontmatter
 
 from agvv.core import config, run, task
-from agvv.core.models import RunMeta, RunPurpose, RunStatus, TaskStatus
+from agvv.core.models import RunMeta, RunStatus, TaskStatus
 from agvv.daemon import server
 from agvv.utils import git, markdown
 
@@ -25,7 +24,7 @@ class TaskTest(AgvvRepoTestCase):
         self._add_task(repo, "duplicate-task")
         duplicate = self.tmp_path / "duplicate-task.md"
         duplicate.write_text("---\nname: duplicate-task\n---\n", encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, 'already exists'):
+        with self.assertRaisesRegex(ValueError, "already exists"):
             task.add_task(repo, duplicate)
 
     def test_add_task_preserves_extra_frontmatter(self) -> None:
@@ -100,9 +99,8 @@ class TaskTest(AgvvRepoTestCase):
         repo = self._create_project_repo("task-metadata")
         self._add_task(repo, "metadata-task", "Checklist item.")
 
-        run_file = config.runs_dir(repo, "metadata-task") / "001-review.md"
+        run_file = config.runs_dir(repo, "metadata-task") / "001.md"
         meta = RunMeta(
-            purpose=RunPurpose.review,
             agent="codex",
             status=RunStatus.failed,
             pid=123,
@@ -112,7 +110,6 @@ class TaskTest(AgvvRepoTestCase):
         listed = task.list_tasks(repo)
         self.assertEqual(len(listed), 1)
         self.assertEqual(listed[0]["run_number"], 1)
-        self.assertEqual(listed[0]["last_purpose"], RunPurpose.review.value)
         self.assertEqual(listed[0]["last_agent"], "codex")
         self.assertEqual(listed[0]["last_status"], RunStatus.failed.value)
         self.assertEqual(listed[0]["last_event"], RunStatus.failed.value)
@@ -130,11 +127,12 @@ class TaskTest(AgvvRepoTestCase):
         self.assertEqual(task.next_run_number(repo, "numbered-task"), 1)
 
         for run_number in (1, 2):
-            run_file = config.runs_dir(repo, "numbered-task") / f"{run_number:03d}-implement.md"
+            run_file = (
+                config.runs_dir(repo, "numbered-task") / f"{run_number:03d}.md"
+            )
             markdown.write_md(
                 run_file,
                 RunMeta(
-                    purpose=RunPurpose.implement,
                     agent="codex",
                     status=RunStatus.completed,
                 ).model_dump(mode="json"),
@@ -143,11 +141,20 @@ class TaskTest(AgvvRepoTestCase):
 
         self.assertEqual(task.next_run_number(repo, "numbered-task"), 3)
 
+    def test_list_tasks_skips_invalid_task_files_without_name(self) -> None:
+        repo = self._create_project_repo("task-list-invalid")
+        bad_task_file = config.tasks_dir(repo) / "broken-entry" / config.TASK_FILE
+        bad_task_file.parent.mkdir(parents=True, exist_ok=True)
+        bad_task_file.write_text("---\nstatus: pending\n---\n", encoding="utf-8")
+
+        listed = task.list_tasks(repo)
+        self.assertEqual(listed, [])
+
     def test_merge_task_archives_task_and_removes_branch_resources(self) -> None:
         repo = self._create_project_repo("task-merge")
         self._add_task(repo, "merge-task", "SLEEP=0")
 
-        run.start_run(repo, "merge-task", RunPurpose.implement, "success")
+        run.start_run(repo, "merge-task", "success")
         self._wait_for_process_exit(repo, "merge-task")
         server._monitor_cycle()
 
@@ -173,7 +180,7 @@ class TaskTest(AgvvRepoTestCase):
         repo = self._create_project_repo("task-archive-name-reuse")
         self._add_task(repo, "repeat-task", "SLEEP=0")
 
-        run.start_run(repo, "repeat-task", RunPurpose.implement, "success")
+        run.start_run(repo, "repeat-task", "success")
         self._wait_for_process_exit(repo, "repeat-task")
         server._monitor_cycle()
         task.merge_task(repo, "repeat-task")
@@ -185,7 +192,7 @@ class TaskTest(AgvvRepoTestCase):
         repo = self._create_project_repo("task-merge-dirty")
         self._add_task(repo, "merge-task", "SLEEP=0")
 
-        run.start_run(repo, "merge-task", RunPurpose.implement, "success")
+        run.start_run(repo, "merge-task", "success")
         self._wait_for_process_exit(repo, "merge-task")
         server._monitor_cycle()
 
@@ -198,7 +205,7 @@ class TaskTest(AgvvRepoTestCase):
         repo = self._create_project_repo("task-merge-branch")
         self._add_task(repo, "merge-task", "SLEEP=0")
 
-        run.start_run(repo, "merge-task", RunPurpose.implement, "success")
+        run.start_run(repo, "merge-task", "success")
         self._wait_for_process_exit(repo, "merge-task")
         server._monitor_cycle()
 

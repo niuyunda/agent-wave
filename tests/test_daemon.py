@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import shutil
 from unittest import mock
 
+from typer.testing import CliRunner
+
+from agvv.cli.main import app as cli_app
 from agvv.core import config, run, task
-from agvv.core.models import RunPurpose, TaskStatus
+from agvv.core.models import TaskStatus
 from agvv.daemon import server
 
 from tests._support import AgvvRepoTestCase
@@ -58,34 +62,6 @@ class DaemonTest(AgvvRepoTestCase):
             with self.assertRaisesRegex(RuntimeError, "fatal boot error"):
                 server.start_daemon()
 
-    def test_determine_exit_status_prefers_runtime_json(self) -> None:
-        repo = self._create_project_repo("daemon-runtime-status")
-        self._add_task(repo, "runtime-task")
-
-        runtime_file = config.runs_dir(repo, "runtime-task") / "001-implement.runtime.json"
-        exitcode_file = config.runs_dir(repo, "runtime-task") / "001-implement.exitcode"
-        runtime_file.write_text(json.dumps({"exit_code": 0}) + "\n", encoding="utf-8")
-        exitcode_file.write_text("2\n", encoding="utf-8")
-
-        self.assertEqual(
-            server._determine_exit_status(repo, "runtime-task").value,
-            "completed",
-        )
-        self.assertTrue(exitcode_file.exists())
-
-    def test_determine_exit_status_consumes_legacy_exitcode_file(self) -> None:
-        repo = self._create_project_repo("daemon-exitcode-status")
-        self._add_task(repo, "legacy-task")
-
-        exitcode_file = config.runs_dir(repo, "legacy-task") / "001-implement.exitcode"
-        exitcode_file.write_text("2\n", encoding="utf-8")
-
-        self.assertEqual(
-            server._determine_exit_status(repo, "legacy-task").value,
-            "failed",
-        )
-        self.assertFalse(exitcode_file.exists())
-
     def test_reconcile_marks_running_task_failed_when_active_run_is_missing(self) -> None:
         repo = self._create_project_repo("daemon-reconcile")
         self._add_task(repo, "stale-task")
@@ -99,7 +75,7 @@ class DaemonTest(AgvvRepoTestCase):
         repo = self._create_project_repo("daemon-timeout")
         self._add_task(repo, "timeout-task", "SLEEP=999")
 
-        run.start_run(repo, "timeout-task", RunPurpose.implement, "success")
+        run.start_run(repo, "timeout-task", "success")
         active = self._wait_for_active_run(repo, "timeout-task")
 
         with mock.patch.object(config, "DEFAULT_RUN_TIMEOUT", -1):
@@ -121,7 +97,6 @@ class DaemonTest(AgvvRepoTestCase):
         info = task.show_task(repo, "auto-task")
         self.assertEqual(info["status"], TaskStatus.running.value)
         self.assertEqual(info["feedback_status"], "running")
-        self.assertEqual(info["runs"][0]["purpose"], "implement")
         self.assertEqual(info["runs"][0]["pid"], active["pid"])
 
         run.stop_run(repo, "auto-task")
@@ -188,3 +163,26 @@ class DaemonTest(AgvvRepoTestCase):
 
         self.assertEqual(info, {"running": False, "pid": None})
         self.assertFalse(config.DAEMON_PID_FILE.exists())
+
+    def test_daemon_start_bootstraps_agvv_home(self) -> None:
+        if self.agvv_home.exists():
+            shutil.rmtree(self.agvv_home)
+
+        runner = CliRunner()
+        with mock.patch("agvv.cli.daemon_cmd.start_daemon", return_value=321):
+            result = runner.invoke(cli_app, ["daemon", "start"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertTrue(self.agvv_home.exists())
+
+    def test_determine_exit_status_prefers_run_runtime_json(self) -> None:
+        repo = self._create_project_repo("daemon-runtime-status")
+        self._add_task(repo, "runtime-task")
+
+        runtime_file = config.runs_dir(repo, "runtime-task") / "001.runtime.json"
+        runtime_file.write_text(json.dumps({"exit_code": 0}) + "\n", encoding="utf-8")
+
+        self.assertEqual(
+            server._determine_exit_status(repo, "runtime-task").value,
+            "completed",
+        )

@@ -26,7 +26,7 @@ There is no configured linter or formatter.
 ### Three Core Concepts
 
 1. **Task** — one unit of work, stored as `.agvv/tasks/<name>/task.md` with YAML frontmatter. Status: pending → running → done/failed/blocked. Each task gets branch `agvv/<task-name>`.
-2. **Run** — one execution of a task (purpose: implement/test/review/repair). Stored as `.agvv/tasks/<name>/runs/NNN-<purpose>.md` with a runtime sidecar JSON tracking PIDs, timestamps, exit codes.
+2. **Run** — one attempt of a task (purpose: implement/test/review/repair). Stored as `.agvv/tasks/<name>/runs/NNN-<purpose>.md` with a runtime sidecar JSON tracking PIDs, timestamps, exit codes.
 3. **Checkpoint** — a valid Git commit from the task worktree. For every run purpose, completion requires a **new** commit vs. the run’s recorded `base_commit`; exit 0 without that is failed. `review` runs also require a written report file.
 
 ### Runtime Model

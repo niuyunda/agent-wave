@@ -4,8 +4,8 @@
 
 ```text
 tasks add (auto_manage=true) -> daemon auto runs implement
-    -> completed (task status=done)
-    -> failed (task status=failed)
+    -> completed (auto-managed task status=done)
+    -> failed/timed_out (task status=failed)
 ```
 
 ## 1. Add a Task
@@ -16,11 +16,17 @@ The orchestrator prepares a `task.md` file:
 agvv tasks add --project ~/projects/my-project --file task.md [--agent codex]
 ```
 
-agvv auto-registers and initializes the project when needed, validates that the task name is unique, creates `.agvv/tasks/<name>/task.md`, and marks the task as `pending`.
+agvv auto-registers and initializes the project when needed, validates task name and uniqueness, creates `.agvv/tasks/<name>/task.md`, and marks task `pending`.
 
 If a task with the same name already exists, agvv rejects it.
 
-`tasks add` always enables automatic orchestration (`auto_manage: true`) and ensures daemon is running. The daemon then picks this task up automatically and starts an `implement` run. If `--agent` is provided, that agent is used for the auto-run; otherwise project `default_agent` is used.
+`tasks add` always enables automatic orchestration (`auto_manage: true`) and sets feedback fields (`queued`). It starts daemon automatically unless `AGVV_SKIP_DAEMON_AUTOSTART` is truthy.
+
+Daemon pickup starts `implement` run when task has no existing runs. Agent selection order is:
+
+1. task `agent` field (`--agent` on `tasks add` overrides source markdown)
+2. project `default_agent`
+3. fallback `claude`
 
 ## 2. Daemon Executes the Run
 
@@ -35,9 +41,12 @@ Internally, agvv:
 
 ## 3. Coding Agent Work
 
-The coding agent works inside its dedicated task worktree. For `implement`/`repair`, the expected durable output is a new Git commit in that worktree.
+The coding agent works inside task worktree `<project>/worktrees/<task>`.
 
-agvv does not inspect content quality. It enforces mechanical completion artifacts only.
+- `implement`/`repair`: branch-attached mode (`agvv/<task>`)
+- `review`/`test`: detached mode at resolved ref (`--base-branch`, else task branch if exists, else main)
+
+agvv does not inspect output quality. It enforces mechanical completion artifacts only.
 
 ## 4. Run Completion
 
@@ -52,6 +61,7 @@ Important rule:
 
 - all purposes: successful process exit without a new checkpoint (vs. the run’s `base_commit`) is `failed`
 - `review`: successful process exit without a non-empty report file is also `failed`
+- `implement`/`repair`: helper runner may auto-commit dirty changes before final status is written
 
 By default, review reports are expected at:
 
@@ -72,21 +82,22 @@ agvv tasks show fix-login-bug --project ~/projects/my-project
 Typical next actions:
 
 - good result -> merge
-- failed result -> update/requeue task and let daemon run again
+- failed result -> inspect feedback + logs, then update/requeue task
 - timed out result -> inspect task feedback and adjust hooks/config
 
 ## 6. Merge
 
 ```bash
-agvv tasks merge fix-login-bug
+agvv tasks merge fix-login-bug --project ~/projects/my-project
 ```
 
 agvv:
 
-1. checks out the main branch
+1. requires project primary worktree is on main branch and clean
 2. merges the task branch
-3. archives the task on success
-4. removes the task worktree on success
+3. closes the latest task session (best effort)
+4. archives task on success (`status=done`)
+5. removes task worktree and branch (best effort)
 
 If the merge conflicts:
 
@@ -113,6 +124,7 @@ agvv is designed to be strict about observable failures:
 - failed `before_run` hook: abort the run and clean up a newly created worktree
 - dead launcher but live child process: keep the run as `running`
 - successful exit but missing checkpoint: mark the run as `failed`
+- successful review exit with checkpoint but missing report: mark the run as `failed`
 - merge conflict: mark the task as `blocked`
 
 The system stays small, but it should not lie about what is actually happening.

@@ -18,7 +18,7 @@ app = typer.Typer(
 app.add_typer(daemon_app, name="daemon", help="Control the background monitor daemon.")
 app.add_typer(project_app, name="projects", help="View and manage registered project entries.")
 app.add_typer(task_app, name="tasks", help="Create, inspect, and merge tasks.")
-app.add_typer(feedback_app, name="feedback", help="File issues and sync agvv GitHub issues.")
+app.add_typer(feedback_app, name="feedback", help="Save local feedback and optionally file GitHub issues.")
 
 
 if __name__ == "__main__":

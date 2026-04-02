@@ -24,7 +24,7 @@ def ensure_worktree(project_path: Path, task_name: str) -> Path:
     # Validate path safety: resolved path must be under project
     resolved = wt.resolve()
     project_resolved = project_path.resolve()
-    if not str(resolved).startswith(str(project_resolved)):
+    if not resolved.is_relative_to(project_resolved):
         raise ValueError(f"Path traversal detected: {wt}")
 
     git.create_worktree(project_path, wt, branch)

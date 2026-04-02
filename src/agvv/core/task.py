@@ -11,8 +11,7 @@ from typing import Any
 import frontmatter
 
 from agvv.core import config
-from agvv.core.models import RunMeta, RunStatus, TaskStatus
-from agvv.core.session import close_session
+from agvv.core.models import TaskStatus
 from agvv.utils import git, markdown
 
 AUTO_MANAGE_FIELD = "auto_manage"
@@ -29,12 +28,7 @@ def validate_task_name(name: str) -> None:
 
 
 def _frontmatter_for_new_task(post: frontmatter.Post) -> dict[str, Any]:
-    """Merge source YAML with agvv defaults; drop only invalid ``status`` values.
-
-    All keys from the source front matter are kept. ``name`` is required and
-    validated. ``status`` defaults to ``pending`` when absent; ``created_at``
-    defaults to today's date (YYYY-MM-DD) when absent.
-    """
+    """Merge source YAML with agvv defaults; reject invalid ``status`` values."""
     merged: dict[str, Any] = dict(post.metadata)
     name = merged.get("name")
     if name is None or name == "":
@@ -80,88 +74,88 @@ def add_task(project_path: Path, task_file_path: Path, agent: str | None = None)
         merged["agent"] = normalized
     name = merged["name"]
 
-    td = config.task_dir(project_path, name)
-    if td.exists() or _task_exists_in_archive(project_path, name):
+    task_dir = config.task_dir(project_path, name)
+    if task_dir.exists() or _task_exists_in_archive(project_path, name):
         raise ValueError(
             f'task "{name}" already exists in project {project_path.name}'
         )
 
-    tf = config.task_file(project_path, name)
-    markdown.write_md(tf, merged, post.content)
+    task_file = config.task_file(project_path, name)
+    markdown.write_md(task_file, merged, post.content)
 
-    # Create runs directory
+    # Create run history directory.
     config.runs_dir(project_path, name).mkdir(parents=True, exist_ok=True)
     return name
 
 
 def list_tasks(project_path: Path) -> list[dict]:
     """List all active tasks in a project."""
-    td = config.tasks_dir(project_path)
-    if not td.exists():
+    task_root = config.tasks_dir(project_path)
+    if not task_root.exists():
         return []
 
-    tasks = []
-    for item in sorted(td.iterdir()):
+    tasks: list[dict] = []
+    for item in sorted(task_root.iterdir()):
         if item.name == config.ARCHIVE_DIR or not item.is_dir():
             continue
-        tf = item / config.TASK_FILE
-        if not tf.exists():
+        task_file = item / config.TASK_FILE
+        if not task_file.exists():
             continue
-        meta = markdown.read_frontmatter(tf)
-        # Get latest run info
-        run_info = _get_latest_run_info(project_path, meta["name"])
+        meta = markdown.read_frontmatter(task_file)
+        task_name = meta.get("name")
+        if not isinstance(task_name, str) or not task_name:
+            continue
+        run_info = _get_latest_run_info(project_path, task_name)
         tasks.append({**meta, **run_info})
     return tasks
 
 
 def count_archived_tasks(project_path: Path) -> int:
-    """Count archived (done) tasks."""
-    ad = config.archive_dir(project_path)
-    if not ad.exists():
+    """Count archived tasks."""
+    archive_dir = config.archive_dir(project_path)
+    if not archive_dir.exists():
         return 0
-    return sum(1 for item in ad.iterdir() if item.is_dir())
+    return sum(1 for item in archive_dir.iterdir() if item.is_dir())
 
 
 def _task_exists_in_archive(project_path: Path, task_name: str) -> bool:
     """Return True when the archive already contains ``task_name``."""
-    ad = config.archive_dir(project_path)
-    if not ad.exists():
+    archive_dir = config.archive_dir(project_path)
+    if not archive_dir.exists():
         return False
 
-    for item in ad.iterdir():
+    for item in archive_dir.iterdir():
         if not item.is_dir():
             continue
-        tf = item / config.TASK_FILE
-        if not tf.exists():
+        task_file = item / config.TASK_FILE
+        if not task_file.exists():
             continue
-        if markdown.read_frontmatter(tf).get("name") == task_name:
+        if markdown.read_frontmatter(task_file).get("name") == task_name:
             return True
     return False
 
 
 def show_task(project_path: Path, task_name: str) -> dict:
     """Get full task details including run history."""
-    tf = config.task_file(project_path, task_name)
-    if not tf.exists():
+    task_file = config.task_file(project_path, task_name)
+    if not task_file.exists():
         raise ValueError(f"Task '{task_name}' not found")
 
-    post = frontmatter.load(str(tf))
+    post = frontmatter.load(str(task_file))
     meta = dict(post.metadata)
     meta["body"] = post.content
     meta["project"] = str(project_path)
     meta["branch"] = f"{config.BRANCH_PREFIX}{task_name}"
-
-    # Get all runs
     meta["runs"] = _get_all_runs(project_path, task_name)
     meta.update(_get_latest_run_info(project_path, task_name))
     return meta
 
 
 def _update_task_frontmatter(project_path: Path, task_name: str, updates: dict[str, object]) -> None:
-    tf = config.task_file(project_path, task_name)
-    post = frontmatter.load(str(tf))
+    task_file = config.task_file(project_path, task_name)
+    post = frontmatter.load(str(task_file))
     post.metadata.update(updates)
-    tf.write_text(frontmatter.dumps(post) + "\n", encoding="utf-8")
+    task_file.write_text(frontmatter.dumps(post) + "\n", encoding="utf-8")
 
 
 def update_task_status(project_path: Path, task_name: str, status: TaskStatus) -> None:
@@ -176,10 +170,10 @@ def mark_task_auto_managed(project_path: Path, task_name: str, enabled: bool = T
 
 def is_task_auto_managed(project_path: Path, task_name: str) -> bool:
     """Return True when task metadata enables daemon auto scheduling."""
-    tf = config.task_file(project_path, task_name)
-    if not tf.exists():
+    task_file = config.task_file(project_path, task_name)
+    if not task_file.exists():
         return False
-    post = frontmatter.load(str(tf))
+    post = frontmatter.load(str(task_file))
     raw = post.metadata.get(AUTO_MANAGE_FIELD)
     if isinstance(raw, bool):
         return raw
@@ -203,8 +197,8 @@ def set_task_feedback(project_path: Path, task_name: str, status: str, message: 
 
 def merge_task(project_path: Path, task_name: str) -> str:
     """Merge task branch into main and archive. Returns merge commit."""
-    tf = config.task_file(project_path, task_name)
-    if not tf.exists():
+    task_file = config.task_file(project_path, task_name)
+    if not task_file.exists():
         raise ValueError(f"Task '{task_name}' not found")
 
     branch = f"{config.BRANCH_PREFIX}{task_name}"
@@ -224,13 +218,11 @@ def merge_task(project_path: Path, task_name: str) -> str:
             "Commit, stash, or clean them before merge."
         )
 
-    # Checkout main and merge
     git.run_git(["checkout", main_branch], cwd=project_path)
     try:
         commit = git.merge_branch(project_path, branch)
     except git.GitError as e:
         conflict_files = []
-        # Abort the failed merge to leave the repo clean
         try:
             conflict_files = git.conflict_files(project_path)
             git.run_git(["merge", "--abort"], cwd=project_path)
@@ -238,18 +230,8 @@ def merge_task(project_path: Path, task_name: str) -> str:
             pass
         update_task_status(project_path, task_name, TaskStatus.blocked)
         conflict_summary = ", ".join(conflict_files) if conflict_files else "unknown files"
-        init_note = ""
-        if any(Path(path).name == "__init__.py" for path in conflict_files):
-            init_note = " Note: __init__.py conflicts are often expected when parallel branches update exports/imports."
-        raise ValueError(f"Merge conflict: {conflict_summary}.{init_note} {e}") from e
+        raise ValueError(f"Merge conflict: {conflict_summary}. {e}") from e
 
-    # Close acpx session before removing worktree
-    run_info = _get_latest_run_info(project_path, task_name)
-    last_agent = run_info.get("last_agent")
-    if last_agent:
-        close_session(project_path, task_name, last_agent)
-
-    # Clean up worktree if exists
     worktree_path = project_path / "worktrees" / task_name
     if worktree_path.exists():
         try:
@@ -257,13 +239,11 @@ def merge_task(project_path: Path, task_name: str) -> str:
         except git.GitError:
             pass
 
-    # Delete branch
     try:
         git.run_git(["branch", "-D", branch], cwd=project_path)
     except git.GitError:
         pass
 
-    # Archive
     _archive_task(project_path, task_name)
     return commit
 
@@ -273,26 +253,31 @@ def _archive_task(project_path: Path, task_name: str) -> None:
     src = config.task_dir(project_path, task_name)
     date_prefix = datetime.now().strftime("%Y-%m-%d")
     dest = config.archive_dir(project_path) / f"{date_prefix}-{task_name}"
-
-    # Update status before archiving
     update_task_status(project_path, task_name, TaskStatus.done)
     shutil.move(str(src), str(dest))
 
 
-def _get_latest_run_info(project_path: Path, task_name: str) -> dict:
-    """Get info about the latest run for a task."""
-    rd = config.runs_dir(project_path, task_name)
-    if not rd.exists():
-        return {"run_number": 0, "last_purpose": None, "last_agent": None, "last_event": None}
+def _run_files(project_path: Path, task_name: str) -> list[Path]:
+    run_dir = config.runs_dir(project_path, task_name)
+    if run_dir.exists():
+        return sorted(run_dir.glob("*.md"))
+    return []
 
-    run_files = sorted(rd.glob("*.md"))
+
+def _get_latest_run_info(project_path: Path, task_name: str) -> dict:
+    """Get summary info about latest run."""
+    run_files = _run_files(project_path, task_name)
     if not run_files:
-        return {"run_number": 0, "last_purpose": None, "last_agent": None, "last_event": None}
+        return {
+            "run_number": 0,
+            "last_agent": None,
+            "last_status": None,
+            "last_event": None,
+        }
 
     latest = markdown.read_frontmatter(run_files[-1])
     return {
         "run_number": len(run_files),
-        "last_purpose": latest.get("purpose"),
         "last_agent": latest.get("agent"),
         "last_status": latest.get("status"),
         "last_event": latest.get("status"),
@@ -301,22 +286,17 @@ def _get_latest_run_info(project_path: Path, task_name: str) -> dict:
 
 def _get_all_runs(project_path: Path, task_name: str) -> list[dict]:
     """Get all run records for a task."""
-    rd = config.runs_dir(project_path, task_name)
-    if not rd.exists():
-        return []
-
-    runs = []
-    for rf in sorted(rd.glob("*.md")):
-        post = frontmatter.load(str(rf))
-        run_data = dict(post.metadata)
-        run_data["body"] = post.content
-        runs.append(run_data)
+    run_files = _run_files(project_path, task_name)
+    runs: list[dict] = []
+    for file in run_files:
+        post = frontmatter.load(str(file))
+        data = dict(post.metadata)
+        data["body"] = post.content
+        runs.append(data)
     return runs
 
 
 def next_run_number(project_path: Path, task_name: str) -> int:
-    """Get the next run number for a task."""
-    rd = config.runs_dir(project_path, task_name)
-    if not rd.exists():
-        return 1
-    return len(list(rd.glob("*.md"))) + 1
+    """Get next run number for a task."""
+    run_files = _run_files(project_path, task_name)
+    return len(run_files) + 1

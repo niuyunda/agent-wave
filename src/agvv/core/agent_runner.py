@@ -72,8 +72,8 @@ def _has_staged_changes(cwd: Path) -> bool:
 
 
 def _auto_commit_if_needed(cwd: Path) -> None:
-    purpose = os.environ.get("AGVV_RUN_PURPOSE")
-    if purpose not in {"implement", "repair"}:
+    mode = os.environ.get("AGVV_RUN_PURPOSE")
+    if mode not in {"implement", "repair"}:
         return
     if not _has_working_tree_changes(cwd):
         return

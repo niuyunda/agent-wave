@@ -68,8 +68,12 @@ def runs_dir(project_path: Path, task_name: str) -> Path:
 
 
 def issues_cache_path() -> Path:
-    return ISSUES_CACHE_FILE
+    return AGVV_HOME / "issues.json"
 
 
 def daemon_config_path() -> Path:
-    return DAEMON_CONFIG_FILE
+    return AGVV_HOME / "daemon.conf"
+
+
+def feedback_path() -> Path:
+    return AGVV_HOME / "feedback.json"

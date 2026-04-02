@@ -47,17 +47,7 @@
 ### Phase A: 环境与能力探测
 
 1. 创建轮次目录并记录时间戳。
-2. 运行 `agvv --help`，记录可用命令面（`projects/tasks/daemon/run/checkpoint/session/feedback`）。
-3. 若预期命令缺失，立即登记为缺陷并继续测试其余路径。
-
-推荐命令：
-
-```bash
-mkdir -p ~/projects/test/testN/{app-web,cases,tasks,reports/feature,reports/robustness,artifacts}
-agvv --help | tee ~/projects/test/testN/artifacts/agvv-help.txt
-agvv daemon start
-agvv daemon status
-```
+2. 运行 `agvv --help`，记录可用命令面
 
 ### Phase B: 构造测试项目矩阵
 
@@ -91,17 +81,11 @@ agvv daemon status
 
 对每个 feature 必须执行 review，并生成报告。
 
-优先使用 CLI（若当前版本可用）：
+替代 review 路径（任选其一）：
 
-```bash
-agvv run start <task_name> --purpose review --agent codex --base-branch main --project <repo_path>
-```
-
-若当前 CLI 未暴露 `run` 子命令：
-
-1. 将其记为 CLI 能力缺陷。
-2. 使用 `agvv` 已支持的路径完成评审闭环（例如基于任务报告或替代 review task）。
-3. 报告中明确标注“预期 review run 能力是否可达”。
+1. 为任务重新添加 review任务：`agvv tasks add --project <repo> --file <task.md>` 并设置 purpose 为 review
+2. 依赖 daemon 在任务完成后的自动 review 编排
+3. 使用 `agvv feedback` 记录评审结果
 
 ### Phase E: 按 review 结果修复
 
@@ -203,3 +187,4 @@ agvv run start <task_name> --purpose review --agent codex --base-branch main --p
 - 不以“单次通过”视为稳定，关键流程至少复验 2 次。
 - 不手工修改结果统计，报告由执行事实生成。
 - 每轮结束前，确保测试资产完整落盘（任务、日志、报告、修复记录）。
+

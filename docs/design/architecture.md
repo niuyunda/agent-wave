@@ -2,225 +2,190 @@
 
 ## Runtime Model
 
-agvv has two parts:
+agvv has two runtime pieces:
 
-- a CLI used by the orchestrator agent
-- a background daemon that reconciles and monitors active runs
+- CLI entrypoint (`agvv`)
+- daemon monitor (`agvv daemon start`)
 
-```bash
-agvv daemon start
-agvv daemon stop
-agvv daemon status
-```
+Top-level CLI surface is intentionally small:
 
-The daemon's in-memory view is only a cache. The source of truth is always the filesystem inside each repository's `.agvv/` directory. After a restart, the daemon rebuilds state from files.
+- `agvv daemon`
+- `agvv projects`
+- `agvv tasks`
+- `agvv feedback`
+
+The repository still contains run/session/checkpoint modules under `src/agvv/core` and `src/agvv/cli`, but they are not mounted as top-level commands in `src/agvv/cli/main.py`.
+
+Daemon state in memory is a cache only. Source of truth is persisted files.
 
 ## Persistent State
 
-All project-level state lives inside the repository:
+Per project:
 
 ```text
-my-project/
-├── src/
-├── .agvv/
-│   ├── config.json
-│   ├── hooks/
-│   │   ├── after_create.sh
-│   │   ├── before_run.sh
-│   │   └── after_run.sh
-│   └── tasks/
-│       ├── fix-login-bug/
-│       │   ├── task.md
-│       │   └── runs/
-│       │       ├── 001-implement.md
-│       │       └── 001-implement.runtime.json
-│       └── archive/
-│           └── 2026-03-30-fix-login-bug/
-└── package.json
+<project>/
+├── worktrees/
+│   └── <task>/
+└── .agvv/
+    ├── config.json
+    ├── hooks/
+    │   ├── after_create.sh
+    │   ├── before_run.sh
+    │   └── after_run.sh
+    └── tasks/
+        ├── <task>/
+        │   ├── task.md
+        │   └── runs/
+        │       ├── 001-implement.md
+        │       ├── 001-implement.runtime.json
+        │       └── 001-implement.log
+        └── archive/
+            └── 2026-04-02-<task>/
 ```
 
-Global state stays in the user's home directory:
+Global:
 
 ```text
 ~/.agvv/
 ├── projects.json
 ├── daemon.pid
-└── daemon.log
+├── daemon.log
+└── feedback.json
 ```
-
-The project list is read only from `projects.json` (no import from `projects.md`).
 
 ## Task Record
 
-The orchestrator submits a Markdown file with a `name` and task body:
+Input is markdown with YAML front matter:
 
 ```markdown
 ---
 name: fix-login-bug
----
-
-## Goal
-Fix the white screen issue on the login page in Safari.
-
-## Context
-Users report a white screen after clicking the login button in Safari 17.
-
-## Acceptance Criteria
-- Login works in Safari 17
-- Existing tests still pass
-```
-
-agvv validates the name, creates `.agvv/tasks/fix-login-bug/`, and adds managed fields:
-
-```markdown
----
-name: fix-login-bug
-status: pending
-created_at: 2026-03-30
+agent: codex
+priority: high
 ---
 ```
 
-Rules:
+Task rules:
 
-- `name` is supplied by the orchestrator and must be unique per project
-- `status` and `created_at` are managed by agvv
-- optional `agent` can pin daemon auto-runs to a specific acpx agent (for example `codex`, `claude`)
-- the name is also used to derive the Git branch `agvv/<name>`
+- `name` is required
+- `name` must match `[A-Za-z0-9._-]+`
+- duplicate names are rejected across active and archived tasks in a project
+- missing `status` defaults to `pending`
+- provided `status` must be one of `pending/running/failed/blocked/done`
+- missing `created_at` defaults to `YYYY-MM-DD`
+- unknown front matter keys are preserved
+
+Task branch name is derived as `agvv/<name>`.
 
 ## Run Record
 
-Each run gets a Markdown record:
+Each run stores markdown front matter, for example:
 
 ```markdown
 ---
 purpose: implement
 agent: codex
-status: completed
-started_at: 2026-03-30T10:00:00
-finished_at: 2026-03-30T10:15:00
-checkpoint: abc1234
+status: running
+started_at: 2026-04-02T10:00:00
+finished_at:
+checkpoint:
 pid: 12345
 launcher_pid: 12340
 pgid: 12340
-exit_code: 0
+exit_code:
 base_branch: agvv/fix-login-bug
 base_commit: abc1234
-report_path: reports/agvv/review-login/002-review.md
+report_path:
 ---
 ```
 
-The run body is reserved for result text or structured summaries produced during the run.
+Sidecar runtime JSON (`*.runtime.json`) records live process facts used by daemon reconciliation.
 
-## Runtime Sidecar
+Run log (`*.log`) keeps agent stdout/stderr tail for failure diagnostics.
 
-Each run may also have a sidecar JSON file:
+## Worktree and Ref Strategy
 
-```text
-.agvv/tasks/fix-login-bug/runs/001-implement.runtime.json
-```
+- Implement/repair runs use branch-attached mode (`agvv/<task>`).
+- Review/test runs use detached mode.
+- Detached ref resolution:
+1. `--base-branch` when provided
+2. existing task branch (`agvv/<task>`) if present
+3. main branch fallback
 
-It stores runtime facts needed for monitoring:
+For implement/repair, `base_branch` can seed the task branch when branch does not exist yet.
 
-- `launcher_pid`
-- `agent_pid`
-- `pgid`
-- `started_at`
-- `finished_at`
-- `exit_code`
-- `status`
+## Session Model
 
-This file exists so the daemon can reason about the real coding-agent child process instead of a transient launcher process.
+Before prompting, agvv attempts to ensure an acpx session scoped by:
 
-## Session Lifecycle
+- agent
+- worktree cwd
+- task name
 
-Each task has an associated acpx session. The session is a persistent agent context that retains conversation history across runs.
+Session commands use preferred ordering first (`acpx --cwd ...`) and legacy ordering as fallback for compatibility.
 
-- daemon-started runs ensure a session exists before sending the prompt
-- subsequent runs for the same task reuse the same session (the agent has context from previous runs)
-- `agvv tasks merge` closes the session alongside worktree cleanup
+## Hook Model
 
-agvv delegates session state entirely to acpx. Session data is stored at `~/.acpx/sessions/` and is not duplicated inside `.agvv/`.
+Project config `.agvv/config.json` can define:
 
-The session is scoped by `(agent, worktree cwd, task name)`. The agent process uses a queue-owner pattern: a background process per session handles prompts via IPC, and exits after an idle TTL.
+- `hooks.after_create`
+- `hooks.before_run`
+- `hooks.after_run`
 
-## Worktree Lifecycle
+Behavior:
 
-Worktrees are an internal implementation detail. The orchestrator never has to manage them directly.
+- `after_create`: only when worktree is first created
+- `before_run`: every run; failure aborts run start and removes freshly created worktree
+- `after_run`: best effort; does not overwrite run result on hook failure
 
-- daemon-started runs create the worktree if needed
-- the same task reuses the same worktree across runs
-- `review`/`test` may target an existing branch/ref with `--base-branch` (detached mode)
-- `agvv tasks merge` removes the worktree on success
-- task archive or cleanup also removes the worktree when possible
+## Completion Semantics
 
-## Hooks
+A run is considered successful only when mechanical artifacts are valid:
 
-Project-level hooks can be configured in `.agvv/config.json`:
+- exit code resolves to success
+- checkpoint exists and differs from `base_commit`
+- for `review`, `report_path` exists and is non-empty
 
-```json
-{
-  "agvv_repo": "https://github.com/niuyunda/agent-wave",
-  "hooks": {
-    "after_create": "bash /absolute/path/to/.agvv/hooks/after_create.sh",
-    "before_run": "bash /absolute/path/to/.agvv/hooks/before_run.sh",
-    "after_run": "bash /absolute/path/to/.agvv/hooks/after_run.sh"
-  }
-}
-```
+Special notes:
 
-Hook semantics:
+- implement/repair can auto-commit dirty worktree changes via `agent_runner` on zero exit code
+- failed/timed_out/stalled statuses mark task as `failed`
+- stopped status marks task as `pending`
+- completed status marks task as:
+1. `done` when task has `auto_manage: true`
+2. `pending` otherwise
 
-- `after_create`: runs after the worktree is first created
-- `before_run`: runs before each run; if it fails, the run is aborted
-- `after_run`: runs after each run; failures are logged but do not overwrite the run result
+## Daemon Monitoring
 
-## Monitoring
+Daemon cycle scans registered projects and:
 
-The daemon continuously scans registered projects and checks active tasks.
+- auto-starts pending auto-managed tasks with no prior runs
+- checks liveness of tracked agent PID
+- times out long-running tasks (`DEFAULT_RUN_TIMEOUT`)
+- reconciles stale `running` tasks on startup
 
-Current monitoring responsibilities:
+Non-goals currently:
 
-- auto-start `pending` tasks (default `implement` run)
-- detect dead processes
-- detect timeout
-- reconcile stale `running` state after daemon restart
-
-Completion policy is enforced when a run exits:
-
-- all purposes: must produce a new commit checkpoint (relative to the run’s `base_commit`)
-- `review`: must also produce a repository review report artifact
-
-Current non-goals:
-
-- no full stall detector yet
-- no output-based progress scoring
-
-This is intentional. agvv keeps monitoring minimal and grounded in observable facts.
-
-## Status Query Surface
-
-agvv exposes status through read-only CLI queries:
-
-- `agvv projects` / `agvv projects list`: project summaries
-- `agvv projects show <path>`: one project and task-level statuses
-- `agvv tasks show <name> [--project <path>]`: one task with latest run/feedback
-
-## Reconciliation
-
-When the daemon starts, it rebuilds the real state:
-
-- scan all registered projects
-- find tasks marked `running`
-- read the latest run record and runtime sidecar
-- if the tracked process is already dead, finish the run using the recorded exit code when available
-
-This keeps daemon restarts cheap and safe.
+- no active stall detector enforcement (`DEFAULT_STALL_TIMEOUT` is defined but unused)
+- no output quality scoring
 
 ## Merge Semantics
 
-`agvv tasks merge` checks out the main branch and merges the task branch.
+`agvv tasks merge` preconditions:
 
-- on success: the task is archived and the worktree is removed
-- on conflict: the merge is aborted, the task is marked `blocked`, and the conflicting files are reported
+- project primary worktree must already be on main branch
+- project primary worktree must be clean (ignoring `.agvv/` and `worktrees/`)
 
-This makes merge conflict a visible orchestration event rather than a hidden Git detail.
+On success:
+
+- merge task branch into main
+- close latest session (best effort)
+- remove worktree and delete branch (best effort)
+- move task into archive with date prefix
+- status becomes `done`
+
+On conflict:
+
+- merge is aborted
+- task status becomes `blocked`
+- conflicting files are surfaced in the error

@@ -2,9 +2,9 @@
 
 ## Positioning
 
-agvv is a deterministic orchestration engine for coding agents. It runs as a CLI plus a small background daemon and gives an orchestrator agent the mechanical capabilities needed for multi-project, multi-task parallel coding.
+agvv is a deterministic orchestration engine for coding agents. It is a local CLI plus daemon that handles task metadata, worktree/process lifecycle, and Git checkpoint tracking across repositories.
 
-agvv does not contain an LLM and does not make judgment calls. It focuses on automatic task execution plus status visibility for orchestrators.
+agvv does not include an LLM and does not make quality/product decisions. It focuses on mechanical run control and status visibility for an external orchestrator.
 
 ## Core Principles
 
@@ -47,29 +47,31 @@ The orchestrator should care about projects, tasks, and outcomes. It should not 
 
 ### Task
 
-A task is one unit of work. The orchestrator provides a Markdown file with a unique `name` plus task content. agvv stores it under `.agvv/tasks/<name>/task.md`.
+A task is one unit of work. The orchestrator provides markdown with front matter containing `name`. agvv stores it under `.agvv/tasks/<name>/task.md`.
 
-Task names must be unique within a project. The name is also used for the task branch name: `agvv/<task-name>`.
+Task names must match `[A-Za-z0-9._-]+` and be unique across active and archived tasks in the same project. The name is also used for branch `agvv/<task-name>`.
 
 ### Run
 
-A run is one execution of a task. Each run has a `purpose`:
+A run is one attempt of a task. Purpose values:
 
 - `implement`
 - `test`
 - `review`
 - `repair`
 
-A task may have many runs over time.
+A task can have multiple runs over time. Runtime metadata is recorded in markdown plus a sidecar `.runtime.json`.
 
 ### Checkpoint
 
-A checkpoint is a Git commit read from the task worktree. In agvv, a run is only considered complete if that checkpoint is actually present and readable.
+A checkpoint is a Git commit read from the task worktree. A run is only considered successful when completion artifacts are present and valid.
 
 Completion rules are purpose-aware:
 
 - Every run purpose must produce a **new** checkpoint commit relative to the run’s recorded `base_commit`.
 - `review`: must also write a non-empty repository report file at `report_path`.
+
+Note: implement/repair runs may get an automatic commit from `agent_runner` when the process exits `0` with dirty changes.
 
 ## Practical Boundaries
 
@@ -85,5 +87,5 @@ It is a local deterministic control plane for coding work.
 
 ## Runtime Compatibility Notes
 
-- agvv appends a prompt hint to use `python3` when `python` is not available.
-- This reduces environment-specific failures across Linux distributions and WSL setups.
+- agvv appends runtime prompt guidance: if `python` is unavailable, use `python3`.
+- Top-level CLI intentionally exposes `daemon/projects/tasks/feedback` only; additional run/session/checkpoint internals remain code-level modules.

@@ -1,9 +1,11 @@
-"""feedback command - file issues against the agvv GitHub repo."""
+"""feedback command - save local feedback, optionally file GitHub issues."""
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
@@ -20,77 +22,112 @@ def feedback(
     body: str = typer.Option("", "--body", "-b", help="Issue body description"),
     issue_type: str = typer.Option("bug", "--type", "-T",
                                     help="Issue type: bug, feature, or refactor"),
+    issue: bool = typer.Option(
+        False,
+        "--issue",
+        help="Also file a GitHub issue (default: save local feedback only).",
+    ),
 ) -> None:
-    """File an issue against the agvv GitHub repository.
+    """Record feedback under ``~/.agvv/feedback.json`` and optionally file an issue."""
+    config.ensure_agvv_home()
+    issue_url: str | None = None
+    issue_error: str | None = None
+    repo: str | None = None
 
-    Wraps ``gh issue create`` so agents can report bugs, feature requests,
-    and improvement ideas without leaving the workflow.
-    """
+    if issue:
+        repo = _resolve_repo()
+        try:
+            issue_url = _create_issue(title=title, body=body, issue_type=issue_type, repo=repo)
+        except RuntimeError as exc:
+            issue_error = str(exc)
+
+    entry = {
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "title": title,
+        "body": body,
+        "type": issue_type,
+        "issue_requested": issue,
+    }
+    if repo:
+        entry["issue_repo"] = repo
+    if issue_url:
+        entry["issue_url"] = issue_url
+    if issue_error:
+        entry["issue_error"] = issue_error
+
+    try:
+        feedback_path = _append_feedback(entry)
+    except OSError as exc:
+        print_error(f"Failed to save feedback locally: {exc}")
+        raise typer.Exit(1)
+
+    if issue_error:
+        print_error(f"Feedback saved to {feedback_path}; issue filing failed: {issue_error}")
+        raise typer.Exit(1)
+    if issue_url:
+        print_success("Feedback saved and issue filed", path=str(feedback_path), issue=issue_url)
+        return
+    print_success("Feedback saved", path=str(feedback_path))
+
+
+def _create_issue(title: str, body: str, issue_type: str, repo: str) -> str:
     label_map = {
         "bug": "bug",
         "feature": "enhancement",
         "refactor": "refactor",
     }
     label = label_map.get(issue_type, issue_type)
-
-    repo = _resolve_repo()
-    if not repo:
-        print_error("Could not determine agvv repo. Set gh repo or AGVV_REPO env var.")
-        raise typer.Exit(1)
-
-    label_arg = f"--label={label}"
-    title_arg = f"--title={title}"
-    body_arg = f"--body={body}" if body else ""
-
-    cmd = ["gh", "issue", "create", "--repo", repo, title_arg, label_arg]
-    if body_arg:
-        cmd.append(body_arg)
-
+    cmd = [
+        "gh",
+        "issue",
+        "create",
+        "--repo",
+        repo,
+        "--title",
+        title,
+        "--label",
+        label,
+    ]
+    if body:
+        cmd.extend(["--body", body])
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0:
-            url = result.stdout.strip()
-            print_success(f"Issue filed: {url}")
-        else:
-            print_error(f"gh issue create failed: {result.stderr.strip()}")
-            raise typer.Exit(1)
     except FileNotFoundError:
-        print_error("`gh` CLI not found. Install GitHub CLI: https://cli.github.com/")
-        raise typer.Exit(1)
+        raise RuntimeError("`gh` CLI not found. Install GitHub CLI: https://cli.github.com/")
+    if result.returncode != 0:
+        raise RuntimeError(f"gh issue create failed: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def _append_feedback(entry: dict) -> Path:
+    path = config.feedback_path()
+    entries = _read_feedback_entries(path)
+    entries.append(entry)
+    path.write_text(json.dumps(entries, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return path
+
+
+def _read_feedback_entries(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(payload, list):
+        return []
+    entries: list[dict] = []
+    for item in payload:
+        if isinstance(item, dict):
+            entries.append(item)
+    return entries
 
 
 def _resolve_repo() -> str:
-    """Resolve the agvv repo: gh repo view --json owner,name first, then env, then default."""
-    # Try gh repo view (active git remote)
-    try:
-        result = subprocess.run(
-            ["gh", "repo", "view", "--json", "owner,name", "-q", ".owner.login + \"/\" + .name"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-    # Try env override
-    repo = Path.cwd() / ".agvv"
-    if repo.exists():
-        from agvv.core.project import list_projects
-        entries = list_projects()
-        if entries:
-            entry_path = Path(entries[0].path)
-            agvv_dir = entry_path / ".agvv"
-            cfg = agvv_dir / config.CONFIG_FILE
-            if cfg.exists():
-                try:
-                    raw_cfg = json.loads(cfg.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    raw_cfg = {}
-                if isinstance(raw_cfg, dict):
-                    agvv_repo = raw_cfg.get("agvv_repo")
-                    if isinstance(agvv_repo, str) and agvv_repo.strip():
-                        return _normalize_repo_ref(agvv_repo)
-
+    """Resolve target issue repo for agvv feedback."""
+    from_env = os.environ.get("AGVV_REPO", "").strip()
+    if from_env:
+        return _normalize_repo_ref(from_env)
     return config.DEFAULT_AGVV_REPO
 
 

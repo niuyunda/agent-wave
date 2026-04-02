@@ -11,7 +11,7 @@ import warnings
 from pathlib import Path
 from unittest import mock
 
-from agvv.core import config, project, run, task
+from agvv.core import config, run, project, task
 warnings.filterwarnings("ignore", category=ResourceWarning, module="subprocess")
 
 

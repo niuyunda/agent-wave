@@ -1,39 +1,40 @@
 # agvv
 
-Deterministic project orchestration for coding agents.
+Deterministic orchestration CLI for coding-agent workflows in local Git repositories.
 
-agvv is a small CLI + daemon that gives an orchestrator agent the mechanical tools needed to run parallel coding work across multiple projects. It does not contain an LLM, scoring logic, retry policy, or product judgment. It only manages state, worktrees, processes, and checkpoints.
+`agvv` is a small file-backed control plane: it manages task state, worktrees, process lifecycle, and checkpoint recording. It does not make product decisions, prioritize work, or score output quality.
+
+## Public CLI Surface
+
+Top-level commands currently exposed by `agvv`:
+
+- `agvv daemon`
+- `agvv projects`
+- `agvv tasks`
+- `agvv feedback`
+
+The codebase still contains `run/session/checkpoint` modules under `src/agvv/core` and `src/agvv/cli`, but these are not mounted in the current top-level CLI entrypoint.
 
 ## Core Principles
 
-- Codebase is truth. Persistent state lives in files under each repository's `.agvv/` directory.
-- Checkpoint equals Git commit. A successful run must leave behind a valid commit that the next agent can continue from.
-- Tool, not decider. agvv performs mechanical actions only. The orchestrator agent decides what to create, inspect, and merge next.
-- Minimal surface area. The core concepts are Task, Run, and Checkpoint.
-
-## Architecture
-
-```text
-User <-> Orchestrator Agent <-> agvv (CLI/daemon) <-> Coding Agents
-```
-
-agvv manages task state, worktree lifecycle, coding-agent processes, and checkpoint records. Each task runs in its own Git worktree, so multiple tasks can proceed in parallel.
+- Filesystem is source of truth. Persistent state is stored under each repository's `.agvv/`.
+- Checkpoint equals Git commit. Successful runs must produce a new readable commit.
+- Tool, not decider. agvv performs mechanical actions; orchestration policy stays outside agvv.
+- Small model. Task, Run, and checkpoint metadata are the core state objects.
 
 ## Installation
 
 ```bash
-# Requires Python >= 3.10
 pip install -e .
-
-# Or with uv
+# or
 uv pip install -e .
 ```
 
+Requires Python `>=3.10`.
+
 ## Quick Start
 
-### 1. Add a task
-
-Prepare a `task.md`:
+1. Create a task markdown file (front matter `name` is required):
 
 ```markdown
 ---
@@ -41,148 +42,159 @@ name: fix-login-bug
 ---
 
 ## Goal
-Fix the white screen issue on the login page in Safari.
+Fix login white-screen on Safari 17.
 
 ## Acceptance Criteria
-- Login works on Safari 17
-- Existing tests still pass
+- Login succeeds on Safari 17.
+- Existing tests still pass.
 ```
 
+2. Add task (project is auto-initialized and auto-registered when valid):
+
 ```bash
-agvv tasks add --project ~/projects/my-app --file task.md [--agent codex]
+agvv tasks add --project ~/projects/my-app --file task.md --agent codex
 ```
 
-`tasks add` automatically initializes `.agvv/` metadata and registers the project in `~/.agvv/projects.json` when needed.
-
-### 2. Automatic orchestration
-
-`tasks add` queues the task for daemon execution (`implement` run) and ensures auto-orchestration is enabled for the task.
-If `--agent` is provided, that value is stored on the task and used for daemon auto-runs (passed to `acpx`).
-
-You can control daemon lifecycle explicitly when needed:
+3. Observe status:
 
 ```bash
-agvv daemon start
-agvv daemon status
-```
-
-### 3. Check status
-
-```bash
-# All projects
-agvv projects
-# Alias
-agvv projects list
-
-# One project
 agvv projects show ~/projects/my-app
-
-# Tasks (all projects or one project)
-agvv tasks
-agvv tasks --project ~/projects/my-app
-# Alias
-agvv tasks list --project ~/projects/my-app
-
-# One task
 agvv tasks show fix-login-bug --project ~/projects/my-app
 ```
 
-### 4. Merge
+4. Merge when ready:
 
 ```bash
-agvv tasks merge fix-login-bug
+agvv tasks merge fix-login-bug --project ~/projects/my-app
 ```
 
-On success, agvv merges the task branch into the main branch, removes the worktree, and archives the task. On conflict, agvv aborts the merge, marks the task as `blocked`, and reports the conflicting files.
+## Task and Run Lifecycle
+
+### Task states
+
+- `pending`
+- `running`
+- `failed`
+- `blocked`
+- `done`
+
+### What `tasks add` does
+
+- ensures Git repo + initial commit (if missing)
+- ensures project layout under `.agvv/`
+- creates `.agvv/tasks/<name>/task.md`
+- persists `auto_manage: true`
+- writes queued feedback fields (`feedback_status`, `feedback_message`, `feedback_at`)
+- auto-starts daemon unless `AGVV_SKIP_DAEMON_AUTOSTART` is truthy
+
+### Daemon auto-run behavior
+
+Daemon picks tasks when:
+
+- `status == pending`
+- `auto_manage` is truthy
+- task has no prior runs (`run_number == 0`)
+
+The run purpose is `implement`. Agent resolution order:
+
+1. task front matter `agent`
+2. project config `.agvv/config.json` field `default_agent`
+3. fallback `claude`
+
+### Run completion rules
+
+- Any purpose with exit code `0` but no new checkpoint vs `base_commit` is marked `failed` (`finish_reason=no_new_checkpoint`).
+- `review` runs must also write a non-empty report file (`report_path`), otherwise `failed` (`finish_reason=missing_review_report`).
+- `implement`/`repair` runs can auto-commit dirty worktree changes via `agent_runner` after successful process exit.
+- If task is auto-managed and run completes, task becomes `done`; otherwise it returns to `pending`.
+
+### Merge behavior
+
+`agvv tasks merge` requires:
+
+- project primary worktree is on main branch (`main` or `master`, resolved by Git checks)
+- project worktree is clean (ignoring `.agvv/` and `worktrees/`)
+
+On success:
+
+- merges `agvv/<task>` into main
+- closes last session (best effort)
+- removes task worktree/branch (best effort)
+- archives task under `.agvv/tasks/archive/<date>-<task>`
+- sets task status to `done`
+
+On conflict:
+
+- aborts merge
+- marks task `blocked`
+- returns conflicting file list
 
 ## CLI Reference
 
 ### `daemon`
 
 ```bash
-agvv daemon start      # Start background monitoring
-agvv daemon stop       # Stop the daemon
-agvv daemon status     # Show daemon status
+agvv daemon start
+agvv daemon stop
+agvv daemon status
 ```
 
 ### `projects`
 
 ```bash
-agvv projects                 # Show registered projects with summary counts
-agvv projects list            # Alias of `agvv projects`
-agvv projects show <path>     # One project with task statuses
-agvv projects remove <path>   # Remove from the registry only
+agvv projects
+agvv projects list
+agvv projects show <path>
+agvv projects remove <path>
 ```
 
 ### `tasks`
 
 ```bash
-agvv tasks add --project <path> --file <task.md> [--agent <name>]
 agvv tasks [--project <path>]
-agvv tasks list [--project <path>]   # Alias of `agvv tasks`
-agvv tasks show <task-name>
-agvv tasks merge <task-name>
+agvv tasks list [--project <path>]
+agvv tasks add --project <path> --file <task.md> [--create-project] [--agent <name>]
+agvv tasks show <task-name> [--project <path>]
+agvv tasks merge <task-name> [--project <path>]
 ```
 
-### Global options
+### `feedback`
 
 ```bash
---project <path>    # Explicit project path for commands that need it
+agvv feedback --title <text> [--body <text>] [--type bug|feature|refactor] [--issue]
 ```
 
-Output format: agvv command output is JSON by default (agent-friendly and machine-readable).
+Without `--issue`, feedback is only saved locally at `~/.agvv/feedback.json`.
 
-`projects list` and `tasks list` are compatibility aliases; `projects` and `tasks` are the primary entrypoints.
+## Configuration and Environment
 
-## Workflow
+### Project config (`.agvv/config.json`)
+
+By default agvv writes:
+
+- `agvv_repo`
+- `hooks.after_create`
+- `hooks.before_run`
+- `hooks.after_run`
+
+Optional fields used by runtime logic:
+
+- `default_agent`
+
+### Environment variables
+
+- `AGVV_ACPX_BIN`: override acpx launcher (default: local `acpx`, else `npx acpx@latest`)
+- `AGVV_ACPX_ARGS`: extra args before agent token
+- `AGVV_ACPX_OPTS`: options inserted before agent token (for example `--approve-all --model gpt-5.4`)
+- `AGVV_SKIP_DAEMON_AUTOSTART`: disable daemon autostart in `tasks add`
+- `AGVV_REPO`: target repo for `agvv feedback --issue`
+
+## Storage Layout
 
 ```text
-tasks add -> daemon auto-runs implement -> projects/tasks query
-    -> pass -> merge
-    -> fail -> inspect feedback + retry by updating/requeueing task
-```
-
-Multiple tasks can run in parallel, each in its own worktree. agvv does not decide concurrency policy; it only exposes the current state so the orchestrator can decide.
-
-## Process Model
-
-agvv keeps monitoring simple but reliable:
-
-- Each run is launched through a tiny Python runner.
-- The runner records runtime facts in a sidecar JSON file next to the run record.
-- The daemon monitors the real coding-agent child process, not just a transient launcher process.
-
-This keeps the system small while avoiding false states such as "launcher died but child is still alive".
-
-## Completion Semantics
-
-- Every run purpose must create a **new Git commit checkpoint** during that run (vs. the recorded `base_commit`); exit code `0` without that is `failed` (`finish_reason=no_new_checkpoint`).
-- `review` runs must also write a non-empty report file (default `reports/agvv/<task>/<run>-review.md`).
-- `agvv tasks show` and `agvv projects show` surface latest run/feedback fields for failure inspection.
-
-## Python Command Compatibility
-
-- agvv appends runtime guidance to every run prompt: if `python` is unavailable, use `python3`.
-- For local verification commands in this repo, prefer:
-
-```bash
-PYTHONPATH=src ./.venv/bin/python -m unittest discover -s tests -v
-```
-
-## Project Structure
-
-```text
-src/agvv/
-├── cli/           # Typer command groups
-├── core/          # Task, run, checkpoint, and project logic
-├── daemon/        # Background monitoring and reconciliation
-└── utils/         # Git and Markdown helpers
-```
-
-## State Storage
-
-```text
-<project-repo>/
+<project>/
+├── worktrees/
+│   └── <task>/
 └── .agvv/
     ├── config.json
     ├── hooks/
@@ -190,41 +202,31 @@ src/agvv/
     │   ├── before_run.sh
     │   └── after_run.sh
     └── tasks/
-        ├── fix-login-bug/
+        ├── <task>/
         │   ├── task.md
         │   └── runs/
         │       ├── 001-implement.md
         │       ├── 001-implement.runtime.json
-        │       └── 002-review.md
+        │       └── 001-implement.log
         └── archive/
-            └── 2026-03-30-fix-login-bug/
+            └── 2026-04-02-<task>/
 
 ~/.agvv/
 ├── projects.json
 ├── daemon.pid
-└── daemon.log
+├── daemon.log
+└── feedback.json
 ```
 
-`*.runtime.json` is a lightweight sidecar file that records runtime facts such as `launcher_pid`, `agent_pid`, `pgid`, `started_at`, `finished_at`, and `exit_code`.
-
-## Testing
-
-agvv now includes focused robustness tests for the failure modes that matter most in a daemon-driven orchestration tool:
-
-- failed `before_run` hook rollback
-- stopping an uncooperative run
-- daemon tracking the real child process instead of a dead launcher
-- successful exit without a valid checkpoint
-- checkpoint display after a latest-run failure
-- merge conflict handling and `blocked` task state
-
-Run them with:
+## Development and Testing
 
 ```bash
+agvv --help
+PYTHONPATH=src ./.venv/bin/python -m unittest discover -s tests -v
+PYTHONPATH=src ./.venv/bin/python -m unittest -v tests.test_cli_output
 PYTHONPATH=src ./.venv/bin/python -m unittest -v tests.test_robustness
+AGVV_RUN_REAL_AGENT_E2E=1 PYTHONPATH=src ./.venv/bin/python -m unittest -v tests.test_real_agent_e2e
 ```
-
-The goal is not a huge testing pyramid. The goal is a small set of end-to-end fault-oriented tests that keep the core engine honest.
 
 ## License
 

@@ -100,10 +100,10 @@ def add(
         daemon_started, daemon_pid = _ensure_daemon_running()
         name = task.add_task(project_path, Path(file), agent=selected_agent)
         task.mark_task_auto_managed(project_path, name, enabled=True)
-        feedback_message = "Task accepted. Daemon will auto-run implement."
+        feedback_message = "Task accepted. Daemon will auto-execute."
         if selected_agent:
             feedback_message = (
-                f"Task accepted. Daemon will auto-run implement with agent '{selected_agent}'."
+                f"Task accepted. Daemon will auto-execute with agent '{selected_agent}'."
             )
         task.set_task_feedback(
             project_path,

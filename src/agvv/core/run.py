@@ -1,4 +1,4 @@
-"""Run management logic."""
+"""Task run lifecycle management."""
 
 from __future__ import annotations
 
@@ -15,8 +15,7 @@ import frontmatter
 
 from agvv.core import config
 from agvv.core.acpx import acpx_invocation, acpx_opts, check_acpx_auth
-from agvv.core.models import RunMeta, RunPurpose, RunStatus, TaskStatus
-from agvv.core.session import cancel_session, ensure_session
+from agvv.core.models import RunMeta, RunStatus, TaskStatus
 from agvv.core.task import (
     is_task_auto_managed,
     next_run_number,
@@ -28,25 +27,69 @@ from agvv.utils import git, markdown
 _TERMINAL_RUNTIME_STATUSES = {"finished", "failed", "completed", "stopped"}
 
 
-def start_run(
-    project_path: Path,
-    task_name: str,
-    purpose: RunPurpose,
-    agent: str,
-    base_branch: str | None = None,
-) -> RunMeta:
-    """Start a new run for a task."""
-    # Check authentication before starting
+def read_runtime_info(runtime_file: Path) -> dict:
+    """Read runtime sidecar JSON. Returns an empty dict on failure."""
+    if not runtime_file.exists():
+        return {}
+    try:
+        return json.loads(runtime_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def process_alive(pid: int | None) -> bool:
+    """Return True when PID exists and is not a zombie."""
+    if not pid:
+        return False
+    proc_stat = Path(f"/proc/{pid}/stat")
+    if proc_stat.exists():
+        try:
+            stat_fields = proc_stat.read_text(encoding="utf-8").split()
+            if len(stat_fields) >= 3 and stat_fields[2] == "Z":
+                return False
+        except OSError:
+            pass
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
+def status_from_exit_code(
+    exit_code: object,
+    *,
+    none_status: RunStatus = RunStatus.failed,
+) -> RunStatus:
+    """Map an exit code value to a run status."""
+    if exit_code is None:
+        return none_status
+    try:
+        return RunStatus.completed if int(exit_code) == 0 else RunStatus.failed
+    except (ValueError, TypeError):
+        return RunStatus.failed
+
+
+def status_from_runtime(runtime_or_latest: dict) -> RunStatus:
+    """Infer terminal run status from runtime-side fields."""
+    runtime_status = runtime_or_latest.get("status")
+    if runtime_status == RunStatus.stopped.value:
+        return RunStatus.stopped
+    return status_from_exit_code(runtime_or_latest.get("exit_code"))
+
+
+def start_run(project_path: Path, task_name: str, agent: str) -> RunMeta:
+    """Start a new task run."""
     auth_warning = check_acpx_auth()
     if auth_warning:
         import warnings
+
         warnings.warn(auth_warning)
 
     task_file = config.task_file(project_path, task_name)
     if not task_file.exists():
         raise ValueError(f"Task '{task_name}' not found")
 
-    # Check no run is already active for this task
     active = get_active_run(project_path, task_name)
     if active:
         raise ValueError(
@@ -56,49 +99,29 @@ def start_run(
     branch = f"{config.BRANCH_PREFIX}{task_name}"
     run_num = next_run_number(project_path, task_name)
     worktree_path = project_path / "worktrees" / task_name
-    worktree_ref, detached_mode, branch_start = _resolve_worktree_ref(
-        project_path,
-        task_name,
-        purpose,
-        base_branch,
-    )
 
-    # Create worktree if needed
     worktree_created = False
     if not worktree_path.exists():
         worktree_path.parent.mkdir(parents=True, exist_ok=True)
-        if detached_mode:
-            git.create_detached_worktree(project_path, worktree_path, worktree_ref)
-        else:
-            git.create_worktree(
-                project_path,
-                worktree_path,
-                branch,
-                start_ref=branch_start,
-            )
+        branch_start = None
+        if not git.ref_exists(project_path, branch):
+            branch_start = git.get_main_branch(project_path)
+        git.create_worktree(
+            project_path,
+            worktree_path,
+            branch,
+            start_ref=branch_start,
+        )
         worktree_created = True
         _run_hook(project_path, "after_create", worktree_path)
-    elif detached_mode:
-        try:
-            git.checkout_detached(worktree_path, worktree_ref)
-        except git.GitError as e:
-            raise ValueError(
-                f"Failed to switch worktree '{task_name}' to ref '{worktree_ref}': {e}"
-            ) from e
     else:
         try:
-            _checkout_task_branch(
-                project_path,
-                worktree_path,
-                branch,
-                branch_start,
-            )
+            _checkout_task_branch(project_path, worktree_path, branch)
         except git.GitError as e:
             raise ValueError(
                 f"Failed to switch worktree '{task_name}' to branch '{branch}': {e}"
             ) from e
 
-    # Run before_run hook — on failure, clean up freshly created worktree
     try:
         _run_hook(project_path, "before_run", worktree_path)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
@@ -109,15 +132,8 @@ def start_run(
                 pass
         raise ValueError(f"before_run hook failed: {e}") from e
 
-    # Read task description for prompt
     task_post = frontmatter.load(str(task_file))
-    report_path = _default_report_path(task_name, run_num, purpose)
-    prompt = _build_run_prompt(task_post.content, purpose, report_path)
-
-    # Ensure a persistent acpx session exists for this task.
-    # The session is scoped to (agent, worktree cwd, task name) and will be
-    # reused across runs so the agent retains conversation context.
-    ensure_session(project_path, task_name, agent)
+    prompt = _build_run_prompt(task_post.content)
 
     base_commit = None
     try:
@@ -125,17 +141,13 @@ def start_run(
     except git.GitError:
         pass
 
-    # Launch the real agent under a tiny Python runner that records runtime
-    # facts in a sidecar JSON file. The daemon should track the actual agent
-    # child PID / process group rather than a transient shell wrapper.
-    session_name = task_name
-    agent_cmd = _build_acpx_prompt_command(agent, session_name, prompt)
-    runtime_file = _runtime_file(project_path, task_name, run_num, purpose)
-    log_file = _run_log_file(project_path, task_name, run_num, purpose)
+    agent_cmd = _build_acpx_prompt_command(agent, prompt)
+    runtime_file = _runtime_file(project_path, task_name, run_num)
+    log_file = _run_log_file(project_path, task_name, run_num)
     runtime_env = os.environ.copy()
-    runtime_env["AGVV_RUN_PURPOSE"] = purpose.value
+    runtime_env["AGVV_RUN_PURPOSE"] = "implement"
     runtime_env["AGVV_TASK_NAME"] = task_name
-    runtime_env["AGVV_RUN_AGENT"] = agent
+    runtime_env["AGVV_EXEC_AGENT"] = agent
     with log_file.open("ab") as log_handle:
         proc = subprocess.Popen(
             [
@@ -154,51 +166,34 @@ def start_run(
 
     runtime = _wait_for_runtime_file(runtime_file)
 
-    # Record run
-    recorded_base = (
-        worktree_ref
-        if detached_mode
-        else (base_branch if base_branch else branch)
-    )
     meta = RunMeta(
-        purpose=purpose,
         agent=agent,
         pid=runtime.get("agent_pid") or proc.pid,
         launcher_pid=proc.pid,
         pgid=runtime.get("pgid"),
-        base_branch=recorded_base,
+        base_branch=branch,
         base_commit=base_commit,
-        report_path=report_path,
     )
-    run_file = config.runs_dir(project_path, task_name) / f"{run_num:03d}-{purpose.value}.md"
+    run_file = config.runs_dir(project_path, task_name) / f"{run_num:03d}.md"
     markdown.write_md(run_file, meta.model_dump(mode="json"), "")
 
-    # Update task status
     update_task_status(project_path, task_name, TaskStatus.running)
     set_task_feedback(
         project_path,
         task_name,
         "running",
-        f"Run started ({purpose.value}) with agent '{agent}'.",
+        f"Run started with agent '{agent}'.",
     )
     return meta
 
 
 def stop_run(project_path: Path, task_name: str) -> None:
-    """Stop the active run for a task."""
+    """Stop active run for a task."""
     active = get_active_run(project_path, task_name)
     if not active:
         raise ValueError(f"No active run for task '{task_name}'")
-
-    agent = active.get("agent", "codex")
-
-    # Try acpx cooperative cancel first, but do not trust it blindly. The run
-    # is only stopped once the underlying process group is actually gone.
-    cancel_session(project_path, task_name, agent)
-
     if not _terminate_active_run(active):
         raise ValueError(f"Failed to stop task '{task_name}': process is still alive")
-
     _finish_run(project_path, task_name, RunStatus.stopped)
 
 
@@ -215,65 +210,69 @@ def get_active_run(project_path: Path, task_name: str) -> dict | None:
 
     runtime_status = latest.get("status")
     if runtime_status in _TERMINAL_RUNTIME_STATUSES or latest.get("exit_code") is not None:
-        _finish_run(project_path, task_name, _status_from_runtime(latest))
+        _finish_run(project_path, task_name, status_from_runtime(latest))
         return None
 
     monitor_pid = latest.get("agent_pid") or latest.get("pid")
-    if monitor_pid and not _process_alive(monitor_pid):
+    if monitor_pid and not process_alive(monitor_pid):
         launcher_pid = latest.get("launcher_pid")
-        if latest.get("exit_code") is None and isinstance(launcher_pid, int) and _process_alive(launcher_pid):
+        if latest.get("exit_code") is None and isinstance(launcher_pid, int) and process_alive(launcher_pid):
             runtime_file = _runtime_file_for_run_file(latest["_file"])
             for _ in range(40):
-                refreshed = _read_runtime_info(runtime_file)
+                refreshed = read_runtime_info(runtime_file)
                 if refreshed:
                     latest.update(refreshed)
                 runtime_status = latest.get("status")
                 if runtime_status in _TERMINAL_RUNTIME_STATUSES or latest.get("exit_code") is not None:
-                    _finish_run(project_path, task_name, _status_from_runtime(latest))
+                    _finish_run(project_path, task_name, status_from_runtime(latest))
                     return None
-                if not _process_alive(launcher_pid):
+                if not process_alive(launcher_pid):
                     break
                 time.sleep(0.05)
-            if isinstance(launcher_pid, int) and _process_alive(launcher_pid):
+            if isinstance(launcher_pid, int) and process_alive(launcher_pid):
                 return latest
-        _finish_run(project_path, task_name, _status_from_runtime(latest))
+        _finish_run(project_path, task_name, status_from_runtime(latest))
         return None
     return latest
 
 
 def get_latest_run(project_path: Path, task_name: str) -> dict | None:
-    """Get the latest run record with runtime details if available."""
-    rd = config.runs_dir(project_path, task_name)
-    if not rd.exists():
-        return None
-
-    run_files = sorted(rd.glob("*.md"))
+    """Get latest run record with runtime details if available."""
+    run_files = _run_files(project_path, task_name)
     if not run_files:
         return None
 
-    latest = markdown.read_frontmatter(run_files[-1])
+    latest_file = run_files[-1]
+    latest = markdown.read_frontmatter(latest_file)
     latest["_task_status"] = latest.get("status")
     if latest["_task_status"] == RunStatus.running.value:
-        latest.update(_read_runtime_info(_runtime_file_for_run_file(run_files[-1])))
-    latest["_file"] = run_files[-1]
+        latest.update(read_runtime_info(_runtime_file_for_run_file(latest_file)))
+    latest["_file"] = latest_file
     return latest
 
 
-def finish_run(project_path: Path, task_name: str, status: RunStatus) -> RunStatus | None:
-    """Mark the active run as finished with given status."""
+def finish_run(
+    project_path: Path,
+    task_name: str,
+    status: RunStatus,
+) -> RunStatus | None:
+    """Mark active run as finished with given status."""
     return _finish_run(project_path, task_name, status)
 
 
-def _finish_run(project_path: Path, task_name: str, status: RunStatus) -> RunStatus | None:
-    """Internal: update the latest run record to finished."""
-    rd = config.runs_dir(project_path, task_name)
-    run_files = sorted(rd.glob("*.md"))
+def _finish_run(
+    project_path: Path,
+    task_name: str,
+    status: RunStatus,
+) -> RunStatus | None:
+    """Internal: update latest run record to terminal state."""
+    run_files = _run_files(project_path, task_name)
     if not run_files:
         return None
 
     latest_file = run_files[-1]
     post = frontmatter.load(str(latest_file))
-    runtime = _read_runtime_info(_runtime_file_for_run_file(latest_file))
+    runtime = read_runtime_info(_runtime_file_for_run_file(latest_file))
 
     effective_status = status
     finish_reason = None
@@ -284,7 +283,9 @@ def _finish_run(project_path: Path, task_name: str, status: RunStatus) -> RunSta
         post.metadata["exit_code"] = exit_code
 
     post.metadata["status"] = status.value
-    post.metadata["finished_at"] = runtime.get("finished_at") or datetime.now().isoformat(timespec="seconds")
+    post.metadata["finished_at"] = runtime.get("finished_at") or datetime.now().isoformat(
+        timespec="seconds"
+    )
     if runtime.get("launcher_pid") and not post.metadata.get("launcher_pid"):
         post.metadata["launcher_pid"] = runtime["launcher_pid"]
     if runtime.get("pgid") and not post.metadata.get("pgid"):
@@ -292,10 +293,8 @@ def _finish_run(project_path: Path, task_name: str, status: RunStatus) -> RunSta
     if runtime.get("agent_pid"):
         post.metadata["pid"] = runtime["agent_pid"]
 
-    purpose = _parse_run_purpose(post.metadata.get("purpose"))
     base_commit = post.metadata.get("base_commit")
 
-    # Capture checkpoint / artifacts if completed
     if status == RunStatus.completed:
         worktree_path = project_path / "worktrees" / task_name
         if worktree_path.exists():
@@ -308,20 +307,16 @@ def _finish_run(project_path: Path, task_name: str, status: RunStatus) -> RunSta
             except git.GitError:
                 effective_status = RunStatus.failed
                 finish_reason = "missing_checkpoint"
-                error_message = "Run exited successfully but no valid checkpoint could be read"
+                error_message = (
+                    "Run exited successfully but no valid checkpoint could be read"
+                )
             else:
                 if not post.metadata.get("checkpoint"):
                     effective_status = RunStatus.failed
                     finish_reason = "no_new_checkpoint"
-                    error_message = "Run exited successfully but produced no new commit checkpoint"
-                elif purpose == RunPurpose.review:
-                    report_path = post.metadata.get("report_path")
-                    if not _review_report_exists(worktree_path, report_path):
-                        effective_status = RunStatus.failed
-                        finish_reason = "missing_review_report"
-                        error_message = (
-                            "Review run exited successfully but review report was not written"
-                        )
+                    error_message = (
+                        "Run exited successfully but produced no new commit checkpoint"
+                    )
         else:
             effective_status = RunStatus.failed
             finish_reason = "missing_worktree"
@@ -339,25 +334,24 @@ def _finish_run(project_path: Path, task_name: str, status: RunStatus) -> RunSta
 
     latest_file.write_text(frontmatter.dumps(post) + "\n", encoding="utf-8")
 
-    if effective_status in (RunStatus.failed, RunStatus.timed_out, RunStatus.stalled):
+    if effective_status in (RunStatus.failed, RunStatus.timed_out):
         _terminate_active_run(
             {
                 "agent_pid": runtime.get("agent_pid") or post.metadata.get("pid"),
                 "pid": runtime.get("agent_pid") or post.metadata.get("pid"),
-                "launcher_pid": runtime.get("launcher_pid") or post.metadata.get("launcher_pid"),
+                "launcher_pid": runtime.get("launcher_pid")
+                or post.metadata.get("launcher_pid"),
                 "pgid": runtime.get("pgid") or post.metadata.get("pgid"),
             }
         )
 
-    # Run after_run hook
     worktree_path = project_path / "worktrees" / task_name
     if worktree_path.exists():
         _run_hook(project_path, "after_run", worktree_path)
 
     final_error_message = post.metadata.get("error_message")
 
-    # Update task status based on run result
-    if effective_status in (RunStatus.failed, RunStatus.timed_out, RunStatus.stalled):
+    if effective_status in (RunStatus.failed, RunStatus.timed_out):
         update_task_status(project_path, task_name, TaskStatus.failed)
         set_task_feedback(
             project_path,
@@ -367,12 +361,11 @@ def _finish_run(project_path: Path, task_name: str, status: RunStatus) -> RunSta
             if isinstance(final_error_message, str) and final_error_message.strip()
             else f"Task failed ({effective_status.value}).",
         )
-    elif effective_status in (RunStatus.completed,):
+    elif effective_status == RunStatus.completed:
         if is_task_auto_managed(project_path, task_name):
             update_task_status(project_path, task_name, TaskStatus.done)
             set_task_feedback(project_path, task_name, "completed", "Task completed successfully.")
         else:
-            # After a run completes, task goes back to pending (awaiting next action)
             update_task_status(project_path, task_name, TaskStatus.pending)
             set_task_feedback(
                 project_path,
@@ -388,13 +381,13 @@ def _finish_run(project_path: Path, task_name: str, status: RunStatus) -> RunSta
 
 
 def list_runs(project_path: Path) -> list[dict]:
-    """List all active runs across all tasks in a project."""
-    runs = []
-    td = config.tasks_dir(project_path)
-    if not td.exists():
+    """List running runs across tasks in a project."""
+    runs: list[dict] = []
+    task_root = config.tasks_dir(project_path)
+    if not task_root.exists():
         return runs
 
-    for item in sorted(td.iterdir()):
+    for item in sorted(task_root.iterdir()):
         if item.name == config.ARCHIVE_DIR or not item.is_dir():
             continue
         task_name = item.name
@@ -405,103 +398,33 @@ def list_runs(project_path: Path) -> list[dict]:
     return runs
 
 
-def _resolve_worktree_ref(
-    project_path: Path,
-    task_name: str,
-    purpose: RunPurpose,
-    base_branch: str | None,
-) -> tuple[str, bool, str | None]:
-    """Resolve how the worktree is created.
-
-    Returns ``(ref, detached_mode, start_ref)``. When ``detached_mode`` is True,
-    ``ref`` is checked out detached. When False, ``ref`` is the task branch name
-    and ``start_ref`` (if set) is the commit-ish for a newly created branch.
-    """
-    task_branch = f"{config.BRANCH_PREFIX}{task_name}"
-    if purpose in {RunPurpose.review, RunPurpose.test}:
-        if base_branch:
-            if not git.ref_exists(project_path, base_branch):
-                raise ValueError(f"Base branch/ref does not exist: {base_branch}")
-            return base_branch, True, None
-        if git.ref_exists(project_path, task_branch):
-            return task_branch, True, None
-        return git.get_main_branch(project_path), True, None
-    if base_branch:
-        if not git.ref_exists(project_path, base_branch):
-            raise ValueError(f"Base branch/ref does not exist: {base_branch}")
-        return task_branch, False, base_branch
-    return task_branch, False, None
+def _run_files(project_path: Path, task_name: str) -> list[Path]:
+    run_dir = config.runs_dir(project_path, task_name)
+    if run_dir.exists():
+        return sorted(run_dir.glob("*.md"))
+    return []
 
 
-def _checkout_task_branch(
-    project_path: Path,
-    worktree_path: Path,
-    branch: str,
-    start_ref: str | None,
-) -> None:
-    """Ensure branch-based runs execute on the task branch."""
-    attach_ref = start_ref
-    if attach_ref is None and not git.ref_exists(project_path, branch):
+def _checkout_task_branch(project_path: Path, worktree_path: Path, branch: str) -> None:
+    attach_ref = None
+    if not git.ref_exists(project_path, branch):
         attach_ref = git.get_main_branch(project_path)
     git.checkout_branch(worktree_path, branch, start_ref=attach_ref)
 
 
-def _default_report_path(task_name: str, run_num: int, purpose: RunPurpose) -> str | None:
-    if purpose != RunPurpose.review:
-        return None
-    return f"reports/agvv/{task_name}/{run_num:03d}-{purpose.value}.md"
-
-
-def _build_run_prompt(task_body: str, purpose: RunPurpose, report_path: str | None) -> str:
+def _build_run_prompt(task_body: str) -> str:
     parts = [task_body.rstrip()]
     parts.append("")
     parts.append("## AGVV Runtime Notes")
     parts.append("- Python command compatibility: if `python` is unavailable, use `python3`.")
-    if purpose == RunPurpose.review and report_path:
-        parts.append(f"- AGVV_REPORT_PATH={report_path}")
-        parts.append(
-            "- Write your review report to the AGVV_REPORT_PATH file before you finish."
-        )
     return "\n".join(parts).strip() + "\n"
 
 
-def _parse_run_purpose(raw_purpose: object) -> RunPurpose | None:
-    if not isinstance(raw_purpose, str):
-        return None
-    try:
-        return RunPurpose(raw_purpose)
-    except ValueError:
-        return None
-
-
-def _review_report_exists(worktree_path: Path, report_path: object) -> bool:
-    if not isinstance(report_path, str) or not report_path.strip():
-        return False
-    target = worktree_path / report_path
-    if not target.exists() or not target.is_file():
-        return False
-    try:
-        return bool(target.read_text(encoding="utf-8").strip())
-    except OSError:
-        return False
-
-
-
-def _build_acpx_prompt_command(agent: str, session_name: str, prompt: str) -> list[str]:
-    """Build an acpx command to send a prompt to a persistent session.
-
-    Uses the session-based prompt flow instead of one-shot exec. The session
-    must already exist (created via ensure_session). The agent retains
-    conversation context across prompts within the same session.
-
-    Environment variables:
-        AGVV_ACPX_OPTS: Additional options for acpx (e.g., --approve-all, --model gpt-5.4)
-        Note: Options like --approve-all must come BEFORE the agent name.
-    """
+def _build_acpx_prompt_command(agent: str, prompt: str) -> list[str]:
+    """Build an acpx one-shot prompt command."""
     acpx_bin, acpx_args = acpx_invocation()
     opts = acpx_opts()
-
-    return [acpx_bin, *acpx_args, *opts, agent, "-s", session_name, prompt]
+    return [acpx_bin, *acpx_args, *opts, agent, prompt]
 
 
 def _run_hook(project_path: Path, hook_name: str, worktree_path: Path) -> None:
@@ -532,56 +455,30 @@ def _run_hook(project_path: Path, hook_name: str, worktree_path: Path) -> None:
             capture_output=True,
         )
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
-        # before_run failure should abort, others just log
         if hook_name == "before_run":
             raise
 
 
-def _runtime_file(project_path: Path, task_name: str, run_num: int, purpose: RunPurpose) -> Path:
-    return config.runs_dir(project_path, task_name) / f"{run_num:03d}-{purpose.value}.runtime.json"
+def _runtime_file(project_path: Path, task_name: str, run_num: int) -> Path:
+    return config.runs_dir(project_path, task_name) / f"{run_num:03d}.runtime.json"
 
 
 def _runtime_file_for_run_file(run_file: Path) -> Path:
     return run_file.with_suffix(".runtime.json")
 
 
-def _run_log_file(project_path: Path, task_name: str, run_num: int, purpose: RunPurpose) -> Path:
-    return config.runs_dir(project_path, task_name) / f"{run_num:03d}-{purpose.value}.log"
+def _run_log_file(project_path: Path, task_name: str, run_num: int) -> Path:
+    return config.runs_dir(project_path, task_name) / f"{run_num:03d}.log"
 
 
 def _run_log_file_for_run_file(run_file: Path) -> Path:
     return run_file.with_suffix(".log")
 
 
-def _read_runtime_info(runtime_file: Path) -> dict:
-    if not runtime_file.exists():
-        return {}
-    try:
-        return json.loads(runtime_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def _status_from_runtime(runtime_or_latest: dict) -> RunStatus:
-    """Infer terminal run status from runtime-side fields."""
-    runtime_status = runtime_or_latest.get("status")
-    if runtime_status == RunStatus.stopped.value:
-        return RunStatus.stopped
-
-    exit_code = runtime_or_latest.get("exit_code")
-    if exit_code is None:
-        return RunStatus.failed
-
-    try:
-        return RunStatus.completed if int(exit_code) == 0 else RunStatus.failed
-    except (ValueError, TypeError):
-        return RunStatus.failed
-
-
 def _wait_for_runtime_file(runtime_file: Path, timeout_s: float = 1.0) -> dict:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        runtime = _read_runtime_info(runtime_file)
+        runtime = read_runtime_info(runtime_file)
         if runtime.get("pgid") or runtime.get("agent_pid"):
             return runtime
         time.sleep(0.05)
@@ -602,24 +499,6 @@ def _read_run_log_tail(log_file: Path, max_chars: int = 2000) -> str | None:
     return content
 
 
-def _process_alive(pid: int | None) -> bool:
-    if not pid:
-        return False
-    proc_stat = Path(f"/proc/{pid}/stat")
-    if proc_stat.exists():
-        try:
-            stat_fields = proc_stat.read_text(encoding="utf-8").split()
-            if len(stat_fields) >= 3 and stat_fields[2] == "Z":
-                return False
-        except OSError:
-            pass
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError):
-        return False
-
-
 def _kill_active_process_group(active: dict, sig: int) -> None:
     pgid = active.get("pgid")
     pid = active.get("pid") or active.get("launcher_pid")
@@ -636,15 +515,13 @@ def _terminate_active_run(active: dict) -> bool:
     monitor_pid = active.get("agent_pid") or active.get("pid")
     launcher_pid = active.get("launcher_pid")
     pgid = active.get("pgid")
-    if not _process_alive(monitor_pid) and not _process_alive(launcher_pid):
+    if not process_alive(monitor_pid) and not process_alive(launcher_pid):
         return True
 
-    # Avoid signaling a recycled process-group id when no tracked member still
-    # belongs to that pgid.
     if pgid:
         has_tracked_member = False
         for pid in (monitor_pid, launcher_pid):
-            if not _process_alive(pid):
+            if not process_alive(pid):
                 continue
             try:
                 if os.getpgid(pid) == pgid:
@@ -658,27 +535,27 @@ def _terminate_active_run(active: dict) -> bool:
             active["pgid"] = None
 
     for _ in range(20):
-        if not _process_alive(monitor_pid) and not _process_alive(launcher_pid):
+        if not process_alive(monitor_pid) and not process_alive(launcher_pid):
             break
         time.sleep(0.1)
 
-    if _process_alive(monitor_pid) or _process_alive(launcher_pid):
+    if process_alive(monitor_pid) or process_alive(launcher_pid):
         _kill_active_process_group(active, signal.SIGTERM)
         for _ in range(30):
-            if not _process_alive(monitor_pid) and not _process_alive(launcher_pid):
+            if not process_alive(monitor_pid) and not process_alive(launcher_pid):
                 break
             time.sleep(0.1)
 
-    if _process_alive(monitor_pid) or _process_alive(launcher_pid):
+    if process_alive(monitor_pid) or process_alive(launcher_pid):
         _kill_active_process_group(active, signal.SIGKILL)
         for _ in range(20):
-            if not _process_alive(monitor_pid) and not _process_alive(launcher_pid):
+            if not process_alive(monitor_pid) and not process_alive(launcher_pid):
                 break
             time.sleep(0.1)
 
     for _ in range(20):
-        if not _process_alive(monitor_pid) and not _process_alive(launcher_pid):
+        if not process_alive(monitor_pid) and not process_alive(launcher_pid):
             return True
         time.sleep(0.1)
 
-    return not _process_alive(monitor_pid) and not _process_alive(launcher_pid)
+    return not process_alive(monitor_pid) and not process_alive(launcher_pid)

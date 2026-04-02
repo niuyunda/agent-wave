@@ -4,9 +4,10 @@ This guide is optimized for agents: each command tells you when to use it, which
 
 ## Global patterns
 
-- `--project <path>`: force target repository; use this to avoid ambiguous task lookup.
+- `--project <path>`: pin target repository and avoid cross-project task name ambiguity.
 - Default output is JSON for agent-friendly parsing.
 - Task names come from task front matter `name:`.
+- Top-level commands currently exposed: `daemon`, `projects`, `tasks`, `feedback`.
 
 ## daemon
 
@@ -22,7 +23,7 @@ agvv daemon stop
 
 ## projects
 
-When to use: inspect or clean up repositories managed by agvv.
+When to use: inspect or clean up registered repositories.
 
 Commands:
 
@@ -39,7 +40,7 @@ Parameters:
 
 ## tasks
 
-When to use: create work items, inspect task state, or merge completed work.
+When to use: create work items, inspect task state/run history, merge completed work.
 
 Commands:
 
@@ -59,7 +60,23 @@ Parameters:
 - `--agent`: optional acpx agent name for daemon auto-run (for example `codex`, `claude`).
 - `<task_name>`: unique task id in project.
 
-`tasks add` always enables automatic orchestration and queues the task for daemon execution.
+`tasks add` always enables automatic orchestration (`auto_manage: true`), queues task feedback as `queued`, and auto-starts daemon unless `AGVV_SKIP_DAEMON_AUTOSTART` is set.
+
+## feedback
+
+When to use: persist operator feedback locally and optionally create a GitHub issue.
+
+Command:
+
+```bash
+agvv feedback --title <text> [--body <text>] [--type bug|feature|refactor] [--issue]
+```
+
+Behavior:
+
+- always writes to `~/.agvv/feedback.json`
+- with `--issue`, also runs `gh issue create` against `AGVV_REPO` or default repo
+- failure to create issue still keeps local feedback entry with error details
 
 ## Agent friendly example flow
 

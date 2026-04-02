@@ -48,7 +48,7 @@ def _project_status_payload(pp: Path) -> dict:
             "name": item.get("name"),
             "status": item.get("status"),
             "feedback_status": item.get("feedback_status"),
-            "last_purpose": item.get("last_purpose"),
+            "last_agent": item.get("last_agent"),
             "last_status": item.get("last_status"),
             "run_number": item.get("run_number"),
         }
