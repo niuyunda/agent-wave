@@ -1,4 +1,4 @@
-# agvv Agent Skill (Current Behavior)
+# agvv
 
 ## 1) Role Boundary
 

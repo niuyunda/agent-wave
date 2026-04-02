@@ -133,7 +133,7 @@ def start_run(project_path: Path, task_name: str, agent: str) -> RunMeta:
         raise ValueError(f"before_run hook failed: {e}") from e
 
     task_post = frontmatter.load(str(task_file))
-    prompt = _build_run_prompt(task_post.content)
+    prompt = _build_run_prompt(task_post.content, str(project_path), str(worktree_path))
 
     base_commit = None
     try:
@@ -412,8 +412,20 @@ def _checkout_task_branch(project_path: Path, worktree_path: Path, branch: str) 
     git.checkout_branch(worktree_path, branch, start_ref=attach_ref)
 
 
-def _build_run_prompt(task_body: str) -> str:
+def _build_run_prompt(task_body: str, project_path: str, worktree_path: str) -> str:
     parts = [task_body.rstrip()]
+    parts.append("")
+    parts.append("## AGVV Path Remapping — READ CAREFULLY")
+    parts.append((
+        f"Project root:  {project_path}\n"
+        f"Worktree root: {worktree_path}\n\n"
+        "ALL file paths in this task are relative to the WORKTREE ROOT.\n"
+        "The worktree IS the project root for this task.\n"
+        "Do NOT write any files outside the worktree directory.\n"
+        "If this task references a path like /home/yunda/projects/test/saas-app/backend,\n"
+        "interpret it as worktrees/<task-name>/backend and write there.\n"
+        "The git checkpoint will be created inside the worktree — all changes must be committed there."
+    ))
     parts.append("")
     parts.append("## AGVV Runtime Notes")
     parts.append("- Python command compatibility: if `python` is unavailable, use `python3`.")
