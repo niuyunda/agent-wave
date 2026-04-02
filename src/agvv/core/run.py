@@ -17,7 +17,12 @@ from agvv.core import config
 from agvv.core.acpx import acpx_invocation, acpx_opts, check_acpx_auth
 from agvv.core.models import RunMeta, RunPurpose, RunStatus, TaskStatus
 from agvv.core.session import cancel_session, ensure_session
-from agvv.core.task import next_run_number, update_task_status
+from agvv.core.task import (
+    is_task_auto_managed,
+    next_run_number,
+    set_task_feedback,
+    update_task_status,
+)
 from agvv.utils import git, markdown
 
 _TERMINAL_RUNTIME_STATUSES = {"finished", "failed", "completed", "stopped"}
@@ -170,6 +175,12 @@ def start_run(
 
     # Update task status
     update_task_status(project_path, task_name, TaskStatus.running)
+    set_task_feedback(
+        project_path,
+        task_name,
+        "running",
+        f"Run started ({purpose.value}) with agent '{agent}'.",
+    )
     return meta
 
 
@@ -343,14 +354,35 @@ def _finish_run(project_path: Path, task_name: str, status: RunStatus) -> RunSta
     if worktree_path.exists():
         _run_hook(project_path, "after_run", worktree_path)
 
+    final_error_message = post.metadata.get("error_message")
+
     # Update task status based on run result
     if effective_status in (RunStatus.failed, RunStatus.timed_out, RunStatus.stalled):
         update_task_status(project_path, task_name, TaskStatus.failed)
+        set_task_feedback(
+            project_path,
+            task_name,
+            "failed",
+            final_error_message
+            if isinstance(final_error_message, str) and final_error_message.strip()
+            else f"Task failed ({effective_status.value}).",
+        )
     elif effective_status in (RunStatus.completed,):
-        # After a run completes, task goes back to pending (awaiting next action)
-        update_task_status(project_path, task_name, TaskStatus.pending)
+        if is_task_auto_managed(project_path, task_name):
+            update_task_status(project_path, task_name, TaskStatus.done)
+            set_task_feedback(project_path, task_name, "completed", "Task completed successfully.")
+        else:
+            # After a run completes, task goes back to pending (awaiting next action)
+            update_task_status(project_path, task_name, TaskStatus.pending)
+            set_task_feedback(
+                project_path,
+                task_name,
+                "completed",
+                "Run completed successfully. Task is pending next action.",
+            )
     elif effective_status == RunStatus.stopped:
         update_task_status(project_path, task_name, TaskStatus.pending)
+        set_task_feedback(project_path, task_name, "stopped", "Run stopped by operator.")
 
     return effective_status
 

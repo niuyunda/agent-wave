@@ -64,6 +64,28 @@ class TaskTest(AgvvRepoTestCase):
         body = frontmatter.load(str(tf)).content
         self.assertIn("Body line.", body)
 
+    def test_add_task_agent_option_overrides_source_frontmatter(self) -> None:
+        repo = self._create_project_repo("task-agent-override")
+        src = self.tmp_path / "agent-task.md"
+        src.write_text(
+            textwrap.dedent(
+                """\
+                ---
+                name: agent-task
+                agent: claude
+                ---
+
+                Task body.
+                """
+            ),
+            encoding="utf-8",
+        )
+        task.add_task(repo, src, agent="codex")
+
+        tf = config.task_file(repo, "agent-task")
+        meta = frontmatter.load(str(tf)).metadata
+        self.assertEqual(meta["agent"], "codex")
+
     def test_add_task_rejects_invalid_status_in_source(self) -> None:
         repo = self._create_project_repo("task-bad-status")
         src = self.tmp_path / "bad-status.md"

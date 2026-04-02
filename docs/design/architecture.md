@@ -84,6 +84,7 @@ Rules:
 
 - `name` is supplied by the orchestrator and must be unique per project
 - `status` and `created_at` are managed by agvv
+- optional `agent` can pin daemon auto-runs to a specific acpx agent (for example `codex`, `claude`)
 - the name is also used to derive the Git branch `agvv/<name>`
 
 ## Run Record
@@ -134,10 +135,9 @@ This file exists so the daemon can reason about the real coding-agent child proc
 
 Each task has an associated acpx session. The session is a persistent agent context that retains conversation history across runs.
 
-- `agvv runs start` ensures a session exists before sending the prompt
+- daemon-started runs ensure a session exists before sending the prompt
 - subsequent runs for the same task reuse the same session (the agent has context from previous runs)
 - `agvv tasks merge` closes the session alongside worktree cleanup
-- sessions can be managed explicitly with `agvv sessions ensure/close/status/list`
 
 agvv delegates session state entirely to acpx. Session data is stored at `~/.acpx/sessions/` and is not duplicated inside `.agvv/`.
 
@@ -147,7 +147,7 @@ The session is scoped by `(agent, worktree cwd, task name)`. The agent process u
 
 Worktrees are an internal implementation detail. The orchestrator never has to manage them directly.
 
-- `agvv runs start` creates the worktree if needed
+- daemon-started runs create the worktree if needed
 - the same task reuses the same worktree across runs
 - `review`/`test` may target an existing branch/ref with `--base-branch` (detached mode)
 - `agvv tasks merge` removes the worktree on success
@@ -180,6 +180,7 @@ The daemon continuously scans registered projects and checks active tasks.
 
 Current monitoring responsibilities:
 
+- auto-start `pending` tasks (default `implement` run)
 - detect dead processes
 - detect timeout
 - reconcile stale `running` state after daemon restart
@@ -195,6 +196,14 @@ Current non-goals:
 - no output-based progress scoring
 
 This is intentional. agvv keeps monitoring minimal and grounded in observable facts.
+
+## Status Query Surface
+
+agvv exposes status through read-only CLI queries:
+
+- `agvv projects` / `agvv projects list`: project summaries
+- `agvv projects show <path>`: one project and task-level statuses
+- `agvv tasks show <name> [--project <path>]`: one task with latest run/feedback
 
 ## Reconciliation
 

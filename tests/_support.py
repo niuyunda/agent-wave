@@ -162,6 +162,7 @@ class AgvvRepoTestCase(unittest.TestCase):
                 "AGVV_ACPX_BIN": str(self._write_fake_agent()),
                 "AGVV_ACPX_ARGS": "",
                 "AGVV_ACPX_OPTS": "",
+                "AGVV_SKIP_DAEMON_AUTOSTART": "1",
             },
             clear=False,
         )

@@ -110,6 +110,77 @@ class DaemonTest(AgvvRepoTestCase):
         self.assertEqual(latest["status"], "timed_out")
         self.assertEqual(task.show_task(repo, "timeout-task")["status"], TaskStatus.failed.value)
 
+    def test_monitor_cycle_auto_starts_pending_auto_managed_task(self) -> None:
+        repo = self._create_project_repo("daemon-auto-start")
+        self._add_task(repo, "auto-task", "SLEEP=999")
+        task.mark_task_auto_managed(repo, "auto-task", enabled=True)
+
+        server._monitor_cycle()
+
+        active = self._wait_for_active_run(repo, "auto-task")
+        info = task.show_task(repo, "auto-task")
+        self.assertEqual(info["status"], TaskStatus.running.value)
+        self.assertEqual(info["feedback_status"], "running")
+        self.assertEqual(info["runs"][0]["purpose"], "implement")
+        self.assertEqual(info["runs"][0]["pid"], active["pid"])
+
+        run.stop_run(repo, "auto-task")
+
+    def test_monitor_cycle_auto_managed_task_completes_with_terminal_feedback(self) -> None:
+        repo = self._create_project_repo("daemon-auto-complete")
+        self._add_task(repo, "auto-complete-task", "SLEEP=0")
+        task.mark_task_auto_managed(repo, "auto-complete-task", enabled=True)
+
+        server._monitor_cycle()
+        pid = self._latest_run(repo, "auto-complete-task").get("pid")
+        self._wait_for_pid_exit(pid)
+        server._monitor_cycle()
+
+        info = task.show_task(repo, "auto-complete-task")
+        self.assertEqual(info["status"], TaskStatus.done.value)
+        self.assertEqual(info["feedback_status"], "completed")
+        self.assertEqual(info["runs"][0]["status"], "completed")
+
+    def test_monitor_cycle_auto_managed_task_uses_project_default_agent(self) -> None:
+        repo = self._create_project_repo("daemon-auto-agent")
+        self._write_project_config(repo, default_agent="fail")
+        self._add_task(repo, "auto-agent-task", "SLEEP=0")
+        task.mark_task_auto_managed(repo, "auto-agent-task", enabled=True)
+
+        server._monitor_cycle()
+        pid = self._latest_run(repo, "auto-agent-task").get("pid")
+        self._wait_for_pid_exit(pid)
+        server._monitor_cycle()
+
+        info = task.show_task(repo, "auto-agent-task")
+        self.assertEqual(info["status"], TaskStatus.failed.value)
+        self.assertEqual(info["feedback_status"], "failed")
+        self.assertEqual(info["runs"][0]["agent"], "fail")
+        self.assertEqual(info["runs"][0]["status"], "failed")
+
+    def test_monitor_cycle_auto_managed_task_prefers_task_agent_over_project_default(self) -> None:
+        repo = self._create_project_repo("daemon-auto-agent-override")
+        self._write_project_config(repo, default_agent="fail")
+
+        task_file = self.tmp_path / "auto-agent-override-task.md"
+        task_file.write_text(
+            "---\nname: auto-agent-override-task\nagent: success\n---\n\nSLEEP=0\n",
+            encoding="utf-8",
+        )
+        task.add_task(repo, task_file)
+        task.mark_task_auto_managed(repo, "auto-agent-override-task", enabled=True)
+
+        server._monitor_cycle()
+        pid = self._latest_run(repo, "auto-agent-override-task").get("pid")
+        self._wait_for_pid_exit(pid)
+        server._monitor_cycle()
+
+        info = task.show_task(repo, "auto-agent-override-task")
+        self.assertEqual(info["status"], TaskStatus.done.value)
+        self.assertEqual(info["feedback_status"], "completed")
+        self.assertEqual(info["runs"][0]["agent"], "success")
+        self.assertEqual(info["runs"][0]["status"], "completed")
+
     def test_get_daemon_status_cleans_stale_pid_file(self) -> None:
         config.DAEMON_PID_FILE.write_text("999999\n", encoding="utf-8")
 

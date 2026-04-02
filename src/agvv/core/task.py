@@ -15,6 +15,11 @@ from agvv.core.models import RunMeta, RunStatus, TaskStatus
 from agvv.core.session import close_session
 from agvv.utils import git, markdown
 
+AUTO_MANAGE_FIELD = "auto_manage"
+FEEDBACK_STATUS_FIELD = "feedback_status"
+FEEDBACK_MESSAGE_FIELD = "feedback_message"
+FEEDBACK_AT_FIELD = "feedback_at"
+
 
 def validate_task_name(name: str) -> None:
     if not re.match(config.TASK_NAME_PATTERN, name):
@@ -64,10 +69,15 @@ def _frontmatter_for_new_task(post: frontmatter.Post) -> dict[str, Any]:
     return merged
 
 
-def add_task(project_path: Path, task_file_path: Path) -> str:
+def add_task(project_path: Path, task_file_path: Path, agent: str | None = None) -> str:
     """Add a task to a project from a task.md file. Returns task name."""
     post = frontmatter.load(str(task_file_path))
     merged = _frontmatter_for_new_task(post)
+    if agent is not None:
+        normalized = agent.strip()
+        if not normalized:
+            raise ValueError("Agent cannot be empty")
+        merged["agent"] = normalized
     name = merged["name"]
 
     td = config.task_dir(project_path, name)
@@ -147,12 +157,48 @@ def show_task(project_path: Path, task_name: str) -> dict:
     return meta
 
 
-def update_task_status(project_path: Path, task_name: str, status: TaskStatus) -> None:
-    """Update the status field in task.md."""
+def _update_task_frontmatter(project_path: Path, task_name: str, updates: dict[str, object]) -> None:
     tf = config.task_file(project_path, task_name)
     post = frontmatter.load(str(tf))
-    post.metadata["status"] = status.value
+    post.metadata.update(updates)
     tf.write_text(frontmatter.dumps(post) + "\n", encoding="utf-8")
+
+
+def update_task_status(project_path: Path, task_name: str, status: TaskStatus) -> None:
+    """Update the status field in task.md."""
+    _update_task_frontmatter(project_path, task_name, {"status": status.value})
+
+
+def mark_task_auto_managed(project_path: Path, task_name: str, enabled: bool = True) -> None:
+    """Mark whether daemon should auto-schedule this task."""
+    _update_task_frontmatter(project_path, task_name, {AUTO_MANAGE_FIELD: bool(enabled)})
+
+
+def is_task_auto_managed(project_path: Path, task_name: str) -> bool:
+    """Return True when task metadata enables daemon auto scheduling."""
+    tf = config.task_file(project_path, task_name)
+    if not tf.exists():
+        return False
+    post = frontmatter.load(str(tf))
+    raw = post.metadata.get(AUTO_MANAGE_FIELD)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
+def set_task_feedback(project_path: Path, task_name: str, status: str, message: str) -> None:
+    """Persist user-facing task feedback for orchestrator polling."""
+    _update_task_frontmatter(
+        project_path,
+        task_name,
+        {
+            FEEDBACK_STATUS_FIELD: status,
+            FEEDBACK_MESSAGE_FIELD: message,
+            FEEDBACK_AT_FIELD: datetime.now().isoformat(timespec="seconds"),
+        },
+    )
 
 
 def merge_task(project_path: Path, task_name: str) -> str:

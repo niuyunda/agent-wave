@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import typer
 
 from agvv.core import project as proj_mod
 from agvv.core import task
+from agvv.daemon.server import get_daemon_status, start_daemon
 from agvv.utils.format import print_error, print_json, print_success
 
 app = typer.Typer(no_args_is_help=False, invoke_without_command=True)
@@ -29,6 +31,23 @@ def _list_tasks(project: str | None) -> None:
     print_json(all_tasks)
 
 
+def _truthy_env(name: str) -> bool:
+    raw = os.environ.get(name, "")
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _ensure_daemon_running() -> tuple[bool, int | None]:
+    if _truthy_env("AGVV_SKIP_DAEMON_AUTOSTART"):
+        return False, None
+
+    info = get_daemon_status()
+    if info["running"]:
+        return False, info.get("pid")
+
+    pid = start_daemon()
+    return True, pid
+
+
 @app.callback()
 def tasks(
     ctx: typer.Context,
@@ -39,6 +58,14 @@ def tasks(
         _list_tasks(project)
 
 
+@app.command("list")
+def list_cmd(
+    project: str = typer.Option(None, "--project", help="Filter to one project path (omit for all registered projects)"),
+) -> None:
+    """Alias for `agvv tasks`."""
+    _list_tasks(project)
+
+
 @app.command()
 def add(
     project: str = typer.Option(..., "--project", help="Target repository path"),
@@ -46,6 +73,16 @@ def add(
         ...,
         "--file",
         help="Task markdown; YAML front matter must include `name`",
+    ),
+    create_project: bool = typer.Option(
+        False,
+        "--create-project",
+        help="Create --project directory if it does not exist",
+    ),
+    agent: str | None = typer.Option(
+        None,
+        "--agent",
+        help="Agent name passed to acpx for daemon auto-run (for example: codex, claude)",
     ),
 ) -> None:
     """Create a task record from markdown in a project.
@@ -56,10 +93,34 @@ def add(
     """
     try:
         project_path = Path(project).resolve()
+        if create_project and not project_path.exists():
+            project_path.mkdir(parents=True, exist_ok=True)
+        selected_agent = agent.strip() if agent is not None else None
         proj_mod.ensure_project(project_path)
-        name = task.add_task(project_path, Path(file))
-        print_success("Task created", project=str(project_path), task=name)
-    except ValueError as e:
+        daemon_started, daemon_pid = _ensure_daemon_running()
+        name = task.add_task(project_path, Path(file), agent=selected_agent)
+        task.mark_task_auto_managed(project_path, name, enabled=True)
+        feedback_message = "Task accepted. Daemon will auto-run implement."
+        if selected_agent:
+            feedback_message = (
+                f"Task accepted. Daemon will auto-run implement with agent '{selected_agent}'."
+            )
+        task.set_task_feedback(
+            project_path,
+            name,
+            "queued",
+            feedback_message,
+        )
+        print_success(
+            "Task created",
+            project=str(project_path),
+            task=name,
+            agent=selected_agent,
+            orchestration="auto",
+            daemon_started=daemon_started,
+            daemon_pid=daemon_pid,
+        )
+    except (ValueError, RuntimeError) as e:
         print_error(str(e))
         raise typer.Exit(1)
 

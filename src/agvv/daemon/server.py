@@ -13,10 +13,15 @@ from datetime import datetime
 from pathlib import Path
 
 from agvv.core import config
-from agvv.core.models import RunStatus, TaskStatus
+from agvv.core.models import RunPurpose, RunStatus, TaskStatus
 from agvv.core.project import list_projects
-from agvv.core.run import finish_run, get_active_run, get_latest_run
-from agvv.core.task import list_tasks, update_task_status
+from agvv.core.run import finish_run, get_latest_run, start_run
+from agvv.core.task import (
+    list_tasks,
+    mark_task_auto_managed,
+    set_task_feedback,
+    update_task_status,
+)
 
 
 def start_daemon() -> int:
@@ -189,10 +194,17 @@ def _monitor_cycle() -> None:
 
         tasks = list_tasks(project_path)
         for t in tasks:
+            task_name = t.get("name")
+            if not isinstance(task_name, str) or not task_name:
+                continue
+
+            if _is_auto_managed_pending_task(t):
+                _start_auto_managed_task(project_path, task_name, t)
+                continue
+
             if t.get("status") != TaskStatus.running.value:
                 continue
 
-            task_name = t["name"]
             latest = get_latest_run(project_path, task_name)
             if not latest:
                 continue
@@ -222,6 +234,66 @@ def _monitor_cycle() -> None:
                         _log(f"Task {task_name} run timed out after {elapsed:.0f}s; marking {final_status.value}")
                 except (ValueError, TypeError):
                     pass
+
+
+def _is_auto_managed_pending_task(task_meta: dict) -> bool:
+    if task_meta.get("status") != TaskStatus.pending.value:
+        return False
+    raw_auto_manage = task_meta.get("auto_manage")
+    enabled = False
+    if isinstance(raw_auto_manage, bool):
+        enabled = raw_auto_manage
+    elif isinstance(raw_auto_manage, str):
+        enabled = raw_auto_manage.strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return False
+    run_number = task_meta.get("run_number", 0)
+    try:
+        return int(run_number) == 0
+    except (ValueError, TypeError):
+        return False
+
+
+def _auto_run_agent(project_path: Path, task_meta: dict | None = None) -> str:
+    if task_meta:
+        task_agent = task_meta.get("agent")
+        if isinstance(task_agent, str) and task_agent.strip():
+            return task_agent.strip()
+
+    cfg_path = config.project_agvv_dir(project_path) / config.CONFIG_FILE
+    if not cfg_path.exists():
+        return "claude"
+    try:
+        payload = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return "claude"
+    agent = payload.get("default_agent")
+    if isinstance(agent, str) and agent.strip():
+        return agent.strip()
+    return "claude"
+
+
+def _start_auto_managed_task(project_path: Path, task_name: str, task_meta: dict | None = None) -> None:
+    agent = _auto_run_agent(project_path, task_meta)
+    try:
+        mark_task_auto_managed(project_path, task_name, enabled=True)
+        set_task_feedback(
+            project_path,
+            task_name,
+            "queued",
+            f"Task queued for daemon execution with agent '{agent}'.",
+        )
+        start_run(project_path, task_name, RunPurpose.implement, agent)
+        _log(f"Auto-started task {task_name} in {project_path} with agent {agent}")
+    except Exception as exc:
+        update_task_status(project_path, task_name, TaskStatus.failed)
+        set_task_feedback(
+            project_path,
+            task_name,
+            "failed",
+            f"Daemon failed to start task: {exc}",
+        )
+        _log(f"Auto-start failed for task {task_name} in {project_path}: {exc}")
 
 
 def _reconcile() -> None:

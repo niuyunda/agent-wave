@@ -28,6 +28,8 @@ Commands:
 
 ```bash
 agvv projects
+agvv projects list
+agvv projects show <repo_path>
 agvv projects remove <repo_path>
 ```
 
@@ -42,8 +44,9 @@ When to use: create work items, inspect task state, or merge completed work.
 Commands:
 
 ```bash
-agvv tasks add --project <repo_path> --file <task_md>
+agvv tasks add --project <repo_path> --file <task_md> [--create-project] [--agent <name>]
 agvv tasks [--project <repo_path>]
+agvv tasks list [--project <repo_path>]
 agvv tasks show <task_name> [--project <repo_path>]
 agvv tasks merge <task_name> [--project <repo_path>]
 ```
@@ -52,63 +55,17 @@ Parameters:
 
 - `--project`: repository directory (auto-registered and initialized if needed).
 - `--file`: markdown file with front matter `name`.
+- `--create-project`: create `--project` directory when it does not exist.
+- `--agent`: optional acpx agent name for daemon auto-run (for example `codex`, `claude`).
 - `<task_name>`: unique task id in project.
 
-## runs
-
-When to use: execute task work with an agent.
-
-Commands:
-
-```bash
-agvv runs start <task_name> --purpose <implement|review|test|repair> --agent <agent> [--base-branch <ref>] [--project <repo_path>]
-agvv runs status [--project <repo_path>]
-agvv runs stop <task_name> [--project <repo_path>]
-```
-
-Parameters:
-
-- `--purpose`: execution intent and completion gate.
-- `--agent`: acpx agent type (for example `codex`).
-- `--base-branch`: baseline ref for `review` and `test` (recommended).
-
-Completion behavior:
-
-- `implement/repair`: must create a new commit.
-- `review`: must write a non-empty review report file.
-- `test`: exit code determines pass/fail.
-
-## sessions
-
-When to use: manage persistent acpx context per task.
-
-Commands:
-
-```bash
-agvv sessions ensure <task_name> --agent <agent> [--project <repo_path>]
-agvv sessions status <task_name> --agent <agent> [--project <repo_path>]
-agvv sessions close <task_name> --agent <agent> [--project <repo_path>]
-agvv sessions list --agent <agent>
-```
-
-## checkpoints
-
-When to use: read the latest durable output for a task.
-
-Command:
-
-```bash
-agvv checkpoints show <task_name> [--project <repo_path>]
-```
-
-If latest run has no checkpoint, output includes latest-failure context and may include previous checkpoint.
+`tasks add` always enables automatic orchestration and queues the task for daemon execution.
 
 ## Agent friendly example flow
 
 ```bash
 agvv tasks add --project /repo/app --file /tmp/fix-login.md
-agvv runs start fix-login --purpose implement --agent codex --project /repo/app
-agvv checkpoints show fix-login --project /repo/app
-agvv runs start review-login --purpose review --agent codex --base-branch agvv/fix-login --project /repo/app
+agvv projects show /repo/app
+agvv tasks show fix-login --project /repo/app
 agvv tasks merge fix-login --project /repo/app
 ```

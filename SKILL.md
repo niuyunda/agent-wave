@@ -1,158 +1,96 @@
-# agvv Agent Skill (First Principles)
+# agvv Agent Skill (Current CLI)
 
 ## 1) What agvv is
 
-`agvv` is a **deterministic orchestration layer**, not an autonomous coding agent.  
-It does three things: manage state, manage Git worktrees/branches, and record run outcomes.
+`agvv` is a deterministic orchestration layer, not an autonomous coding agent.
 
-First-principles constraints:
+It focuses on:
+- file-backed task state (`.agvv/`)
+- daemon-driven automatic execution
+- durable run outcomes in Git/history
 
-- Truth lives in files and Git (`.agvv/` + commits), not in memory.
-- Durable outputs must be replayable (checkpoint commit or review report file).
-- Quality judgment and prioritization belong to the agent, not to agvv.
+Quality judgment and prioritization still belong to the orchestrator agent.
 
-## 2) What agvv can and cannot do
+## 2) Command surface (authoritative)
 
-Can do:
-
-- task registration (projects auto-registered on `tasks add`)
-- runs start/stop
-- state and checkpoint inspection
-- merge and archive task branches
-
-Cannot do:
-
-- decide whether code quality is acceptable
-- choose retry strategy
-- resolve business conflicts automatically
-
-## 3) Task markdown (`task.md`)
-
-When authoring or editing the markdown file you pass to `agvv tasks add --file`:
-
-- **Reference only:** open `docs/task-template.md` in this repository as an **example shape**, not a mandatory schema. Tasks may be shorter, reorder sections, or skip prose—the goal is useful signal, not bureaucracy.
-- **Worth keeping tight:** **acceptance criteria** (checkable outcomes), **how to test / verify** (commands or explicit manual steps), and **definition of done** (what “finished” means, including no scope creep). Those reduce low-quality or untested handoffs; everything else can stay loose so the agent is not over-constrained.
-
-## 4) Run model (hard requirements)
-
-- Task: one unit of work (`name` must be unique in a project).
-- Run: one execution (`implement | review | test | repair`).
-- Completion gates:
-  - All purposes: MUST create a **new commit** vs. the run’s recorded baseline (`no_new_checkpoint` on failure).
-  - `review`: MUST also write a non-empty report file (default `reports/agvv/<task>/<run>-review.md`; otherwise `missing_review_report`).
-
-## 5) Branch and baseline policy
-
-- `implement/repair`: run on `agvv/<task>`.
-- `review/test`: by default, explicitly pass `--base-branch=<ref>` to avoid wrong baselines.
-- With `--base-branch`, execution is detached; do not expect a new task branch.
-
-## 6) Agent execution protocol (minimal loop)
-
-```bash
-agvv tasks --project <repo>
-agvv runs start <task> --purpose=implement --agent=codex
-agvv runs start <task> --purpose=review --agent=codex --base-branch=<ref>
-agvv runs start <task> --purpose=test --agent=codex --base-branch=<ref>
-agvv tasks show <task>
-agvv checkpoints show <task>
-agvv tasks merge <task>
-```
-
-Execution rules:
-
-- Never treat `exit_code=0` as sufficient success evidence.
-- Never merge when task status is `failed` or `blocked`.
-- `task=pending` with latest run `completed` is normal (waiting for next action).
-- For shell checks, use `python`; fallback to `python3` when unavailable.
-
-## 7) Main commands and common parameters
-
-### Project
-
+Current top-level commands:
+- `agvv daemons`
 - `agvv projects`
+- `agvv tasks`
+- `agvv feedback`
+
+Removed from CLI surface:
+- `runs`
+- `sessions`
+- `checkpoints`
+- `status`
+
+Use `projects/tasks` to inspect state.
+
+## 3) Projects and tasks query model
+
+### Projects
+
+- `agvv projects` (list all)
+- `agvv projects list` (alias of `agvv projects`)
+- `agvv projects show <repo_path>` (single project + task statuses)
 - `agvv projects remove <repo_path>`
 
-### Task
+### Tasks
 
+- `agvv tasks [--project <repo_path>]` (list tasks)
+- `agvv tasks list [--project <repo_path>]` (alias of `agvv tasks`)
+- `agvv tasks show <task_name> [--project <repo_path>]` (single task detail)
 - `agvv tasks add --project <repo_path> --file <task_md>`
-- `agvv tasks [--project <repo_path>]`
-- `agvv tasks show <task_name> [--project <repo_path>]`
 - `agvv tasks merge <task_name> [--project <repo_path>]`
 
-### Run
+## 4) Automatic orchestration behavior
 
-- `agvv runs start <task_name> --purpose <implement|review|test|repair> --agent <agent> [--base-branch <ref>] [--project <repo_path>]`
-- `agvv runs stop <task_name> [--project <repo_path>]`
-- `agvv runs status [--project <repo_path>]`
+- `tasks add` auto-registers/initializes project metadata when needed.
+- `tasks add` marks task `auto_manage=true` and queues feedback for daemon pickup.
+- daemon picks pending auto-managed tasks and starts implement runs automatically.
+- orchestrator observes progress via `projects`, `projects show`, and `tasks show`.
 
-### Session
+## 5) Task name constraints and uniqueness
 
-- `agvv sessions ensure <task_name> --agent <agent> [--project <repo_path>]`
-- `agvv sessions status <task_name> --agent <agent> [--project <repo_path>]`
-- `agvv sessions close <task_name> --agent <agent> [--project <repo_path>]`
-- `agvv sessions list --agent <agent>`
+Hard requirements on `task.md` frontmatter:
+- must include `name`
+- `name` pattern: `[A-Za-z0-9._-]+`
+- name must be unique in current tasks and in archive
 
-### Checkpoint and daemon
+Duplicate names are rejected with a clear error.
 
-- `agvv checkpoints show <task_name> [--project <repo_path>]`
-- `agvv daemons start | status | stop`
+## 6) Task markdown guidance
 
-### Feedback
+When authoring the markdown passed to `tasks add --file`:
+- use `docs/task-template.md` as shape reference only
+- keep acceptance criteria and verification steps explicit
+- keep content concise and executable
 
-- `agvv feedback --title <title> [--body <text>] [--type <bug|feature|refactor>]`
-
-Common high-frequency parameters:
-
-- `--project`: avoid ambiguous project resolution.
-- output is JSON by default; no output-format flag is needed.
-- `--purpose`: required on `runs start`; drives completion gate.
-- `--agent`: required on `runs start/sessions`.
-- `--base-branch`: strongly recommended for `review/test`.
-
-## 8) Example usage
+## 7) Minimal execution loop
 
 ```bash
-# 1) Add task (auto-register project)
+# 1) add task (daemon will orchestrate)
 agvv tasks add --project /repo/app --file /tmp/fix-login.md
 
-# 2) Implement
-agvv runs start fix-login --purpose implement --agent codex --project /repo/app
-agvv runs status --project /repo/app
-agvv checkpoints show fix-login --project /repo/app
-
-# 3) Review and test against implementation branch
-agvv runs start review-login --purpose review --agent codex --base-branch agvv/fix-login --project /repo/app
-agvv runs start test-login --purpose test --agent codex --base-branch agvv/fix-login --project /repo/app
-
-# 4) Merge when ready
+# 2) observe project/task state
+agvv projects
+agvv projects show /repo/app
 agvv tasks show fix-login --project /repo/app
+
+# 3) merge when task is ready
 agvv tasks merge fix-login --project /repo/app
 ```
 
-## 9) Failure handling
+Execution rules:
+- never merge when task status is `failed` or `blocked`
+- inspect `tasks show` before merge
+- use `python`; fallback to `python3` when unavailable
 
-- If any hard gate is not met, treat the run as invalid and re-run with corrected inputs.
-- When ambiguous, inspect `tasks show` and `checkpoints show` before deciding next action.
+## 8) Issue tracking
 
-## 10) Issue tracking
+When agvv behaves incorrectly, document in:
+- `docs/issues/`
+- using `docs/issues/ISSUE_TEMPLATE.md`
 
-When something goes wrong with agvv, document it in the codebase:
-
-**Location:** `/home/yunda/projects/agent-wave/docs/issues/`
-
-**Template:** `docs/issues/ISSUE_TEMPLATE.md` — copy it, rename with date and descriptive name (e.g. `2026-03-31-base-branch-wrong-commit.md`).
-
-**Required frontmatter fields:**
-
-- `name` — short slug
-- `date` — YYYY-MM-DD
-- `type` — bug | enhancement | question | investigation
-- `severity` — critical | high | medium | low | none
-- `status` — open | in-progress | resolved | wonotfix
-- `reproduced` — true | false
-- `affects` — implement | review | test | repair | merge | daemon | cli | unknown
-
-**Write the issue before fixing** — document what happened, steps to reproduce, and evidence. Fix the issue after.
-
-**Default agent:** `claude` (changed from `codex` as of 2026-03-31).
+Write the issue before fixing: include reproduction and evidence.

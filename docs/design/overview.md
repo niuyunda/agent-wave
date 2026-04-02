@@ -4,7 +4,7 @@
 
 agvv is a deterministic orchestration engine for coding agents. It runs as a CLI plus a small background daemon and gives an orchestrator agent the mechanical capabilities needed for multi-project, multi-task parallel coding.
 
-agvv does not contain an LLM and does not make judgment calls. When a decision is needed, agvv exposes state and waits for the orchestrator to choose the next action.
+agvv does not contain an LLM and does not make judgment calls. It focuses on automatic task execution plus status visibility for orchestrators.
 
 ## Core Principles
 
@@ -24,13 +24,14 @@ User
 Orchestrator Agent
   - interprets user intent
   - creates tasks
-  - decides what to run and when
   - reads state and reacts to failures
+  - decides merge/cleanup actions
   <-> CLI
 agvv
   - task state management
   - worktree lifecycle
   - coding-agent process management
+  - automatic daemon scheduling
   - checkpoint recording
   - timeout detection
   - daemon reconciliation
@@ -74,7 +75,7 @@ Completion rules are purpose-aware:
 
 agvv is intentionally not:
 
-- a scheduler with built-in prioritization
+- a scheduler with built-in prioritization beyond pending-task auto dispatch
 - a queueing system
 - a hosted service
 - a web dashboard
