@@ -62,8 +62,8 @@ If `--agent` is provided, that value is stored on the task and used for daemon a
 You can control daemon lifecycle explicitly when needed:
 
 ```bash
-agvv daemons start
-agvv daemons status
+agvv daemon start
+agvv daemon status
 ```
 
 ### 3. Check status
@@ -97,12 +97,12 @@ On success, agvv merges the task branch into the main branch, removes the worktr
 
 ## CLI Reference
 
-### `daemons`
+### `daemon`
 
 ```bash
-agvv daemons start     # Start background monitoring
-agvv daemons stop      # Stop the daemon
-agvv daemons status    # Show daemon status
+agvv daemon start      # Start background monitoring
+agvv daemon stop       # Stop the daemon
+agvv daemon status     # Show daemon status
 ```
 
 ### `projects`

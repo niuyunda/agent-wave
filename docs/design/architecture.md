@@ -8,9 +8,9 @@ agvv has two parts:
 - a background daemon that reconciles and monitors active runs
 
 ```bash
-agvv daemons start
-agvv daemons stop
-agvv daemons status
+agvv daemon start
+agvv daemon stop
+agvv daemon status
 ```
 
 The daemon's in-memory view is only a cache. The source of truth is always the filesystem inside each repository's `.agvv/` directory. After a restart, the daemon rebuilds state from files.

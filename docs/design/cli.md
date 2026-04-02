@@ -8,16 +8,16 @@ This guide is optimized for agents: each command tells you when to use it, which
 - Default output is JSON for agent-friendly parsing.
 - Task names come from task front matter `name:`.
 
-## daemons
+## daemon
 
 When to use: monitor active runs and reconcile stale state.
 
 Commands:
 
 ```bash
-agvv daemons start
-agvv daemons status
-agvv daemons stop
+agvv daemon start
+agvv daemon status
+agvv daemon stop
 ```
 
 ## projects

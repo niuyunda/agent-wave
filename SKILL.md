@@ -14,7 +14,7 @@ Quality judgment and prioritization still belong to the orchestrator agent.
 ## 2) Command surface (authoritative)
 
 Current top-level commands:
-- `agvv daemons`
+- `agvv daemon`
 - `agvv projects`
 - `agvv tasks`
 - `agvv feedback`
@@ -26,6 +26,11 @@ Removed from CLI surface:
 - `status`
 
 Use `projects/tasks` to inspect state.
+
+Daemon control:
+- `agvv daemon start`
+- `agvv daemon status`
+- `agvv daemon stop`
 
 ## 3) Projects and tasks query model
 

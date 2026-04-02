@@ -15,7 +15,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-app.add_typer(daemon_app, name="daemons", help="Control the background monitor daemon.")
+app.add_typer(daemon_app, name="daemon", help="Control the background monitor daemon.")
 app.add_typer(project_app, name="projects", help="View and manage registered project entries.")
 app.add_typer(task_app, name="tasks", help="Create, inspect, and merge tasks.")
 app.add_typer(feedback_app, name="feedback", help="File issues and sync agvv GitHub issues.")

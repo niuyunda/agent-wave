@@ -223,3 +223,11 @@ class CliOutputTest(AgvvRepoTestCase):
         self.assertEqual(new_result.exit_code, 0)
         self.assertNotIn("submit", new_result.stdout)
         self.assertNotEqual(submit_result.exit_code, 0)
+
+    def test_daemon_command_renamed(self) -> None:
+        old_result = self.runner.invoke(app, ["daemons", "--help"])
+        new_result = self.runner.invoke(app, ["daemon", "--help"])
+
+        self.assertNotEqual(old_result.exit_code, 0)
+        self.assertIn("No such command", old_result.output)
+        self.assertEqual(new_result.exit_code, 0)
